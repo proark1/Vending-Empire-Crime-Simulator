@@ -244,6 +244,11 @@ export function createInitialState(): GameState {
         message: "Your first battered machine is sitting outside Foam & Fold. It needs stock and attention."
       }
     ],
+    streetLife: {
+      activitySequence: 1,
+      nextActivityHour: 8.18,
+      recentActivities: []
+    },
     mission: {
       id: "starter_takeover",
       title: "Control three profitable machines in Cinderblock Row",

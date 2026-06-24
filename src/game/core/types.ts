@@ -207,6 +207,28 @@ export interface GameEvent {
   message: string;
 }
 
+export type StreetActivityKind = "customer_purchase" | "customer_complaint" | "rival_scout" | "worker_supply";
+export type StreetActivityActor = "customer" | "rival" | "worker" | "scout";
+
+export interface StreetActivity {
+  id: string;
+  hour: number;
+  kind: StreetActivityKind;
+  actor: StreetActivityActor;
+  locationId: LocationId;
+  machineId?: MachineId;
+  productId?: ProductId;
+  amount?: number;
+  message: string;
+  tone: GameEventTone;
+}
+
+export interface StreetLifeState {
+  activitySequence: number;
+  nextActivityHour: number;
+  recentActivities: StreetActivity[];
+}
+
 export interface MissionState {
   id: string;
   title: string;
@@ -229,6 +251,7 @@ export interface GameState {
   contracts: Record<ContractId, ServiceContract>;
   npcControllers: Record<FactionId, NpcController>;
   eventLog: GameEvent[];
+  streetLife: StreetLifeState;
   mission: MissionState;
   routePlan: RoutePlanState;
   dayReports: DayReport[];

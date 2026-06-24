@@ -56,6 +56,11 @@ function migrateGameState(parsed: GameState): GameState {
       ...baseline.npcControllers,
       ...parsed.npcControllers
     },
+    streetLife: {
+      ...baseline.streetLife,
+      ...(parsed.streetLife ?? {}),
+      recentActivities: Array.isArray(parsed.streetLife?.recentActivities) ? parsed.streetLife.recentActivities : baseline.streetLife.recentActivities
+    },
     machines: Object.fromEntries(
       Object.entries(parsed.machines ?? baseline.machines).map(([machineId, machine]) => [
         machineId,

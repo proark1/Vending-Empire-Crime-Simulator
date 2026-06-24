@@ -164,6 +164,47 @@ describe("game reducer", () => {
     expect(collected.factions.player.money).toBeGreaterThan(stocked.factions.player.money);
   });
 
+  it("runs street customer purchases through stock, revenue, and activity feedback", () => {
+    const state = reduceCommands(createInitialState(), [
+      visit("supplier"),
+      { type: "buy_product", actorId: "player", productId: "soda", quantity: 6 },
+      visit("laundromat"),
+      { type: "stock_machine", actorId: "player", machineId: "machine_player_1", productId: "soda", quantity: 6 },
+      { type: "repair_machine", actorId: "player", machineId: "machine_player_1" }
+    ]).state;
+    state.streetLife.activitySequence = 1;
+    state.streetLife.nextActivityHour = state.worldTimeHours + 0.01;
+
+    const result = reduceGameState(state, { type: "advance_time", actorId: "player", hours: 0.2 });
+    const machine = result.state.machines.machine_player_1;
+
+    expect(machine.slots[0].quantity).toBe(5);
+    expect(machine.revenueStored).toBeGreaterThan(0);
+    expect(result.state.progression.stockSoldToday).toBe(1);
+    expect(result.state.streetLife.recentActivities[0]).toMatchObject({
+      kind: "customer_purchase",
+      machineId: "machine_player_1",
+      productId: "soda"
+    });
+  });
+
+  it("turns bad machine conditions into customer complaints and local pressure", () => {
+    const state = createInitialState();
+    state.streetLife.activitySequence = 2;
+    state.streetLife.nextActivityHour = state.worldTimeHours + 0.01;
+    const initialPressure = state.locations.laundromat.rivalPressure;
+    const initialReputation = state.factions.player.publicReputation;
+
+    const result = reduceGameState(state, { type: "advance_time", actorId: "player", hours: 0.2 });
+
+    expect(result.state.locations.laundromat.rivalPressure).toBeGreaterThan(initialPressure);
+    expect(result.state.factions.player.publicReputation).toBeLessThan(initialReputation);
+    expect(result.state.streetLife.recentActivities[0]).toMatchObject({
+      kind: "customer_complaint",
+      machineId: "machine_player_1"
+    });
+  });
+
   it("keeps NPC actions command-based", () => {
     const state = createInitialState();
     const result = reduceGameState(state, {

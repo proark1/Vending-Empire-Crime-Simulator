@@ -1,9 +1,9 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
-import type { GameState, Location, MachineUpgradeId, ProductId, StockCrate } from "../../game/core/types";
+import type { GameState, GameEventTone, Location, MachineUpgradeId, ProductId, StockCrate, StreetActivity } from "../../game/core/types";
 import { activeVehicle, garageStorageUnits, machineAtLocation, machineRoutePressure } from "../../game/core/selectors";
 import type { SceneTarget } from "./SceneTargets";
-import { createAsphaltMaterial, createAtmosphere, createBuilding, createRoadMaterial, createSidewalkMaterial, createSkyDome, createStreetProps } from "./proceduralArt";
+import { createAsphaltMaterial, createAtmosphere, createBuilding, createNpcCharacter, createRoadMaterial, createSidewalkMaterial, createSkyDome, createStreetProps } from "./proceduralArt";
 
 interface ThreeSceneProps {
   guidanceLocationId?: string;
@@ -16,6 +16,26 @@ interface ThreeSceneProps {
 interface Interactable {
   target: SceneTarget;
   position: THREE.Vector3;
+}
+
+type CameraMode = "first" | "third";
+type BuildingStyle = Parameters<typeof createBuilding>[3];
+
+interface BuildingSpec {
+  depth: number;
+  height: number;
+  signText: string;
+  style: BuildingStyle;
+  width: number;
+  x: number;
+  z: number;
+}
+
+interface CollisionBox {
+  maxX: number;
+  maxZ: number;
+  minX: number;
+  minZ: number;
 }
 
 interface NpcRuntimeLimb {
@@ -43,6 +63,30 @@ const productCrateColors: Record<ProductId, string> = {
   mystery_capsules: "#e879f9"
 };
 
+const playerRadius = 0.36;
+const worldBounds = {
+  maxX: 27,
+  maxZ: 22,
+  minX: -27,
+  minZ: -22
+};
+
+const districtBuildings: BuildingSpec[] = [
+  { x: -9, z: 8.8, width: 5.5, depth: 3.5, height: 2.6, style: "garage", signText: "STORAGE" },
+  { x: 8.4, z: 8.7, width: 4.8, depth: 3.2, height: 2.4, style: "supplier", signText: "SUPPLY" },
+  { x: -5.2, z: -7.2, width: 5.8, depth: 2.9, height: 2.8, style: "laundromat", signText: "FOAM & FOLD" },
+  { x: 4.3, z: -8.1, width: 5.3, depth: 2.8, height: 3.1, style: "gym", signText: "IRON HABIT" },
+  { x: 9.6, z: -2.8, width: 3.4, depth: 4.6, height: 3.6, style: "arcade", signText: "PIXEL" },
+  { x: -11.6, z: -2.1, width: 2.8, depth: 5.3, height: 2.7, style: "transit", signText: "BUS STOP" },
+  { x: 1.5, z: 4.7, width: 4.2, depth: 3.4, height: 2.5, style: "rival", signText: "REDLINE" },
+  { x: -20.2, z: 8.6, width: 5.9, depth: 3.7, height: 3.2, style: "supplier", signText: "WAREHOUSE" },
+  { x: 19.6, z: 8.2, width: 5.4, depth: 3.4, height: 2.9, style: "laundromat", signText: "24H MART" },
+  { x: -20.4, z: -8.0, width: 4.9, depth: 3.1, height: 3.4, style: "gym", signText: "CLINIC" },
+  { x: 18.7, z: -8.6, width: 6.0, depth: 3.3, height: 3.8, style: "arcade", signText: "NIGHT MARKET" },
+  { x: -22.2, z: -1.8, width: 3.4, depth: 5.4, height: 2.9, style: "transit", signText: "DEPOT" },
+  { x: 22.2, z: -1.8, width: 3.6, depth: 5.2, height: 3.0, style: "rival", signText: "LOCKUP" }
+];
+
 const machinePlacementAnchors: Record<string, { x: number; z: number; rotationY: number }> = {
   laundromat: { x: -5.2, z: -5.15, rotationY: Math.PI },
   gym: { x: 4.25, z: -6.05, rotationY: Math.PI },
@@ -50,6 +94,14 @@ const machinePlacementAnchors: Record<string, { x: number; z: number; rotationY:
   transit: { x: -9.72, z: -1.1, rotationY: -Math.PI / 2 },
   rival_corner: { x: 1.35, z: 2.38, rotationY: 0 }
 };
+
+function machineFrontVector(rotationY: number): THREE.Vector3 {
+  return new THREE.Vector3(-Math.sin(rotationY), 0, -Math.cos(rotationY));
+}
+
+function machineInteractionPoint(placement: { position: THREE.Vector3; rotationY: number }): THREE.Vector3 {
+  return placement.position.clone().add(machineFrontVector(placement.rotationY).multiplyScalar(0.82));
+}
 
 function fallbackMachinePlacement(location: Location): { position: THREE.Vector3; rotationY: number } {
   const position = new THREE.Vector3(location.position.x, 0, location.position.z);
@@ -76,6 +128,86 @@ function machinePlacementForLocation(location: Location): { position: THREE.Vect
     position: new THREE.Vector3(anchor.x, 0, anchor.z),
     rotationY: anchor.rotationY
   };
+}
+
+function collisionBoxFromCenter(x: number, z: number, width: number, depth: number): CollisionBox {
+  return {
+    maxX: x + width / 2,
+    maxZ: z + depth / 2,
+    minX: x - width / 2,
+    minZ: z - depth / 2
+  };
+}
+
+const buildingCollisionBoxes = districtBuildings.map((building) =>
+  collisionBoxFromCenter(building.x, building.z, building.width, building.depth)
+);
+
+function clampToWorld(position: THREE.Vector3): void {
+  position.x = THREE.MathUtils.clamp(position.x, worldBounds.minX + playerRadius, worldBounds.maxX - playerRadius);
+  position.z = THREE.MathUtils.clamp(position.z, worldBounds.minZ + playerRadius, worldBounds.maxZ - playerRadius);
+}
+
+function positionOverlapsBox(position: THREE.Vector3, box: CollisionBox, radius = playerRadius): boolean {
+  return position.x > box.minX - radius
+    && position.x < box.maxX + radius
+    && position.z > box.minZ - radius
+    && position.z < box.maxZ + radius;
+}
+
+function isPositionBlocked(position: THREE.Vector3, boxes: CollisionBox[]): boolean {
+  return boxes.some((box) => positionOverlapsBox(position, box));
+}
+
+function machineCollisionBox(placement: { position: THREE.Vector3; rotationY: number }): CollisionBox {
+  const halfWidth = 0.5;
+  const halfDepth = 0.38;
+  const cos = Math.abs(Math.cos(placement.rotationY));
+  const sin = Math.abs(Math.sin(placement.rotationY));
+  const halfX = cos * halfWidth + sin * halfDepth;
+  const halfZ = sin * halfWidth + cos * halfDepth;
+  return collisionBoxFromCenter(placement.position.x, placement.position.z, halfX * 2, halfZ * 2);
+}
+
+function collisionBoxesForState(currentState: GameState): CollisionBox[] {
+  const boxes = [...buildingCollisionBoxes];
+
+  for (const location of Object.values(currentState.locations)) {
+    if (machineAtLocation(currentState, location.id)) {
+      boxes.push(machineCollisionBox(machinePlacementForLocation(location)));
+    }
+  }
+
+  const vehicle = activeVehicle(currentState);
+  const vehicleLocation = vehicle ? currentState.locations[vehicle.locationId] : undefined;
+  if (vehicle && vehicleLocation) {
+    boxes.push(collisionBoxFromCenter(vehicleLocation.position.x + 1.15, vehicleLocation.position.z + 0.88, 1.55, 0.95));
+  }
+
+  return boxes;
+}
+
+function movePlayerWithCollision(position: THREE.Vector3, movement: THREE.Vector3, boxes: CollisionBox[]): boolean {
+  let moved = false;
+  const nextX = position.clone();
+  nextX.x += movement.x;
+  clampToWorld(nextX);
+
+  if (!isPositionBlocked(nextX, boxes)) {
+    moved ||= Math.abs(nextX.x - position.x) > 0.0001;
+    position.x = nextX.x;
+  }
+
+  const nextZ = position.clone();
+  nextZ.z += movement.z;
+  clampToWorld(nextZ);
+
+  if (!isPositionBlocked(nextZ, boxes)) {
+    moved ||= Math.abs(nextZ.z - position.z) > 0.0001;
+    position.z = nextZ.z;
+  }
+
+  return moved;
 }
 
 function pathStateAt(path: THREE.Vector3[], distance: number): { direction: THREE.Vector3; position: THREE.Vector3 } | null {
@@ -197,7 +329,7 @@ function updateAnimatedStreetProp(object: THREE.Object3D, time: number): void {
     if (state) {
       object.position.x = state.position.x;
       object.position.z = state.position.z;
-      object.rotation.y = Math.atan2(state.direction.x, -state.direction.z);
+      object.rotation.y = Math.atan2(state.direction.x, -state.direction.z) + Math.PI;
       isMoving = true;
     }
   }
@@ -528,6 +660,43 @@ function createCrateStack(productIds: ProductId[]): THREE.Group {
   return group;
 }
 
+function createStorageBay(productIds: ProductId[]): THREE.Group {
+  const group = new THREE.Group();
+  const floorMaterial = new THREE.MeshStandardMaterial({ color: "#334155", roughness: 0.82, metalness: 0.03 });
+  const railMaterial = new THREE.MeshStandardMaterial({ color: "#0f172a", roughness: 0.55, metalness: 0.18 });
+  const accentMaterial = new THREE.MeshBasicMaterial({ color: "#38bdf8" });
+
+  const platform = new THREE.Mesh(new THREE.BoxGeometry(1.38, 0.08, 0.86), floorMaterial);
+  platform.position.set(0, 0.04, 0);
+  platform.receiveShadow = true;
+  group.add(platform);
+
+  const backRail = new THREE.Mesh(new THREE.BoxGeometry(1.38, 0.52, 0.08), railMaterial);
+  backRail.position.set(0, 0.34, 0.43);
+  backRail.castShadow = true;
+  group.add(backRail);
+
+  for (const x of [-0.65, 0.65]) {
+    const sideRail = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.42, 0.74), railMaterial);
+    sideRail.position.set(x, 0.28, 0.02);
+    sideRail.castShadow = true;
+    group.add(sideRail);
+  }
+
+  for (const x of [-0.33, 0.33]) {
+    const floorStripe = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.014, 0.76), accentMaterial);
+    floorStripe.position.set(x, 0.092, -0.01);
+    group.add(floorStripe);
+  }
+
+  const stack = createCrateStack(productIds);
+  stack.position.set(0, 0.08, -0.08);
+  stack.scale.setScalar(0.78);
+  group.add(stack);
+
+  return group;
+}
+
 function createRoutePressureRing(tone: "good" | "warning" | "danger"): THREE.Group {
   const color = tone === "danger" ? "#fb7185" : tone === "warning" ? "#fbbf24" : "#86efac";
   const group = new THREE.Group();
@@ -638,6 +807,109 @@ function addLabel(group: THREE.Group, text: string, color: string, position: THR
   group.add(label);
 }
 
+function colorForTone(tone: GameEventTone): string {
+  if (tone === "good") {
+    return "#22c55e";
+  }
+
+  if (tone === "warning") {
+    return "#f59e0b";
+  }
+
+  if (tone === "danger") {
+    return "#fb7185";
+  }
+
+  return "#38bdf8";
+}
+
+function activityLabel(activity: StreetActivity): string {
+  if (activity.kind === "customer_purchase") {
+    return activity.amount ? `SALE +$${Math.round(activity.amount)}` : "SALE";
+  }
+
+  if (activity.kind === "customer_complaint") {
+    return "EMPTY";
+  }
+
+  if (activity.kind === "rival_scout") {
+    return "RIVAL";
+  }
+
+  return activity.amount ? `RESTOCK ${activity.amount}` : "RESTOCK";
+}
+
+function createActivityBubble(activity: StreetActivity): THREE.Sprite {
+  const color = colorForTone(activity.tone);
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 160;
+  const context = canvas.getContext("2d");
+
+  if (context) {
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "rgba(15, 23, 42, 0.88)";
+    context.strokeStyle = color;
+    context.lineWidth = 6;
+    context.roundRect(38, 28, 436, 78, 18);
+    context.fill();
+    context.stroke();
+    context.beginPath();
+    context.moveTo(246, 106);
+    context.lineTo(266, 106);
+    context.lineTo(256, 132);
+    context.closePath();
+    context.fill();
+    context.stroke();
+    context.fillStyle = "#f8fafc";
+    context.font = "900 34px Inter, system-ui, sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(activityLabel(activity), 256, 68, 390);
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: true }));
+  sprite.scale.set(1.05, 0.33, 1);
+  sprite.userData.activityBubble = true;
+  return sprite;
+}
+
+function createActivityPulse(activity: StreetActivity): THREE.Group {
+  const color = colorForTone(activity.tone);
+  const group = new THREE.Group();
+  group.userData.activityPulse = true;
+  const material = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.72, depthWrite: false });
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.46, 0.018, 8, 36), material);
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.08;
+  group.add(ring);
+
+  if (activity.kind === "customer_purchase") {
+    const coin = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.018, 16), new THREE.MeshBasicMaterial({ color: "#facc15" }));
+    coin.position.set(0.22, 0.72, -0.12);
+    coin.rotation.x = Math.PI / 2;
+    group.add(coin);
+  }
+
+  if (activity.kind === "worker_supply") {
+    const crate = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.12, 0.12), new THREE.MeshStandardMaterial({ color: "#92400e", roughness: 0.7 }));
+    crate.position.set(-0.22, 0.62, -0.1);
+    crate.castShadow = true;
+    group.add(crate);
+  }
+
+  if (activity.kind === "rival_scout") {
+    const marker = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.22, 3), new THREE.MeshBasicMaterial({ color }));
+    marker.position.y = 0.68;
+    marker.rotation.y = Math.PI;
+    group.add(marker);
+  }
+
+  return group;
+}
+
 function createMissionBeacon(color: string): THREE.Group {
   const group = new THREE.Group();
   group.userData.beacon = true;
@@ -703,17 +975,64 @@ function clearGroup(group: THREE.Group): void {
   group.clear();
 }
 
-function updateCarriedCrateMount(mount: THREE.Group, crate: StockCrate | null): void {
+function updateCarriedCrateMount(mount: THREE.Group, crate: StockCrate | null, placement: "firstPerson" | "avatar" = "firstPerson"): void {
   clearGroup(mount);
   if (!crate) {
     return;
   }
 
   const crateMesh = createStockCrateMesh(crate.productId, crate.quantity, true);
-  crateMesh.position.set(0.42, -0.46, -0.78);
-  crateMesh.rotation.set(-0.16, -0.32, 0.08);
-  crateMesh.scale.setScalar(0.92);
+  if (placement === "avatar") {
+    crateMesh.position.set(0, 0, -0.02);
+    crateMesh.rotation.set(0.02, 0, 0.03);
+    crateMesh.scale.setScalar(0.9);
+  } else {
+    crateMesh.position.set(0.42, -0.46, -0.78);
+    crateMesh.rotation.set(-0.16, -0.32, 0.08);
+    crateMesh.scale.setScalar(0.92);
+  }
   mount.add(crateMesh);
+}
+
+function createPlayerAvatar(): { avatar: THREE.Group; cargoMount: THREE.Group } {
+  const avatar = createNpcCharacter("worker");
+  avatar.scale.setScalar(1.05);
+  avatar.position.set(0, 0, 0.06);
+  avatar.userData.action = "walk";
+  avatar.userData.phase = 0.35;
+
+  const rig = avatar.userData.rig as NpcRuntimeRig | undefined;
+  if (rig?.carryMount instanceof THREE.Group) {
+    clearGroup(rig.carryMount);
+  }
+
+  const playerBadge = new THREE.Mesh(
+    new THREE.BoxGeometry(0.18, 0.05, 0.028),
+    new THREE.MeshBasicMaterial({ color: "#2dd4bf" })
+  );
+  playerBadge.position.set(-0.08, 1.0, -0.225);
+  avatar.add(playerBadge);
+
+  const cargoMount = new THREE.Group();
+  cargoMount.position.set(0, 0.82, -0.32);
+  avatar.add(cargoMount);
+
+  return { avatar, cargoMount };
+}
+
+function applyCameraMode(camera: THREE.PerspectiveCamera, playerAvatar: THREE.Group, firstPersonCargoMount: THREE.Group, mode: CameraMode, pitch: number): void {
+  if (mode === "third") {
+    camera.position.set(0, 2.22, 4.35);
+    camera.rotation.x = THREE.MathUtils.clamp(-0.18 + pitch * 0.35, -0.65, 0.18);
+    playerAvatar.visible = true;
+    firstPersonCargoMount.visible = false;
+    return;
+  }
+
+  camera.position.set(0, 1.65, 0);
+  camera.rotation.x = pitch;
+  playerAvatar.visible = false;
+  firstPersonCargoMount.visible = true;
 }
 
 function addBuilding(scene: THREE.Scene, x: number, z: number, width: number, depth: number, height: number, style: Parameters<typeof createBuilding>[3], signText: string): void {
@@ -749,10 +1068,10 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
         const storedProductIds = Object.entries(currentState.player.garageStorage)
           .filter(([, quantity]) => quantity > 0)
           .map(([productId]) => productId as ProductId);
-        const stack = createCrateStack(storedProductIds);
-        stack.position.set(position.x + 0.78, 0.02, position.z - 0.22);
-        stack.rotation.y = -0.35;
-        group.add(stack);
+        const storageBay = createStorageBay(storedProductIds);
+        storageBay.position.set(position.x - 1.02, 0.02, position.z + 0.34);
+        storageBay.rotation.y = 0.08;
+        group.add(storageBay);
       }
       addLabel(group, location.name, "#38bdf8", position, 1.1);
       addGuidanceBeacon("#38bdf8");
@@ -781,6 +1100,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       machineGroup.position.copy(machinePlacement.position);
       machineGroup.rotation.y = machinePlacement.rotationY;
       group.add(machineGroup);
+      const servicePoint = machineInteractionPoint(machinePlacement);
       const pressure = machine.ownerFactionId === currentState.playerFactionId ? machineRoutePressure(currentState, machine) : undefined;
       if (pressure && pressure.score >= 2) {
         const pressureRing = createRoutePressureRing(pressure.tone);
@@ -789,7 +1109,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       }
       addLabel(group, machine.name, owner?.color ?? "#94a3b8", machinePlacement.position, 2.2);
       addGuidanceBeacon(owner?.color ?? "#94a3b8", machinePlacement.position);
-      interactables.push({ target: { type: "machine", id: machine.id, label: machine.name }, position: machinePlacement.position });
+      interactables.push({ target: { type: "machine", id: machine.id, label: machine.name }, position: servicePoint });
     } else {
       const marker = addMarker("#a3e635");
       marker.position.copy(machinePlacement.position);
@@ -799,6 +1119,32 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       interactables.push({ target: { type: "placement", id: location.id, label: location.name }, position: machinePlacement.position });
     }
   }
+
+  const recentActivities = currentState.streetLife?.recentActivities ?? [];
+  recentActivities
+    .filter((activity) => currentState.worldTimeHours - activity.hour <= 0.55)
+    .slice(0, 4)
+    .forEach((activity, index) => {
+      const machine = activity.machineId ? currentState.machines[activity.machineId] : undefined;
+      const location = machine ? currentState.locations[machine.locationId] : currentState.locations[activity.locationId];
+      if (!location) {
+        return;
+      }
+
+      const placement = machine ? machinePlacementForLocation(location) : { position: new THREE.Vector3(location.position.x, 0, location.position.z), rotationY: 0 };
+      const servicePoint = machine ? machineInteractionPoint(placement) : placement.position;
+      const bubble = createActivityBubble(activity);
+      bubble.position.set(servicePoint.x, 2.62 + index * 0.16, servicePoint.z);
+      bubble.userData.baseY = bubble.position.y;
+      group.add(bubble);
+
+      if (machine) {
+        const pulse = createActivityPulse(activity);
+        pulse.position.copy(servicePoint);
+        pulse.userData.phase = index * 0.7;
+        group.add(pulse);
+      }
+    });
 
   const vehicle = activeVehicle(currentState);
   const vehicleLocation = vehicle ? currentState.locations[vehicle.locationId] : undefined;
@@ -831,6 +1177,7 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
   const stateRef = useRef(state);
   const dynamicGroupRef = useRef<THREE.Group | null>(null);
   const carriedCrateMountRef = useRef<THREE.Group | null>(null);
+  const playerAvatarCargoMountRef = useRef<THREE.Group | null>(null);
   const carriedCrateSignatureRef = useRef<string | null>(null);
   const interactablesRef = useRef<Interactable[]>([]);
   const guidanceLocationIdRef = useRef(guidanceLocationId);
@@ -867,9 +1214,9 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color("#0f172a");
-    scene.fog = new THREE.Fog("#18243a", 20, 48);
+    scene.fog = new THREE.Fog("#18243a", 26, 72);
 
-    const camera = new THREE.PerspectiveCamera(70, mount.clientWidth / mount.clientHeight, 0.1, 80);
+    const camera = new THREE.PerspectiveCamera(70, mount.clientWidth / mount.clientHeight, 0.1, 120);
     camera.position.set(0, 1.65, 0);
     camera.rotation.order = "YXZ";
 
@@ -882,6 +1229,13 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
     camera.add(carriedCrateMount);
     carriedCrateMountRef.current = carriedCrateMount;
     updateCarriedCrateMount(carriedCrateMount, stateRef.current.player.carriedCrate ?? null);
+
+    const { avatar: playerAvatar, cargoMount: playerAvatarCargoMount } = createPlayerAvatar();
+    playerAvatar.visible = false;
+    yaw.add(playerAvatar);
+    playerAvatarCargoMountRef.current = playerAvatarCargoMount;
+    updateCarriedCrateMount(playerAvatarCargoMount, stateRef.current.player.carriedCrate ?? null, "avatar");
+
     carriedCrateSignatureRef.current = stateRef.current.player.carriedCrate
       ? `${stateRef.current.player.carriedCrate.productId}:${stateRef.current.player.carriedCrate.quantity}:${stateRef.current.player.carriedCrate.source}`
       : null;
@@ -907,7 +1261,7 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
     scene.add(keyLight);
 
     const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(48, 40),
+      new THREE.PlaneGeometry(64, 52),
       createAsphaltMaterial()
     );
     ground.rotation.x = -Math.PI / 2;
@@ -915,7 +1269,7 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
     scene.add(ground);
 
     const road = new THREE.Mesh(
-      new THREE.BoxGeometry(42, 0.03, 4),
+      new THREE.BoxGeometry(58, 0.03, 4.4),
       createRoadMaterial()
     );
     road.position.set(0, 0.02, 0);
@@ -923,7 +1277,7 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
     scene.add(road);
 
     const crossRoad = new THREE.Mesh(
-      new THREE.BoxGeometry(4, 0.035, 30),
+      new THREE.BoxGeometry(4.4, 0.035, 46),
       createRoadMaterial()
     );
     crossRoad.position.set(0, 0.025, 0);
@@ -932,10 +1286,10 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
 
     const sidewalkMaterial = createSidewalkMaterial();
     const sidewalks = [
-      { x: 0, z: -3.35, width: 42, depth: 1.8 },
-      { x: 0, z: 3.35, width: 42, depth: 1.8 },
-      { x: -3.35, z: 0, width: 1.8, depth: 30 },
-      { x: 3.35, z: 0, width: 1.8, depth: 30 }
+      { x: 0, z: -3.55, width: 58, depth: 1.9 },
+      { x: 0, z: 3.55, width: 58, depth: 1.9 },
+      { x: -3.55, z: 0, width: 1.9, depth: 46 },
+      { x: 3.55, z: 0, width: 1.9, depth: 46 }
     ];
 
     for (const sidewalk of sidewalks) {
@@ -945,13 +1299,9 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
       scene.add(mesh);
     }
 
-    addBuilding(scene, -9, 8.8, 5.5, 3.5, 2.6, "garage", "STORAGE");
-    addBuilding(scene, 8.4, 8.7, 4.8, 3.2, 2.4, "supplier", "SUPPLY");
-    addBuilding(scene, -5.2, -7.2, 5.8, 2.9, 2.8, "laundromat", "FOAM & FOLD");
-    addBuilding(scene, 4.3, -8.1, 5.3, 2.8, 3.1, "gym", "IRON HABIT");
-    addBuilding(scene, 9.6, -2.8, 3.4, 4.6, 3.6, "arcade", "PIXEL");
-    addBuilding(scene, -11.6, -2.1, 2.8, 5.3, 2.7, "transit", "BUS STOP");
-    addBuilding(scene, 1.5, 4.7, 4.2, 3.4, 2.5, "rival", "REDLINE");
+    for (const building of districtBuildings) {
+      addBuilding(scene, building.x, building.z, building.width, building.depth, building.height, building.style, building.signText);
+    }
     const streetProps = createStreetProps();
     const animatedProps: THREE.Object3D[] = [];
     streetProps.traverse((object) => {
@@ -966,10 +1316,12 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
     dynamicGroupRef.current = dynamicGroup;
 
     const keys = new Set<string>();
+    let cameraMode: CameraMode = "first";
     let pitch = 0;
     let lastTime = performance.now();
     let lastPositionEmit = 0;
     let disposed = false;
+    applyCameraMode(camera, playerAvatar, carriedCrateMount, cameraMode, pitch);
 
     const updateDynamicObjects = () => {
       if (!dynamicGroupRef.current) {
@@ -982,6 +1334,12 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
     updateDynamicObjects();
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code === "KeyV" && !event.repeat) {
+        cameraMode = cameraMode === "first" ? "third" : "first";
+        applyCameraMode(camera, playerAvatar, carriedCrateMount, cameraMode, pitch);
+        return;
+      }
+
       keys.add(event.code);
     };
 
@@ -995,8 +1353,12 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
       }
 
       yaw.rotation.y -= event.movementX * 0.0022;
-      pitch = THREE.MathUtils.clamp(pitch - event.movementY * 0.002, -1.2, 1.2);
-      camera.rotation.x = pitch;
+      pitch = THREE.MathUtils.clamp(
+        pitch - event.movementY * 0.002,
+        cameraMode === "third" ? -0.95 : -1.2,
+        cameraMode === "third" ? 0.85 : 1.2
+      );
+      applyCameraMode(camera, playerAvatar, carriedCrateMount, cameraMode, pitch);
     };
 
     const onCanvasClick = () => {
@@ -1016,14 +1378,21 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
     const updateTarget = () => {
       const cameraWorld = new THREE.Vector3();
       camera.getWorldPosition(cameraWorld);
+      const targetOrigin = cameraMode === "third"
+        ? new THREE.Vector3(yaw.position.x, 1.35, yaw.position.z)
+        : cameraWorld;
       const forward = new THREE.Vector3();
-      camera.getWorldDirection(forward);
+      if (cameraMode === "third") {
+        forward.set(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw.rotation.y).normalize();
+      } else {
+        camera.getWorldDirection(forward);
+      }
 
       let best: Interactable | null = null;
       let bestScore = Number.POSITIVE_INFINITY;
 
       for (const interactable of interactablesRef.current) {
-        const toTarget = interactable.position.clone().sub(cameraWorld);
+        const toTarget = interactable.position.clone().sub(targetOrigin);
         const distance = toTarget.length();
         if (distance > 3.4) {
           continue;
@@ -1068,12 +1437,13 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
       if (keys.has("KeyA") || keys.has("ArrowLeft")) direction.x -= 1;
       if (keys.has("KeyD") || keys.has("ArrowRight")) direction.x += 1;
 
+      let playerMoved = false;
       if (direction.lengthSq() > 0) {
         direction.normalize().applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw.rotation.y);
-        yaw.position.addScaledVector(direction, speed * delta);
-        yaw.position.x = THREE.MathUtils.clamp(yaw.position.x, -17, 17);
-        yaw.position.z = THREE.MathUtils.clamp(yaw.position.z, -13, 13);
+        const movement = direction.multiplyScalar(speed * delta);
+        playerMoved = movePlayerWithCollision(yaw.position, movement, collisionBoxesForState(stateRef.current));
       }
+      updateNpcRig(playerAvatar, time, playerMoved ? speed / 4.2 : 1, playerMoved);
 
       if (time - lastPositionEmit > 180) {
         lastPositionEmit = time;
@@ -1093,6 +1463,18 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
           const pulse = 1 + Math.sin(time * 0.006) * 0.12;
           object.scale.set(pulse, pulse, pulse);
           object.rotation.y -= delta * 0.8;
+        }
+
+        if (object.userData.activityPulse) {
+          const phase = typeof object.userData.phase === "number" ? object.userData.phase : 0;
+          const pulse = 1 + Math.sin(time * 0.01 + phase) * 0.14;
+          object.scale.set(pulse, 1, pulse);
+          object.rotation.y += delta * 1.1;
+        }
+
+        if (object.userData.activityBubble) {
+          const baseY = typeof object.userData.baseY === "number" ? object.userData.baseY : object.position.y;
+          object.position.y = baseY + Math.sin(time * 0.004) * 0.035;
         }
       });
       for (const object of animatedProps) {
@@ -1125,6 +1507,7 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
       mount.removeChild(renderer.domElement);
       dynamicGroupRef.current = null;
       carriedCrateMountRef.current = null;
+      playerAvatarCargoMountRef.current = null;
       carriedCrateSignatureRef.current = null;
       interactablesRef.current = [];
     };
@@ -1141,6 +1524,7 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
 
   useEffect(() => {
     const mount = carriedCrateMountRef.current;
+    const avatarMount = playerAvatarCargoMountRef.current;
     if (!mount) {
       return;
     }
@@ -1153,6 +1537,9 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
 
     carriedCrateSignatureRef.current = signature;
     updateCarriedCrateMount(mount, crate);
+    if (avatarMount) {
+      updateCarriedCrateMount(avatarMount, crate, "avatar");
+    }
   }, [state.player.carriedCrate]);
 
   return <div className="scene-mount" ref={mountRef} aria-label="3D district view" />;

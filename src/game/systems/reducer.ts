@@ -1,4 +1,17 @@
-import type { CommandResult, FactionId, GameCommand, GameEvent, GameEventTone, GameState, Location, MachineSlot, ProductId, ServiceContract, VendingMachine } from "../core/types";
+import type {
+  CommandResult,
+  FactionId,
+  GameCommand,
+  GameEvent,
+  GameEventTone,
+  GameState,
+  Location,
+  MachineSlot,
+  ProductId,
+  ServiceContract,
+  StreetActivity,
+  VendingMachine
+} from "../core/types";
 import {
   activeContracts,
   cargoSpaceRemaining,
@@ -28,6 +41,32 @@ function log(state: GameState, events: GameEvent[], message: string, tone: GameE
   };
   events.push(event);
   state.eventLog = [event, ...state.eventLog].slice(0, 12);
+}
+
+function ensureStreetLifeState(state: GameState): void {
+  state.streetLife ??= {
+    activitySequence: 1,
+    nextActivityHour: state.worldTimeHours + 0.18,
+    recentActivities: []
+  };
+  state.streetLife.recentActivities ??= [];
+}
+
+function logStreetActivity(state: GameState, events: GameEvent[], activity: Omit<StreetActivity, "hour" | "id">): void {
+  ensureStreetLifeState(state);
+  const streetActivity: StreetActivity = {
+    ...activity,
+    id: `street_${state.streetLife.activitySequence++}`,
+    hour: state.worldTimeHours
+  };
+  state.streetLife.recentActivities = [streetActivity, ...state.streetLife.recentActivities].slice(0, 10);
+  log(state, events, activity.message, activity.tone);
+}
+
+function scheduleNextStreetActivity(state: GameState): void {
+  ensureStreetLifeState(state);
+  const sequence = state.streetLife.activitySequence;
+  state.streetLife.nextActivityHour += 0.42 + (sequence % 5) * 0.1;
 }
 
 function getFactionOrThrow(state: GameState, factionId: FactionId) {
@@ -189,6 +228,156 @@ function contractTitle(location: Location, productName: string): string {
   }
 
   return `${location.name} ${productName} promise`;
+}
+
+function sortMachinesByTraffic(state: GameState, machines: VendingMachine[]): VendingMachine[] {
+  return machines.slice().sort((a, b) => {
+    const aLocation = state.locations[a.locationId];
+    const bLocation = state.locations[b.locationId];
+    return (bLocation?.footTraffic ?? 0) + b.visibility - ((aLocation?.footTraffic ?? 0) + a.visibility);
+  });
+}
+
+function customerPurchase(state: GameState, events: GameEvent[]): boolean {
+  const machines = sortMachinesByTraffic(
+    state,
+    ownedMachines(state, state.playerFactionId).filter((machine) => machine.damage < 92 && machine.slots.some((slot) => slot.quantity > 0))
+  );
+  const machine = machines[(state.streetLife.activitySequence - 1) % Math.max(1, machines.length)];
+  if (!machine) {
+    return false;
+  }
+
+  const stockedSlots = machine.slots.filter((slot) => slot.quantity > 0);
+  const slot = stockedSlots[(state.streetLife.activitySequence - 1) % stockedSlots.length];
+  const product = state.products[slot.productId];
+  const owner = state.factions[machine.ownerFactionId];
+  const location = state.locations[machine.locationId];
+  slot.quantity -= 1;
+  slot.salesAccumulator = Math.max(0, slot.salesAccumulator - 1);
+  machine.revenueStored += slot.price;
+  machine.heat += product.heat * 0.04;
+  owner.heat += product.heat * 0.012;
+  state.progression.stockSoldToday += 1;
+
+  logStreetActivity(state, events, {
+    actor: "customer",
+    amount: slot.price,
+    kind: "customer_purchase",
+    locationId: machine.locationId,
+    machineId: machine.id,
+    message: `Customer bought ${product.name} from ${machine.name} at ${location?.name ?? "the block"}.`,
+    productId: product.id,
+    tone: "good"
+  });
+  return true;
+}
+
+function customerComplaint(state: GameState, events: GameEvent[]): boolean {
+  const machines = ownedMachines(state, state.playerFactionId)
+    .map((machine) => {
+      const stock = machineStockUnits(machine);
+      const score = (stock === 0 ? 4 : 0) + (machine.damage >= 65 ? 3 : machine.damage >= 35 ? 1 : 0);
+      return { machine, score, stock };
+    })
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score);
+  const candidate = machines[0];
+  if (!candidate) {
+    return false;
+  }
+
+  const player = state.factions[state.playerFactionId];
+  const location = state.locations[candidate.machine.locationId];
+  player.publicReputation = Math.max(0, player.publicReputation - 0.1);
+  if (location) {
+    location.rivalPressure = Math.min(1, location.rivalPressure + 0.025);
+  }
+
+  const reason = candidate.stock === 0 ? "empty racks" : "a busted display";
+  logStreetActivity(state, events, {
+    actor: "customer",
+    kind: "customer_complaint",
+    locationId: candidate.machine.locationId,
+    machineId: candidate.machine.id,
+    message: `Customer walked away from ${candidate.machine.name}: ${reason}.`,
+    tone: "warning"
+  });
+  return true;
+}
+
+function rivalScout(state: GameState, events: GameEvent[]): boolean {
+  const target = mostProfitablePlayerMachine(state);
+  const rival = state.factions.rival_redline;
+  if (!target || !rival) {
+    return false;
+  }
+
+  const location = state.locations[target.locationId];
+  const controller = state.npcControllers[rival.id];
+  const pressure = 0.035 + (controller?.aggression ?? 0.45) * 0.025;
+  if (location) {
+    location.rivalPressure = Math.min(1, location.rivalPressure + pressure);
+  }
+  rival.heat += 0.08;
+
+  logStreetActivity(state, events, {
+    actor: "scout",
+    kind: "rival_scout",
+    locationId: target.locationId,
+    machineId: target.id,
+    message: `${rival.name} scout watched ${target.name} and marked the stop.`,
+    tone: "warning"
+  });
+  return true;
+}
+
+function workerSupply(state: GameState, events: GameEvent[]): boolean {
+  const rival = state.factions.rival_redline;
+  if (!rival) {
+    return false;
+  }
+
+  const machine = ownedMachines(state, rival.id)
+    .filter((candidate) => candidate.slots.length > 0)
+    .sort((a, b) => machineStockUnits(a) - machineStockUnits(b))[0];
+  const slot = machine?.slots.slice().sort((a, b) => a.quantity / a.capacity - b.quantity / b.capacity)[0];
+  if (!machine || !slot || slot.quantity >= slot.capacity) {
+    return false;
+  }
+
+  const product = state.products[slot.productId];
+  const delivered = Math.min(slot.capacity - slot.quantity, 3 + (state.streetLife.activitySequence % 3));
+  slot.quantity += delivered;
+  rival.money = Math.max(0, rival.money - Math.round(delivered * product.cost * 0.7));
+
+  logStreetActivity(state, events, {
+    actor: "worker",
+    amount: delivered,
+    kind: "worker_supply",
+    locationId: machine.locationId,
+    machineId: machine.id,
+    message: `Redline runner stocked ${delivered}x ${product.name} into ${machine.name}.`,
+    productId: product.id,
+    tone: "neutral"
+  });
+  return true;
+}
+
+function applyStreetActivity(state: GameState, events: GameEvent[]): void {
+  ensureStreetLifeState(state);
+  const activityIndex = (state.streetLife.activitySequence - 1) % 4;
+  const handlers = [customerPurchase, customerComplaint, rivalScout, workerSupply];
+  const preferred = handlers[activityIndex];
+  if (preferred(state, events)) {
+    return;
+  }
+
+  for (const handler of handlers) {
+    if (handler !== preferred && handler(state, events)) {
+      return;
+    }
+  }
 }
 
 function createServiceContract(state: GameState, location: Location, productId: ProductId, requiredQuantity: number, deadlineHour: number): ServiceContract {
@@ -385,6 +574,7 @@ function maybeCompleteMission(state: GameState, events: GameEvent[]): void {
 
 function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number): void {
   const previousHour = state.worldTimeHours;
+  ensureStreetLifeState(state);
   state.worldTimeHours += hours;
 
   let playerEarned = 0;
@@ -409,6 +599,16 @@ function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number):
 
   if (playerEarned >= 18) {
     log(state, events, `Machines generated $${Math.round(playerEarned)} in stored revenue.`, "good");
+  }
+
+  let streetActivities = 0;
+  while (state.streetLife.nextActivityHour <= state.worldTimeHours && streetActivities < 8) {
+    applyStreetActivity(state, events);
+    scheduleNextStreetActivity(state);
+    streetActivities += 1;
+  }
+  if (state.streetLife.nextActivityHour <= state.worldTimeHours) {
+    state.streetLife.nextActivityHour = state.worldTimeHours + 0.3;
   }
 
   failExpiredContracts(state, events);
