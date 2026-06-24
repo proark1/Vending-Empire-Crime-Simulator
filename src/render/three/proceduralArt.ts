@@ -872,11 +872,10 @@ export function createStreetProps(): THREE.Group {
     {
       action: "walk",
       path: [
-        [-6.35, -3.35],
-        [-3.35, -3.35],
-        [-3.35, -1.45],
-        [-1.55, -1.45],
-        [-1.55, -3.35]
+        [-8.4, -3.55],
+        [-2.1, -3.55],
+        [-2.1, -1.55],
+        [-8.4, -1.55]
       ],
       rotation: 2.15,
       speed: 0.55,
@@ -885,10 +884,10 @@ export function createStreetProps(): THREE.Group {
     {
       action: "carry",
       path: [
-        [6.35, 2.55],
-        [8.25, 2.55],
-        [8.25, 4.8],
-        [6.35, 4.8]
+        [5.4, 3.55],
+        [11.4, 3.55],
+        [11.4, 6.55],
+        [5.4, 6.55]
       ],
       rotation: -0.7,
       speed: 0.33,
@@ -897,10 +896,10 @@ export function createStreetProps(): THREE.Group {
     {
       action: "pace",
       path: [
-        [0.42, 2.35],
-        [2.65, 2.35],
-        [2.65, 1.62],
-        [0.42, 1.62]
+        [-0.75, 1.65],
+        [3.45, 1.65],
+        [3.45, 2.55],
+        [-0.75, 2.55]
       ],
       rotation: Math.PI,
       speed: 0.28,
@@ -909,10 +908,10 @@ export function createStreetProps(): THREE.Group {
     {
       action: "scan",
       path: [
-        [-6.35, -4.55],
-        [-4.35, -4.55],
-        [-4.35, -3.35],
-        [-6.35, -3.35]
+        [-9.5, -5.35],
+        [-7.2, -5.35],
+        [-7.2, -1.0],
+        [-9.5, -1.0]
       ],
       rotation: 0.15,
       speed: 0.36,

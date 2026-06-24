@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ThreeScene } from "./render/three/ThreeScene";
-import type { SceneTarget } from "./render/three/SceneTargets";
+import type { SceneFeedbackEvent, SceneTarget } from "./render/three/SceneTargets";
 import { Dashboard } from "./ui/Dashboard";
 import { Hud } from "./ui/Hud";
 import { InteractionPanel } from "./ui/InteractionPanel";
@@ -24,6 +24,49 @@ function targetLocationId(target: SceneTarget | null, state: GameState): Locatio
   }
 
   return target.id;
+}
+
+function createSceneFeedback(command: GameCommand, target: SceneTarget | null, state: GameState): Omit<SceneFeedbackEvent, "id"> | null {
+  if (command.actorId !== state.playerFactionId) {
+    return null;
+  }
+
+  switch (command.type) {
+    case "buy_product":
+      return { kind: "pickup", locationId: "supplier", productId: command.productId, amount: command.quantity, tone: "good" };
+    case "deposit_crate":
+      return {
+        kind: "store",
+        locationId: "garage",
+        productId: state.player.carriedCrate?.productId,
+        amount: state.player.carriedCrate?.quantity,
+        tone: "good"
+      };
+    case "load_crate":
+      return { kind: "pickup", locationId: "garage", productId: command.productId, amount: command.quantity, tone: "good" };
+    case "load_vehicle":
+      return { kind: "vehicle", locationId: "garage", productId: command.productId, amount: command.quantity, tone: "good" };
+    case "unload_vehicle":
+      return { kind: "store", locationId: "garage", productId: command.productId, amount: command.quantity, tone: "good" };
+    case "take_vehicle_crate": {
+      const vehicle = state.vehicles[command.vehicleId];
+      return { kind: "pickup", locationId: vehicle?.locationId, productId: command.productId, amount: command.quantity, tone: "good" };
+    }
+    case "stock_machine":
+      return { kind: "stock", machineId: command.machineId, productId: command.productId, amount: command.quantity, tone: "good" };
+    case "collect_revenue":
+      return { kind: "cash", machineId: command.machineId, amount: Math.round(state.machines[command.machineId]?.revenueStored ?? 0), tone: "good" };
+    case "repair_machine":
+      return { kind: "repair", machineId: command.machineId, tone: "good" };
+    case "place_machine":
+      return { kind: "install", locationId: command.locationId, tone: "good" };
+    case "install_upgrade":
+      return { kind: "upgrade", machineId: command.machineId, tone: "good" };
+    case "sabotage_machine":
+      return { kind: "sabotage", machineId: command.machineId, tone: "danger" };
+    default:
+      return null;
+  }
 }
 
 function DayReportModal({ report, onClose }: { report: DayReport; onClose: () => void }) {
@@ -72,6 +115,7 @@ export function App() {
   const [playerHeadingDegrees, setPlayerHeadingDegrees] = useState(0);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [visibleReport, setVisibleReport] = useState<DayReport | null>(null);
+  const [sceneFeedback, setSceneFeedback] = useState<SceneFeedbackEvent | null>(null);
   const lastEventIdRef = useRef(state.eventLog[0]?.id ?? null);
   const lastMissionStepIdRef = useRef<string | null>(null);
   const lastServiceLocationIdRef = useRef<LocationId | null>(state.player.currentLocationId);
@@ -173,6 +217,13 @@ export function App() {
         sendCommand({ type: "set_player_location", actorId: state.playerFactionId, locationId: nextLocationId });
       }
 
+      const feedback = createSceneFeedback(command, activeTarget, state);
+      if (feedback) {
+        setSceneFeedback({
+          ...feedback,
+          id: `${Date.now()}_${Math.random().toString(36).slice(2)}`
+        });
+      }
       sendCommand(command);
     },
     [activeTarget, sendCommand, state]
@@ -204,6 +255,7 @@ export function App() {
       <ThreeScene
         guidanceLocationId={guidanceLocationId}
         state={state}
+        feedbackEvent={sceneFeedback}
         onPlayerPositionChange={setPlayerPosition}
         onPlayerHeadingChange={setPlayerHeadingDegrees}
         onTargetChange={setTarget}

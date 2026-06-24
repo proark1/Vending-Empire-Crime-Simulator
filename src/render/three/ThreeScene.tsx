@@ -2,10 +2,11 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import type { GameState, GameEventTone, Location, MachineUpgradeId, ProductId, StockCrate, StreetActivity } from "../../game/core/types";
 import { activeVehicle, garageStorageUnits, machineAtLocation, machineRoutePressure } from "../../game/core/selectors";
-import type { SceneTarget } from "./SceneTargets";
+import type { SceneFeedbackEvent, SceneTarget } from "./SceneTargets";
 import { createAsphaltMaterial, createAtmosphere, createBuilding, createNpcCharacter, createRoadMaterial, createSidewalkMaterial, createSkyDome, createStreetProps } from "./proceduralArt";
 
 interface ThreeSceneProps {
+  feedbackEvent?: SceneFeedbackEvent | null;
   guidanceLocationId?: string;
   state: GameState;
   onPlayerPositionChange: (position: { x: number; z: number }) => void;
@@ -14,6 +15,7 @@ interface ThreeSceneProps {
 }
 
 interface Interactable {
+  radius: number;
   target: SceneTarget;
   position: THREE.Vector3;
 }
@@ -36,6 +38,14 @@ interface CollisionBox {
   maxZ: number;
   minX: number;
   minZ: number;
+}
+
+interface FeedbackRuntime {
+  baseScale: number;
+  createdAt: number;
+  duration: number;
+  kind: SceneFeedbackEvent["kind"];
+  startY: number;
 }
 
 interface NpcRuntimeLimb {
@@ -910,6 +920,267 @@ function createActivityPulse(activity: StreetActivity): THREE.Group {
   return group;
 }
 
+function activityActorVariant(activity: StreetActivity): "customer" | "rival" | "scout" | "worker" {
+  if (activity.actor === "worker") {
+    return "worker";
+  }
+
+  if (activity.actor === "scout" || activity.kind === "rival_scout") {
+    return "scout";
+  }
+
+  if (activity.actor === "rival") {
+    return "rival";
+  }
+
+  return "customer";
+}
+
+function createActivityActor(activity: StreetActivity, placement: { position: THREE.Vector3; rotationY: number }, servicePoint: THREE.Vector3, currentWorldTime: number): THREE.Group {
+  const variant = activityActorVariant(activity);
+  const character = createNpcCharacter(variant);
+  const front = machineFrontVector(placement.rotationY).normalize();
+  const side = new THREE.Vector3(-front.z, 0, front.x);
+  const sideDirection = activity.id.charCodeAt(activity.id.length - 1) % 2 === 0 ? 1 : -1;
+  const approach = servicePoint.clone().add(front.clone().multiplyScalar(1.45));
+  const start = approach.clone().add(side.clone().multiplyScalar(1.6 * sideDirection));
+  const stop = servicePoint.clone().add(front.clone().multiplyScalar(activity.kind === "rival_scout" ? 1.25 : 0.42));
+  const exit = approach.clone().add(side.clone().multiplyScalar(-1.8 * sideDirection)).add(front.clone().multiplyScalar(0.55));
+
+  character.position.copy(start);
+  character.scale.setScalar(activity.kind === "customer_complaint" ? 1.02 : 0.96);
+  character.userData.action = activity.kind === "worker_supply" ? "carry" : activity.kind === "rival_scout" ? "scan" : "walk";
+  character.userData.baseY = 0;
+  character.userData.dynamicNpc = true;
+  character.userData.floatAmount = 0.006;
+  character.userData.floatSpeed = 1.15;
+  character.userData.pathOffset = Math.max(0, currentWorldTime - activity.hour) * 7 + activity.id.length * 0.37;
+  character.userData.phase = activity.hour * 0.7 + activity.id.length;
+  character.userData.walkPath = [start, stop, stop.clone().add(front.clone().multiplyScalar(0.2)), exit];
+  character.userData.walkSpeed = activity.kind === "rival_scout" ? 0.26 : activity.kind === "worker_supply" ? 0.34 : 0.42;
+
+  if (activity.kind === "customer_complaint") {
+    const complaint = new THREE.Mesh(
+      new THREE.SphereGeometry(0.055, 10, 8),
+      new THREE.MeshBasicMaterial({ color: "#fb7185" })
+    );
+    complaint.position.set(0.18, 1.55, -0.15);
+    character.add(complaint);
+  }
+
+  return character;
+}
+
+function sceneFeedbackText(event: SceneFeedbackEvent): string {
+  if (event.kind === "pickup") {
+    return event.amount ? `+${event.amount}` : "PICKUP";
+  }
+
+  if (event.kind === "store") {
+    return "STORED";
+  }
+
+  if (event.kind === "stock") {
+    return event.amount ? `STOCK +${event.amount}` : "STOCK";
+  }
+
+  if (event.kind === "install") {
+    return "INSTALLED";
+  }
+
+  if (event.kind === "cash") {
+    return event.amount ? `+$${event.amount}` : "CASH";
+  }
+
+  if (event.kind === "repair") {
+    return "REPAIRED";
+  }
+
+  if (event.kind === "upgrade") {
+    return "UPGRADE";
+  }
+
+  if (event.kind === "sabotage") {
+    return "JAMMED";
+  }
+
+  return "LOADED";
+}
+
+function sceneFeedbackPosition(event: SceneFeedbackEvent, currentState: GameState): THREE.Vector3 | null {
+  if (event.machineId) {
+    const machine = currentState.machines[event.machineId];
+    const location = machine ? currentState.locations[machine.locationId] : undefined;
+    if (!location) {
+      return null;
+    }
+
+    return machineInteractionPoint(machinePlacementForLocation(location));
+  }
+
+  if (event.locationId) {
+    const location = currentState.locations[event.locationId];
+    if (!location) {
+      return null;
+    }
+
+    if (location.kind === "garage") {
+      return new THREE.Vector3(location.position.x - 1.02, 0.08, location.position.z + 0.34);
+    }
+
+    if (location.kind === "supplier") {
+      return new THREE.Vector3(location.position.x - 0.76, 0.08, location.position.z - 0.2);
+    }
+
+    return new THREE.Vector3(location.position.x, 0.08, location.position.z);
+  }
+
+  return null;
+}
+
+function createCoinMesh(): THREE.Mesh {
+  const coin = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.075, 0.075, 0.018, 18),
+    new THREE.MeshStandardMaterial({ color: "#facc15", roughness: 0.36, metalness: 0.45 })
+  );
+  coin.rotation.x = Math.PI / 2;
+  coin.castShadow = true;
+  return coin;
+}
+
+function createSpark(color: string): THREE.Mesh {
+  const spark = new THREE.Mesh(
+    new THREE.ConeGeometry(0.035, 0.22, 4),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 })
+  );
+  spark.rotation.x = Math.PI / 2;
+  return spark;
+}
+
+function createSceneFeedbackEffect(event: SceneFeedbackEvent, currentState: GameState): THREE.Group | null {
+  const position = sceneFeedbackPosition(event, currentState);
+  if (!position) {
+    return null;
+  }
+
+  const color = colorForTone(event.tone ?? (event.kind === "sabotage" ? "danger" : "good"));
+  const group = new THREE.Group();
+  group.position.copy(position);
+  group.userData.feedbackRuntime = {
+    baseScale: 1,
+    createdAt: performance.now(),
+    duration: event.kind === "install" ? 1900 : 1450,
+    kind: event.kind,
+    startY: position.y
+  } satisfies FeedbackRuntime;
+
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(0.5, 0.018, 8, 44),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85, depthWrite: false })
+  );
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.08;
+  ring.userData.feedbackRing = true;
+  group.add(ring);
+
+  if (event.kind === "pickup" || event.kind === "store" || event.kind === "stock" || event.kind === "vehicle") {
+    const crate = createStockCrateMesh(event.productId ?? "soda", event.amount ?? 6, true);
+    crate.position.set(0, event.kind === "store" ? 0.56 : 0.72, 0);
+    crate.scale.setScalar(event.kind === "stock" ? 0.72 : 0.9);
+    crate.userData.feedbackCrate = true;
+    group.add(crate);
+  }
+
+  if (event.kind === "install") {
+    const ghost = createMachineMesh("#2dd4bf", 0);
+    ghost.position.y = 0.08;
+    ghost.scale.setScalar(0.72);
+    ghost.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        const materials = Array.isArray(child.material) ? child.material : [child.material];
+        for (const material of materials) {
+          material.transparent = true;
+          material.opacity = Math.min(material.opacity, 0.48);
+          material.depthWrite = false;
+        }
+      }
+    });
+    group.add(ghost);
+  }
+
+  if (event.kind === "cash") {
+    for (let index = 0; index < 6; index += 1) {
+      const coin = createCoinMesh();
+      const angle = (Math.PI * 2 * index) / 6;
+      coin.position.set(Math.cos(angle) * 0.2, 0.5 + index * 0.035, Math.sin(angle) * 0.2);
+      coin.userData.feedbackCoin = true;
+      coin.userData.phase = angle;
+      group.add(coin);
+    }
+  }
+
+  if (event.kind === "repair" || event.kind === "upgrade" || event.kind === "sabotage") {
+    const sparkColor = event.kind === "sabotage" ? "#fb7185" : event.kind === "upgrade" ? "#38bdf8" : "#facc15";
+    for (let index = 0; index < 9; index += 1) {
+      const spark = createSpark(sparkColor);
+      const angle = (Math.PI * 2 * index) / 9;
+      spark.position.set(Math.cos(angle) * 0.18, 0.74 + (index % 3) * 0.16, Math.sin(angle) * 0.18);
+      spark.rotation.z = angle;
+      spark.userData.feedbackSpark = true;
+      spark.userData.phase = angle;
+      group.add(spark);
+    }
+  }
+
+  const label = createLabelSprite(sceneFeedbackText(event), color);
+  label.position.y = event.kind === "install" ? 2.35 : 1.35;
+  label.scale.set(0.82, 0.22, 1);
+  label.userData.feedbackLabel = true;
+  group.add(label);
+
+  return group;
+}
+
+function updateFeedbackEffects(group: THREE.Group, time: number): void {
+  for (const child of [...group.children]) {
+    const runtime = child.userData.feedbackRuntime as FeedbackRuntime | undefined;
+    if (!runtime) {
+      continue;
+    }
+
+    const progress = THREE.MathUtils.clamp((time - runtime.createdAt) / runtime.duration, 0, 1);
+    const lift = Math.sin(progress * Math.PI) * 0.38 + progress * 0.42;
+    child.position.y = runtime.startY + lift;
+    child.rotation.y = progress * Math.PI * 1.2;
+    child.scale.setScalar(runtime.baseScale * (1 + Math.sin(progress * Math.PI) * 0.16));
+
+    child.traverse((object) => {
+      if (object.userData.feedbackRing) {
+        object.scale.set(1 + progress * 1.4, 1 + progress * 1.4, 1 + progress * 1.4);
+      }
+
+      if (object.userData.feedbackCoin || object.userData.feedbackSpark) {
+        const phase = typeof object.userData.phase === "number" ? object.userData.phase : 0;
+        object.position.y += Math.sin(time * 0.012 + phase) * 0.003;
+        object.rotation.y += 0.04;
+      }
+
+      if (object instanceof THREE.Mesh || object instanceof THREE.Sprite) {
+        const materials = object instanceof THREE.Sprite ? [object.material] : Array.isArray(object.material) ? object.material : [object.material];
+        for (const material of materials) {
+          material.transparent = true;
+          material.opacity = Math.min(material.opacity, Math.max(0, 1 - Math.max(0, progress - 0.65) / 0.35));
+        }
+      }
+    });
+
+    if (progress >= 1) {
+      disposeObject(child);
+      group.remove(child);
+    }
+  }
+}
+
 function createMissionBeacon(color: string): THREE.Group {
   const group = new THREE.Group();
   group.userData.beacon = true;
@@ -1041,6 +1312,64 @@ function addBuilding(scene: THREE.Scene, x: number, z: number, width: number, de
   scene.add(building);
 }
 
+function createDebugBox(box: CollisionBox): THREE.Mesh {
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(box.maxX - box.minX, 1.8, box.maxZ - box.minZ),
+    new THREE.MeshBasicMaterial({ color: "#fb7185", transparent: true, opacity: 0.18, wireframe: true, depthWrite: false })
+  );
+  mesh.position.set((box.minX + box.maxX) / 2, 0.9, (box.minZ + box.maxZ) / 2);
+  return mesh;
+}
+
+function createDebugRing(position: THREE.Vector3, radius: number, color: string): THREE.Mesh {
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(radius, 0.015, 6, 42),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, depthWrite: false })
+  );
+  ring.position.set(position.x, 0.12, position.z);
+  ring.rotation.x = Math.PI / 2;
+  return ring;
+}
+
+function createDebugPath(path: THREE.Vector3[], color: string): THREE.Line | null {
+  if (path.length < 2) {
+    return null;
+  }
+
+  const points = [...path, path[0]].map((point) => new THREE.Vector3(point.x, 0.18, point.z));
+  return new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(points),
+    new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.82 })
+  );
+}
+
+function populateDebugOverlay(group: THREE.Group, currentState: GameState, interactables: Interactable[], animatedProps: THREE.Object3D[]): void {
+  clearGroup(group);
+
+  for (const box of collisionBoxesForState(currentState)) {
+    group.add(createDebugBox(box));
+  }
+
+  for (const interactable of interactables) {
+    const color = interactable.target.type === "machine"
+      ? "#38bdf8"
+      : interactable.target.type === "placement"
+        ? "#a3e635"
+        : interactable.target.type === "supplier"
+          ? "#f59e0b"
+          : "#2dd4bf";
+    group.add(createDebugRing(interactable.position, interactable.radius, color));
+  }
+
+  for (const object of animatedProps) {
+    const path = Array.isArray(object.userData.walkPath) ? object.userData.walkPath as THREE.Vector3[] : [];
+    const line = createDebugPath(path, "#f8fafc");
+    if (line) {
+      group.add(line);
+    }
+  }
+}
+
 function populateDynamicObjects(group: THREE.Group, currentState: GameState, guidanceLocationId?: string): Interactable[] {
   clearGroup(group);
   const interactables: Interactable[] = [];
@@ -1075,7 +1404,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       }
       addLabel(group, location.name, "#38bdf8", position, 1.1);
       addGuidanceBeacon("#38bdf8");
-      interactables.push({ target: { type: "base", id: "garage", label: location.name }, position });
+      interactables.push({ radius: 1.35, target: { type: "base", id: "garage", label: location.name }, position });
       continue;
     }
 
@@ -1089,7 +1418,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       group.add(supplierStack);
       addLabel(group, location.name, "#f59e0b", position, 1.1);
       addGuidanceBeacon("#f59e0b");
-      interactables.push({ target: { type: "supplier", id: "supplier", label: location.name }, position });
+      interactables.push({ radius: 1.35, target: { type: "supplier", id: "supplier", label: location.name }, position });
       continue;
     }
 
@@ -1109,14 +1438,14 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       }
       addLabel(group, machine.name, owner?.color ?? "#94a3b8", machinePlacement.position, 2.2);
       addGuidanceBeacon(owner?.color ?? "#94a3b8", machinePlacement.position);
-      interactables.push({ target: { type: "machine", id: machine.id, label: machine.name }, position: servicePoint });
+      interactables.push({ radius: 1.15, target: { type: "machine", id: machine.id, label: machine.name }, position: servicePoint });
     } else {
       const marker = addMarker("#a3e635");
       marker.position.copy(machinePlacement.position);
       group.add(marker);
       addLabel(group, location.name, "#a3e635", machinePlacement.position, 1.1);
       addGuidanceBeacon("#a3e635", machinePlacement.position);
-      interactables.push({ target: { type: "placement", id: location.id, label: location.name }, position: machinePlacement.position });
+      interactables.push({ radius: 1.2, target: { type: "placement", id: location.id, label: location.name }, position: machinePlacement.position });
     }
   }
 
@@ -1143,6 +1472,10 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
         pulse.position.copy(servicePoint);
         pulse.userData.phase = index * 0.7;
         group.add(pulse);
+
+        const actor = createActivityActor(activity, placement, servicePoint, currentState.worldTimeHours);
+        actor.userData.phase = index * 0.9 + activity.hour;
+        group.add(actor);
       }
     });
 
@@ -1172,13 +1505,17 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
   return interactables;
 }
 
-export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, onPlayerHeadingChange, onTargetChange }: ThreeSceneProps) {
+export function ThreeScene({ feedbackEvent, guidanceLocationId, state, onPlayerPositionChange, onPlayerHeadingChange, onTargetChange }: ThreeSceneProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const stateRef = useRef(state);
   const dynamicGroupRef = useRef<THREE.Group | null>(null);
+  const debugGroupRef = useRef<THREE.Group | null>(null);
+  const feedbackGroupRef = useRef<THREE.Group | null>(null);
+  const animatedPropsRef = useRef<THREE.Object3D[]>([]);
   const carriedCrateMountRef = useRef<THREE.Group | null>(null);
   const playerAvatarCargoMountRef = useRef<THREE.Group | null>(null);
   const carriedCrateSignatureRef = useRef<string | null>(null);
+  const processedFeedbackIdRef = useRef<string | null>(null);
   const interactablesRef = useRef<Interactable[]>([]);
   const guidanceLocationIdRef = useRef(guidanceLocationId);
   const targetIdRef = useRef<string | null>(null);
@@ -1309,14 +1646,25 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
         animatedProps.push(object);
       }
     });
+    animatedPropsRef.current = animatedProps;
     scene.add(streetProps);
 
     const dynamicGroup = new THREE.Group();
     scene.add(dynamicGroup);
     dynamicGroupRef.current = dynamicGroup;
 
+    const feedbackGroup = new THREE.Group();
+    scene.add(feedbackGroup);
+    feedbackGroupRef.current = feedbackGroup;
+
+    const debugGroup = new THREE.Group();
+    debugGroup.visible = false;
+    scene.add(debugGroup);
+    debugGroupRef.current = debugGroup;
+
     const keys = new Set<string>();
     let cameraMode: CameraMode = "first";
+    let debugVisible = false;
     let pitch = 0;
     let lastTime = performance.now();
     let lastPositionEmit = 0;
@@ -1329,6 +1677,9 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
       }
 
       interactablesRef.current = populateDynamicObjects(dynamicGroupRef.current, stateRef.current, guidanceLocationIdRef.current);
+      if (debugVisible && debugGroupRef.current) {
+        populateDebugOverlay(debugGroupRef.current, stateRef.current, interactablesRef.current, animatedProps);
+      }
     };
 
     updateDynamicObjects();
@@ -1337,6 +1688,16 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
       if (event.code === "KeyV" && !event.repeat) {
         cameraMode = cameraMode === "first" ? "third" : "first";
         applyCameraMode(camera, playerAvatar, carriedCrateMount, cameraMode, pitch);
+        return;
+      }
+
+      if ((event.code === "F3" || event.code === "Backquote") && !event.repeat) {
+        debugVisible = !debugVisible;
+        debugGroup.visible = debugVisible;
+        if (debugVisible) {
+          populateDebugOverlay(debugGroup, stateRef.current, interactablesRef.current, animatedProps);
+        }
+        event.preventDefault();
         return;
       }
 
@@ -1394,20 +1755,21 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
       for (const interactable of interactablesRef.current) {
         const toTarget = interactable.position.clone().sub(targetOrigin);
         const distance = toTarget.length();
-        if (distance > 3.4) {
+        const maxDistance = interactable.radius + (cameraMode === "third" ? 2.9 : 2.45);
+        if (distance > maxDistance) {
           continue;
         }
 
         const alignment = forward.dot(toTarget.normalize());
-        if (distance > 2.2 && alignment < 0.55) {
+        if (distance > interactable.radius + 1.2 && alignment < 0.32) {
           continue;
         }
 
-        if (distance > 1.4 && alignment < 0.18) {
+        if (distance > interactable.radius + 0.45 && alignment < -0.08) {
           continue;
         }
 
-        const score = distance - alignment * 1.4;
+        const score = Math.max(0, distance - interactable.radius) - alignment * 1.25;
         if (score < bestScore) {
           bestScore = score;
           best = interactable;
@@ -1476,10 +1838,15 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
           const baseY = typeof object.userData.baseY === "number" ? object.userData.baseY : object.position.y;
           object.position.y = baseY + Math.sin(time * 0.004) * 0.035;
         }
+
+        if (object.userData.dynamicNpc) {
+          updateAnimatedStreetProp(object, time);
+        }
       });
       for (const object of animatedProps) {
         updateAnimatedStreetProp(object, time);
       }
+      updateFeedbackEffects(feedbackGroup, time);
 
       updateTarget();
       renderer.render(scene, camera);
@@ -1506,6 +1873,9 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
       renderer.dispose();
       mount.removeChild(renderer.domElement);
       dynamicGroupRef.current = null;
+      debugGroupRef.current = null;
+      feedbackGroupRef.current = null;
+      animatedPropsRef.current = [];
       carriedCrateMountRef.current = null;
       playerAvatarCargoMountRef.current = null;
       carriedCrateSignatureRef.current = null;
@@ -1520,7 +1890,24 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
     }
 
     interactablesRef.current = populateDynamicObjects(dynamicGroup, state, guidanceLocationId);
+    const debugGroup = debugGroupRef.current;
+    if (debugGroup?.visible) {
+      populateDebugOverlay(debugGroup, state, interactablesRef.current, animatedPropsRef.current);
+    }
   }, [guidanceLocationId, state]);
+
+  useEffect(() => {
+    const feedbackGroup = feedbackGroupRef.current;
+    if (!feedbackGroup || !feedbackEvent || processedFeedbackIdRef.current === feedbackEvent.id) {
+      return;
+    }
+
+    processedFeedbackIdRef.current = feedbackEvent.id;
+    const effect = createSceneFeedbackEffect(feedbackEvent, state);
+    if (effect) {
+      feedbackGroup.add(effect);
+    }
+  }, [feedbackEvent, state]);
 
   useEffect(() => {
     const mount = carriedCrateMountRef.current;
