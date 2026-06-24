@@ -2,6 +2,7 @@ import { HandCoins, PackagePlus, RotateCcw, Save, ShoppingCart, Wrench, Zap } fr
 import type { GameCommand, GameState, ProductId } from "../game/core/types";
 import { cargoSpaceRemaining, machineAtLocation } from "../game/core/selectors";
 import type { SceneTarget } from "../render/three/SceneTargets";
+import { getPrimaryInteraction } from "./interactionActions";
 
 interface InteractionPanelProps {
   state: GameState;
@@ -33,6 +34,7 @@ function ActionButton({
 
 export function InteractionPanel({ state, target, onCommand, onSave, onReload, onRestart }: InteractionPanelProps) {
   const player = state.factions[state.playerFactionId];
+  const primaryInteraction = getPrimaryInteraction(state, target);
 
   if (!target) {
     return (
@@ -47,6 +49,12 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
     return (
       <section className="interaction-panel">
         <h2>{target.label}</h2>
+        {primaryInteraction && (
+          <div className="primary-hint">
+            <kbd>E</kbd>
+            <span>{primaryInteraction.label}</span>
+          </div>
+        )}
         <div className="action-grid">
           <ActionButton icon={<Save size={17} aria-hidden="true" />} onClick={onSave}>
             Save
@@ -66,6 +74,12 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
     return (
       <section className="interaction-panel">
         <h2>{target.label}</h2>
+        {primaryInteraction && (
+          <div className="primary-hint">
+            <kbd>E</kbd>
+            <span>{primaryInteraction.label}</span>
+          </div>
+        )}
         <div className="action-grid">
           {Object.values(state.products).map((product) => {
             const quantity = product.id === "mystery_capsules" ? 3 : 5;
@@ -93,6 +107,12 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
     return (
       <section className="interaction-panel">
         <h2>{location.name}</h2>
+        {primaryInteraction && (
+          <div className="primary-hint">
+            <kbd>E</kbd>
+            <span>{primaryInteraction.label}</span>
+          </div>
+        )}
         <p>
           Traffic {location.footTraffic.toFixed(1)} · Risk {Math.round((1 - location.safety + location.policePresence) * 50)}
         </p>
@@ -126,6 +146,13 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
         </div>
         <span className={isPlayerMachine ? "owner-chip player" : "owner-chip rival"}>{isPlayerMachine ? "Owned" : "Rival"}</span>
       </div>
+
+      {primaryInteraction && (
+        <div className="primary-hint">
+          <kbd>E</kbd>
+          <span>{primaryInteraction.label}</span>
+        </div>
+      )}
 
       <div className="machine-readout">
         <span>${Math.round(machine.revenueStored)}</span>

@@ -3,9 +3,11 @@ import * as THREE from "three";
 import type { GameState } from "../../game/core/types";
 import { machineAtLocation } from "../../game/core/selectors";
 import type { SceneTarget } from "./SceneTargets";
+import { createAsphaltMaterial, createBuilding, createRoadMaterial, createSidewalkMaterial, createSkyDome, createStreetProps } from "./proceduralArt";
 
 interface ThreeSceneProps {
   state: GameState;
+  onPlayerPositionChange: (position: { x: number; z: number }) => void;
   onTargetChange: (target: SceneTarget | null) => void;
 }
 
@@ -52,17 +54,6 @@ function createMachineMesh(color: string, damage: number): THREE.Group {
   return group;
 }
 
-function addBlock(scene: THREE.Scene, x: number, z: number, width: number, depth: number, height: number, color: string): void {
-  const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(width, height, depth),
-    new THREE.MeshStandardMaterial({ color, roughness: 0.78 })
-  );
-  mesh.position.set(x, height / 2, z);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  scene.add(mesh);
-}
-
 function addMarker(color: string): THREE.Mesh {
   const marker = new THREE.Mesh(
     new THREE.CylinderGeometry(0.5, 0.5, 0.06, 28),
@@ -73,14 +64,71 @@ function addMarker(color: string): THREE.Mesh {
   return marker;
 }
 
+function createLabelSprite(text: string, color: string): THREE.Sprite {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 128;
+  const context = canvas.getContext("2d");
+
+  if (context) {
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "rgba(15, 23, 42, 0.78)";
+    context.strokeStyle = color;
+    context.lineWidth = 4;
+    context.roundRect(12, 18, 488, 74, 14);
+    context.fill();
+    context.stroke();
+    context.fillStyle = "#f8fafc";
+    context.font = "700 34px Inter, system-ui, sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(text, 256, 55, 446);
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthTest: true
+    })
+  );
+  sprite.scale.set(1.15, 0.29, 1);
+  return sprite;
+}
+
+function addLabel(group: THREE.Group, text: string, color: string, position: THREE.Vector3, height: number): void {
+  const label = createLabelSprite(text, color);
+  label.position.set(position.x, height, position.z);
+  group.add(label);
+}
+
 function disposeObject(object: THREE.Object3D): void {
   object.traverse((child) => {
     if (child instanceof THREE.Mesh) {
       child.geometry.dispose();
       const materials = Array.isArray(child.material) ? child.material : [child.material];
       for (const material of materials) {
+        const mapped = material as THREE.Material & {
+          alphaMap?: THREE.Texture | null;
+          emissiveMap?: THREE.Texture | null;
+          map?: THREE.Texture | null;
+          normalMap?: THREE.Texture | null;
+          roughnessMap?: THREE.Texture | null;
+        };
+        mapped.map?.dispose();
+        mapped.alphaMap?.dispose();
+        mapped.emissiveMap?.dispose();
+        mapped.normalMap?.dispose();
+        mapped.roughnessMap?.dispose();
         material.dispose();
       }
+    }
+
+    if (child instanceof THREE.Sprite) {
+      child.material.map?.dispose();
+      child.material.dispose();
     }
   });
 }
@@ -92,17 +140,74 @@ function clearGroup(group: THREE.Group): void {
   group.clear();
 }
 
-export function ThreeScene({ state, onTargetChange }: ThreeSceneProps) {
+function addBuilding(scene: THREE.Scene, x: number, z: number, width: number, depth: number, height: number, style: Parameters<typeof createBuilding>[3], signText: string): void {
+  const building = createBuilding(width, depth, height, style, signText);
+  building.position.set(x, 0, z);
+  scene.add(building);
+}
+
+function populateDynamicObjects(group: THREE.Group, currentState: GameState): Interactable[] {
+  clearGroup(group);
+  const interactables: Interactable[] = [];
+
+  for (const location of Object.values(currentState.locations)) {
+    const position = new THREE.Vector3(location.position.x, 0, location.position.z);
+
+    if (location.kind === "garage") {
+      const marker = addMarker("#38bdf8");
+      marker.position.copy(position);
+      group.add(marker);
+      addLabel(group, location.name, "#38bdf8", position, 1.1);
+      interactables.push({ target: { type: "base", id: "garage", label: location.name }, position });
+      continue;
+    }
+
+    if (location.kind === "supplier") {
+      const marker = addMarker("#f59e0b");
+      marker.position.copy(position);
+      group.add(marker);
+      addLabel(group, location.name, "#f59e0b", position, 1.1);
+      interactables.push({ target: { type: "supplier", id: "supplier", label: location.name }, position });
+      continue;
+    }
+
+    const machine = machineAtLocation(currentState, location.id);
+    if (machine) {
+      const owner = currentState.factions[machine.ownerFactionId];
+      const machineGroup = createMachineMesh(owner?.color ?? "#94a3b8", machine.damage);
+      machineGroup.position.copy(position);
+      machineGroup.lookAt(new THREE.Vector3(0, 0, 0));
+      group.add(machineGroup);
+      addLabel(group, machine.name, owner?.color ?? "#94a3b8", position, 2.2);
+      interactables.push({ target: { type: "machine", id: machine.id, label: machine.name }, position });
+    } else {
+      const marker = addMarker("#a3e635");
+      marker.position.copy(position);
+      group.add(marker);
+      addLabel(group, location.name, "#a3e635", position, 1.1);
+      interactables.push({ target: { type: "placement", id: location.id, label: location.name }, position });
+    }
+  }
+
+  return interactables;
+}
+
+export function ThreeScene({ state, onPlayerPositionChange, onTargetChange }: ThreeSceneProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const stateRef = useRef(state);
   const dynamicGroupRef = useRef<THREE.Group | null>(null);
   const interactablesRef = useRef<Interactable[]>([]);
   const targetIdRef = useRef<string | null>(null);
+  const onPlayerPositionChangeRef = useRef(onPlayerPositionChange);
   const onTargetChangeRef = useRef(onTargetChange);
 
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  useEffect(() => {
+    onPlayerPositionChangeRef.current = onPlayerPositionChange;
+  }, [onPlayerPositionChange]);
 
   useEffect(() => {
     onTargetChangeRef.current = onTargetChange;
@@ -115,15 +220,16 @@ export function ThreeScene({ state, onTargetChange }: ThreeSceneProps) {
     }
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color("#111827");
-    scene.fog = new THREE.Fog("#111827", 16, 34);
+    scene.background = new THREE.Color("#0f172a");
+    scene.fog = new THREE.Fog("#18243a", 20, 48);
 
     const camera = new THREE.PerspectiveCamera(70, mount.clientWidth / mount.clientHeight, 0.1, 80);
     camera.position.set(0, 1.65, 0);
     camera.rotation.order = "YXZ";
 
     const yaw = new THREE.Object3D();
-    yaw.position.set(-8, 0, 9);
+    yaw.position.set(-8, 0, 1.4);
+    yaw.rotation.y = Math.PI;
     yaw.add(camera);
     scene.add(yaw);
 
@@ -134,18 +240,20 @@ export function ThreeScene({ state, onTargetChange }: ThreeSceneProps) {
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     mount.appendChild(renderer.domElement);
 
-    const hemi = new THREE.HemisphereLight("#dbeafe", "#172554", 1.15);
+    scene.add(createSkyDome());
+
+    const hemi = new THREE.HemisphereLight("#dbeafe", "#172554", 1.05);
     scene.add(hemi);
 
-    const keyLight = new THREE.DirectionalLight("#fef3c7", 2.2);
-    keyLight.position.set(-6, 11, 8);
+    const keyLight = new THREE.DirectionalLight("#bfdbfe", 1.45);
+    keyLight.position.set(-8, 13, 7);
     keyLight.castShadow = true;
     keyLight.shadow.mapSize.set(1024, 1024);
     scene.add(keyLight);
 
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(48, 40),
-      new THREE.MeshStandardMaterial({ color: "#334155", roughness: 0.9 })
+      createAsphaltMaterial()
     );
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
@@ -153,7 +261,7 @@ export function ThreeScene({ state, onTargetChange }: ThreeSceneProps) {
 
     const road = new THREE.Mesh(
       new THREE.BoxGeometry(42, 0.03, 4),
-      new THREE.MeshStandardMaterial({ color: "#1f2937", roughness: 0.85 })
+      createRoadMaterial()
     );
     road.position.set(0, 0.02, 0);
     road.receiveShadow = true;
@@ -161,19 +269,35 @@ export function ThreeScene({ state, onTargetChange }: ThreeSceneProps) {
 
     const crossRoad = new THREE.Mesh(
       new THREE.BoxGeometry(4, 0.035, 30),
-      new THREE.MeshStandardMaterial({ color: "#1f2937", roughness: 0.85 })
+      createRoadMaterial()
     );
     crossRoad.position.set(0, 0.025, 0);
     crossRoad.receiveShadow = true;
     scene.add(crossRoad);
 
-    addBlock(scene, -9, 8.8, 5.5, 3.5, 2.6, "#475569");
-    addBlock(scene, 8.4, 8.7, 4.8, 3.2, 2.4, "#78350f");
-    addBlock(scene, -5.2, -7.2, 5.8, 2.9, 2.8, "#0f766e");
-    addBlock(scene, 4.3, -8.1, 5.3, 2.8, 3.1, "#7c2d12");
-    addBlock(scene, 9.6, -2.8, 3.4, 4.6, 3.6, "#4c1d95");
-    addBlock(scene, -11.6, -2.1, 2.8, 5.3, 2.7, "#0e7490");
-    addBlock(scene, 1.5, 4.7, 4.2, 3.4, 2.5, "#991b1b");
+    const sidewalkMaterial = createSidewalkMaterial();
+    const sidewalks = [
+      { x: 0, z: -3.35, width: 42, depth: 1.8 },
+      { x: 0, z: 3.35, width: 42, depth: 1.8 },
+      { x: -3.35, z: 0, width: 1.8, depth: 30 },
+      { x: 3.35, z: 0, width: 1.8, depth: 30 }
+    ];
+
+    for (const sidewalk of sidewalks) {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(sidewalk.width, 0.04, sidewalk.depth), sidewalkMaterial);
+      mesh.position.set(sidewalk.x, 0.06, sidewalk.z);
+      mesh.receiveShadow = true;
+      scene.add(mesh);
+    }
+
+    addBuilding(scene, -9, 8.8, 5.5, 3.5, 2.6, "garage", "STORAGE");
+    addBuilding(scene, 8.4, 8.7, 4.8, 3.2, 2.4, "supplier", "SUPPLY");
+    addBuilding(scene, -5.2, -7.2, 5.8, 2.9, 2.8, "laundromat", "FOAM & FOLD");
+    addBuilding(scene, 4.3, -8.1, 5.3, 2.8, 3.1, "gym", "IRON HABIT");
+    addBuilding(scene, 9.6, -2.8, 3.4, 4.6, 3.6, "arcade", "PIXEL");
+    addBuilding(scene, -11.6, -2.1, 2.8, 5.3, 2.7, "transit", "BUS STOP");
+    addBuilding(scene, 1.5, 4.7, 4.2, 3.4, 2.5, "rival", "REDLINE");
+    scene.add(createStreetProps());
 
     const dynamicGroup = new THREE.Group();
     scene.add(dynamicGroup);
@@ -182,6 +306,7 @@ export function ThreeScene({ state, onTargetChange }: ThreeSceneProps) {
     const keys = new Set<string>();
     let pitch = 0;
     let lastTime = performance.now();
+    let lastPositionEmit = 0;
     let disposed = false;
 
     const updateDynamicObjects = () => {
@@ -189,47 +314,7 @@ export function ThreeScene({ state, onTargetChange }: ThreeSceneProps) {
         return;
       }
 
-      clearGroup(dynamicGroupRef.current);
-      const interactables: Interactable[] = [];
-      const currentState = stateRef.current;
-
-      for (const location of Object.values(currentState.locations)) {
-        const position = new THREE.Vector3(location.position.x, 0, location.position.z);
-
-        if (location.kind === "garage") {
-          const marker = addMarker("#38bdf8");
-          marker.position.copy(position);
-          dynamicGroupRef.current.add(marker);
-          interactables.push({ target: { type: "base", id: "garage", label: location.name }, position });
-          continue;
-        }
-
-        if (location.kind === "supplier") {
-          const marker = addMarker("#f59e0b");
-          marker.position.copy(position);
-          dynamicGroupRef.current.add(marker);
-          interactables.push({ target: { type: "supplier", id: "supplier", label: location.name }, position });
-          continue;
-        }
-
-        const machine = machineAtLocation(currentState, location.id);
-        if (machine) {
-          const owner = currentState.factions[machine.ownerFactionId];
-          const machineGroup = createMachineMesh(owner?.color ?? "#94a3b8", machine.damage);
-          machineGroup.position.copy(position);
-          const lookAt = new THREE.Vector3(0, 0, 0);
-          machineGroup.lookAt(lookAt);
-          dynamicGroupRef.current.add(machineGroup);
-          interactables.push({ target: { type: "machine", id: machine.id, label: machine.name }, position });
-        } else {
-          const marker = addMarker("#a3e635");
-          marker.position.copy(position);
-          dynamicGroupRef.current.add(marker);
-          interactables.push({ target: { type: "placement", id: location.id, label: location.name }, position });
-        }
-      }
-
-      interactablesRef.current = interactables;
+      interactablesRef.current = populateDynamicObjects(dynamicGroupRef.current, stateRef.current);
     };
 
     updateDynamicObjects();
@@ -324,6 +409,11 @@ export function ThreeScene({ state, onTargetChange }: ThreeSceneProps) {
         yaw.position.z = THREE.MathUtils.clamp(yaw.position.z, -13, 13);
       }
 
+      if (time - lastPositionEmit > 180) {
+        lastPositionEmit = time;
+        onPlayerPositionChangeRef.current({ x: yaw.position.x, z: yaw.position.z });
+      }
+
       updateTarget();
       renderer.render(scene, camera);
       requestAnimationFrame(animate);
@@ -345,6 +435,7 @@ export function ThreeScene({ state, onTargetChange }: ThreeSceneProps) {
       window.removeEventListener("resize", onResize);
       renderer.domElement.removeEventListener("click", onCanvasClick);
       clearGroup(dynamicGroup);
+      disposeObject(scene);
       renderer.dispose();
       mount.removeChild(renderer.domElement);
       dynamicGroupRef.current = null;
@@ -358,45 +449,7 @@ export function ThreeScene({ state, onTargetChange }: ThreeSceneProps) {
       return;
     }
 
-    clearGroup(dynamicGroup);
-    const interactables: Interactable[] = [];
-
-    for (const location of Object.values(state.locations)) {
-      const position = new THREE.Vector3(location.position.x, 0, location.position.z);
-
-      if (location.kind === "garage") {
-        const marker = addMarker("#38bdf8");
-        marker.position.copy(position);
-        dynamicGroup.add(marker);
-        interactables.push({ target: { type: "base", id: "garage", label: location.name }, position });
-        continue;
-      }
-
-      if (location.kind === "supplier") {
-        const marker = addMarker("#f59e0b");
-        marker.position.copy(position);
-        dynamicGroup.add(marker);
-        interactables.push({ target: { type: "supplier", id: "supplier", label: location.name }, position });
-        continue;
-      }
-
-      const machine = machineAtLocation(state, location.id);
-      if (machine) {
-        const owner = state.factions[machine.ownerFactionId];
-        const machineGroup = createMachineMesh(owner?.color ?? "#94a3b8", machine.damage);
-        machineGroup.position.copy(position);
-        machineGroup.lookAt(new THREE.Vector3(0, 0, 0));
-        dynamicGroup.add(machineGroup);
-        interactables.push({ target: { type: "machine", id: machine.id, label: machine.name }, position });
-      } else {
-        const marker = addMarker("#a3e635");
-        marker.position.copy(position);
-        dynamicGroup.add(marker);
-        interactables.push({ target: { type: "placement", id: location.id, label: location.name }, position });
-      }
-    }
-
-    interactablesRef.current = interactables;
+    interactablesRef.current = populateDynamicObjects(dynamicGroup, state);
   }, [state]);
 
   return <div className="scene-mount" ref={mountRef} aria-label="3D district view" />;
