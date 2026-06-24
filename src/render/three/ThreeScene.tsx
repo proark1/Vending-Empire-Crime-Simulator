@@ -9,6 +9,7 @@ interface ThreeSceneProps {
   guidanceLocationId?: string;
   state: GameState;
   onPlayerPositionChange: (position: { x: number; z: number }) => void;
+  onPlayerHeadingChange: (headingDegrees: number) => void;
   onTargetChange: (target: SceneTarget | null) => void;
 }
 
@@ -589,7 +590,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
   return interactables;
 }
 
-export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, onTargetChange }: ThreeSceneProps) {
+export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, onPlayerHeadingChange, onTargetChange }: ThreeSceneProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const stateRef = useRef(state);
   const dynamicGroupRef = useRef<THREE.Group | null>(null);
@@ -599,6 +600,7 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
   const guidanceLocationIdRef = useRef(guidanceLocationId);
   const targetIdRef = useRef<string | null>(null);
   const onPlayerPositionChangeRef = useRef(onPlayerPositionChange);
+  const onPlayerHeadingChangeRef = useRef(onPlayerHeadingChange);
   const onTargetChangeRef = useRef(onTargetChange);
 
   useEffect(() => {
@@ -612,6 +614,10 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
   useEffect(() => {
     onPlayerPositionChangeRef.current = onPlayerPositionChange;
   }, [onPlayerPositionChange]);
+
+  useEffect(() => {
+    onPlayerHeadingChangeRef.current = onPlayerHeadingChange;
+  }, [onPlayerHeadingChange]);
 
   useEffect(() => {
     onTargetChangeRef.current = onTargetChange;
@@ -836,6 +842,7 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
       if (time - lastPositionEmit > 180) {
         lastPositionEmit = time;
         onPlayerPositionChangeRef.current({ x: yaw.position.x, z: yaw.position.z });
+        onPlayerHeadingChangeRef.current(THREE.MathUtils.radToDeg(-yaw.rotation.y));
       }
 
       atmosphere.rotation.y += delta * 0.015;

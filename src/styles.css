@@ -449,7 +449,7 @@ kbd {
   top: 0;
   z-index: 1;
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 4px;
   padding: 6px;
   background: rgba(15, 23, 42, 0.96);
@@ -492,6 +492,8 @@ kbd {
 .machine-card,
 .route-task,
 .vehicle-card,
+.contract-card,
+.day-report,
 .inventory-row,
 .event-row,
 .cargo-summary {
@@ -510,6 +512,12 @@ kbd {
   gap: 8px;
 }
 
+.contract-card,
+.day-report {
+  display: grid;
+  gap: 9px;
+}
+
 .vehicle-heading {
   display: flex;
   align-items: center;
@@ -517,7 +525,9 @@ kbd {
 }
 
 .vehicle-heading h3,
-.route-task h3 {
+.route-task h3,
+.contract-card h3,
+.day-report h3 {
   margin: 0;
   font-size: 14px;
   line-height: 1.2;
@@ -525,6 +535,8 @@ kbd {
 
 .vehicle-heading p,
 .route-task p,
+.contract-card p,
+.day-report p,
 .vehicle-note {
   margin: 3px 0 0;
   color: #cbd5e1;
@@ -544,6 +556,73 @@ kbd {
   height: 100%;
   border-radius: inherit;
   background: linear-gradient(90deg, #d9f99d, #2dd4bf);
+}
+
+.contract-heading,
+.contract-footer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.contract-heading strong {
+  flex: 0 0 auto;
+  color: #bbf7d0;
+  font-size: 13px;
+}
+
+.contract-meter {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.2);
+}
+
+.contract-meter span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #22c55e, #a3e635);
+}
+
+.contract-footer {
+  align-items: center;
+}
+
+.contract-footer > span {
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.contract-card.warning,
+.day-report.warning {
+  border-color: rgba(251, 191, 36, 0.32);
+}
+
+.contract-card.danger {
+  border-color: rgba(251, 113, 133, 0.36);
+}
+
+.contract-card.danger .contract-meter span {
+  background: linear-gradient(90deg, #fb7185, #f59e0b);
+}
+
+.day-report.good {
+  border-color: rgba(134, 239, 172, 0.32);
+}
+
+.report-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 5px 12px;
+  color: #cbd5e1;
+  font-size: 12px;
+}
+
+.report-grid strong {
+  color: #f8fafc;
 }
 
 .route-task {
@@ -1229,7 +1308,10 @@ kbd {
 
   .slot-row,
   .upgrade-row,
-  .route-task {
+  .route-task,
+  .contract-heading,
+  .contract-footer {
+    display: grid;
     grid-template-columns: 1fr;
   }
 

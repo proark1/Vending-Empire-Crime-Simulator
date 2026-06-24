@@ -72,6 +72,41 @@ describe("game reducer", () => {
     expect(selectedRouteTask(state)?.id).toBe(stockTask!.id);
   });
 
+  it("surfaces active service contracts as route tasks", () => {
+    const state = createInitialState();
+    const task = routeTasks(state).find((candidate) => candidate.id === "contract:contract_1");
+
+    expect(task).toMatchObject({
+      type: "contract",
+      locationId: "laundromat",
+      title: "Foam & Fold soda promise"
+    });
+  });
+
+  it("completes a matching service contract when stocking a machine", () => {
+    const state = reduceCommands(createInitialState(), [
+      { type: "buy_product", actorId: "player", productId: "soda", quantity: 6 },
+      { type: "stock_machine", actorId: "player", machineId: "machine_player_1", productId: "soda", quantity: 6 }
+    ]).state;
+
+    expect(state.contracts.contract_1.status).toBe("completed");
+    expect(state.contracts.contract_1.deliveredQuantity).toBe(6);
+    expect(state.factions.player.money).toBe(144);
+    expect(state.progression.contractRewardsToday).toBe(36);
+    expect(state.progression.contractsCompletedToday).toBe(1);
+  });
+
+  it("fails expired service contracts and files a day report", () => {
+    const state = reduceGameState(createInitialState(), { type: "advance_time", actorId: "player", hours: 17 }).state;
+
+    expect(state.contracts.contract_1.status).toBe("failed");
+    expect(state.dayReports[0]).toMatchObject({
+      day: 1,
+      contractsFailed: 1
+    });
+    expect(state.factions.player.heat).toBeGreaterThan(0);
+  });
+
   it("stores revenue over time and lets the player collect it", () => {
     const stocked = reduceCommands(createInitialState(), [
       { type: "buy_product", actorId: "player", productId: "soda", quantity: 10 },

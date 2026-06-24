@@ -1,6 +1,6 @@
-import type { FactionId, GameState, Inventory, Location, LocationId, MachineId, RouteVehicle, VendingMachine } from "./types";
+import type { DayReport, FactionId, GameState, Inventory, Location, LocationId, MachineId, RouteVehicle, ServiceContract, VendingMachine } from "./types";
 
-export type RouteTaskType = "supplier" | "garage" | "stock" | "collect" | "repair" | "pressure";
+export type RouteTaskType = "supplier" | "garage" | "stock" | "collect" | "repair" | "pressure" | "contract";
 
 export interface RouteTask {
   id: string;
@@ -9,6 +9,7 @@ export interface RouteTask {
   detail: string;
   locationId: LocationId;
   machineId?: MachineId;
+  contractId?: string;
   priority: number;
   tone: "good" | "warning" | "danger";
 }
@@ -82,7 +83,7 @@ export function firstVehicleProduct(state: GameState, vehicle = activeVehicle(st
 }
 
 export function totalOwnedStockUnits(state: GameState): number {
-  return carriedCrateUnits(state) + garageStorageUnits(state);
+  return carriedCrateUnits(state) + garageStorageUnits(state) + Object.values(state.vehicles).reduce((sum, vehicle) => sum + vehicleInventoryUnits(state, vehicle), 0);
 }
 
 export function firstGarageStorageProduct(state: GameState): { productId: keyof GameState["products"]; quantity: number } | undefined {
@@ -101,6 +102,40 @@ export function formatClock(worldTimeHours: number): string {
   const hour = Math.floor(hourInDay);
   const minute = Math.floor((hourInDay - hour) * 60);
   return `Day ${day} ${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
+}
+
+export function activeContracts(state: GameState): ServiceContract[] {
+  return Object.values(state.contracts).filter((contract) => contract.status === "active");
+}
+
+export function latestDayReport(state: GameState): DayReport | undefined {
+  return state.dayReports[0];
+}
+
+export function contractRemainingQuantity(contract: ServiceContract): number {
+  return Math.max(0, contract.requiredQuantity - contract.deliveredQuantity);
+}
+
+export function contractProgressRatio(contract: ServiceContract): number {
+  return Math.min(1, contract.deliveredQuantity / Math.max(1, contract.requiredQuantity));
+}
+
+export function contractHoursRemaining(state: GameState, contract: ServiceContract): number {
+  return contract.deadlineHour - state.worldTimeHours;
+}
+
+export function contractTone(state: GameState, contract: ServiceContract): "good" | "warning" | "danger" {
+  const remainingHours = contractHoursRemaining(state, contract);
+  const progress = contractProgressRatio(contract);
+  if (remainingHours <= 2 || (remainingHours <= 6 && progress < 0.5)) {
+    return "danger";
+  }
+
+  if (remainingHours <= 8 || progress < 0.35) {
+    return "warning";
+  }
+
+  return "good";
 }
 
 export function missionProgress(state: GameState): { ownedCount: number; profitableCount: number; target: number } {
@@ -192,6 +227,25 @@ export function routeTasks(state: GameState): RouteTask[] {
       locationId: "supplier",
       priority: garageUnits + vehicleUnits === 0 ? 8 : 3,
       tone: garageUnits + vehicleUnits === 0 ? "warning" : "good"
+    });
+  }
+
+  for (const contract of activeContracts(state)) {
+    const location = state.locations[contract.locationId];
+    const remaining = contractRemainingQuantity(contract);
+    const hoursLeft = contractHoursRemaining(state, contract);
+    const product = state.products[contract.productId];
+    const tone = contractTone(state, contract);
+    tasks.push({
+      id: `contract:${contract.id}`,
+      type: "contract",
+      title: contract.title,
+      detail: `${remaining} ${product?.name ?? "stock"} due by ${formatClock(contract.deadlineHour)} · ${Math.max(0, Math.ceil(hoursLeft))}h left`,
+      locationId: contract.locationId,
+      machineId: Object.values(state.machines).find((machine) => machine.ownerFactionId === state.playerFactionId && machine.locationId === contract.locationId)?.id,
+      contractId: contract.id,
+      priority: tone === "danger" ? 12 : tone === "warning" ? 9 : 5,
+      tone
     });
   }
 

@@ -3,11 +3,16 @@ import { useMemo, useState } from "react";
 import type { GameCommand, GameState } from "../game/core/types";
 import { getMachineUpgradeEffects } from "../game/core/machineStats";
 import {
+  activeContracts,
   activeVehicle,
   carriedCrateUnits,
+  contractProgressRatio,
+  contractRemainingQuantity,
+  contractTone,
   formatClock,
   garageStorageUnits,
   getMachineLocation,
+  latestDayReport,
   machineRoutePressure,
   machineStockUnits,
   ownedMachines,
@@ -18,7 +23,7 @@ import {
 } from "../game/core/selectors";
 import { estimateMachineSalesPerHour } from "../game/systems/economy";
 
-type DashboardTab = "machines" | "route" | "logistics" | "rival" | "log";
+type DashboardTab = "machines" | "jobs" | "route" | "logistics" | "rival" | "log";
 
 interface DashboardProps {
   state: GameState;
@@ -40,6 +45,8 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
   const vehicle = activeVehicle(state);
   const tasks = useMemo(() => routeTasks(state), [state]);
   const selectedTask = selectedRouteTask(state);
+  const contracts = useMemo(() => activeContracts(state), [state]);
+  const dayReport = latestDayReport(state);
 
   return (
     <aside className="dashboard">
@@ -47,6 +54,10 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
         <button className={tab === "machines" ? "tab active" : "tab"} onClick={() => setTab("machines")} type="button">
           <Map size={16} aria-hidden="true" />
           Machines
+        </button>
+        <button className={tab === "jobs" ? "tab active" : "tab"} onClick={() => setTab("jobs")} type="button">
+          <ClipboardList size={16} aria-hidden="true" />
+          Jobs
         </button>
         <button className={tab === "route" ? "tab active" : "tab"} onClick={() => setTab("route")} type="button">
           <Route size={16} aria-hidden="true" />
@@ -92,6 +103,86 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
               </article>
             );
           })}
+        </div>
+      )}
+
+      {tab === "jobs" && (
+        <div className="panel-list">
+          {dayReport && (
+            <article className={`day-report ${dayReport.contractsFailed > 0 ? "warning" : "good"}`}>
+              <div>
+                <h3>Day {dayReport.day} report</h3>
+                <p>{dayReport.summary}</p>
+              </div>
+              <div className="report-grid">
+                <span>Collected</span>
+                <strong>${Math.round(dayReport.revenueCollected)}</strong>
+                <span>Stored</span>
+                <strong>${Math.round(dayReport.machineRevenueStored)}</strong>
+                <span>Contracts</span>
+                <strong>
+                  {dayReport.contractsCompleted}/{dayReport.contractsFailed}
+                </strong>
+                <span>Rival moves</span>
+                <strong>{dayReport.rivalActions}</strong>
+              </div>
+            </article>
+          )}
+
+          {contracts.length === 0 ? (
+            <article className="inventory-row">
+              <div>
+                <h3>No active contracts</h3>
+                <p>New service promises post as your route expands.</p>
+              </div>
+              <strong>0</strong>
+            </article>
+          ) : (
+            contracts.map((contract) => {
+              const product = state.products[contract.productId];
+              const location = state.locations[contract.locationId];
+              const tone = contractTone(state, contract);
+              const routeTaskId = `contract:${contract.id}`;
+              const isSelected = state.routePlan.selectedTaskId === routeTaskId;
+              const vehicleAtStop = vehicle?.locationId === contract.locationId;
+              return (
+                <article className={`contract-card ${tone}`} key={contract.id}>
+                  <div className="contract-heading">
+                    <div>
+                      <h3>{contract.title}</h3>
+                      <p>
+                        {location?.name ?? "Unknown stop"} · {contractRemainingQuantity(contract)} {product.name} due by {formatClock(contract.deadlineHour)}
+                      </p>
+                    </div>
+                    <strong>${contract.rewardMoney}</strong>
+                  </div>
+                  <div className="contract-meter" aria-hidden="true">
+                    <span style={{ width: `${contractProgressRatio(contract) * 100}%` }} />
+                  </div>
+                  <div className="contract-footer">
+                    <span>
+                      {contract.deliveredQuantity}/{contract.requiredQuantity} delivered
+                    </span>
+                    <div className="route-actions">
+                      <MiniButton onClick={() => onCommand({ type: "select_route_task", actorId: state.playerFactionId, taskId: isSelected ? null : routeTaskId })}>
+                        <Navigation size={13} aria-hidden="true" />
+                        {isSelected ? "Clear" : "Guide"}
+                      </MiniButton>
+                      {vehicle && (
+                        <MiniButton
+                          disabled={vehicleAtStop}
+                          onClick={() => onCommand({ type: "dispatch_vehicle", actorId: state.playerFactionId, vehicleId: vehicle.id, locationId: contract.locationId })}
+                        >
+                          <Truck size={13} aria-hidden="true" />
+                          {vehicleAtStop ? "Here" : "Drive"}
+                        </MiniButton>
+                      )}
+                    </div>
+                  </div>
+                </article>
+              );
+            })
+          )}
         </div>
       )}
 

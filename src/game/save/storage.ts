@@ -79,6 +79,15 @@ function migrateGameState(parsed: GameState): GameState {
     routePlan: {
       ...baseline.routePlan,
       ...(parsed.routePlan ?? {})
+    },
+    contracts: {
+      ...baseline.contracts,
+      ...(parsed.contracts ?? {})
+    },
+    dayReports: parsed.dayReports ?? baseline.dayReports,
+    progression: {
+      ...baseline.progression,
+      ...(parsed.progression ?? {})
     }
   };
 }

@@ -40,7 +40,7 @@ function nearestOpenPlacement(state: GameState, from: Vec2): LocationId | undefi
         return aAffordable - bAffordable;
       }
 
-      if (a.placementCost !== b.placementCost && aAffordable === 1) {
+      if (a.placementCost !== b.placementCost && aAffordable === bAffordable) {
         return a.placementCost - b.placementCost;
       }
 

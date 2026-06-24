@@ -19,6 +19,7 @@ export function App() {
   const [target, setTarget] = useState<SceneTarget | null>(null);
   const [entered, setEntered] = useState(false);
   const [playerPosition, setPlayerPosition] = useState<Vec2>({ x: -8, z: 1.4 });
+  const [playerHeadingDegrees, setPlayerHeadingDegrees] = useState(0);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const lastEventIdRef = useRef(state.eventLog[0]?.id ?? null);
   const lastMissionStepIdRef = useRef<string | null>(null);
@@ -109,12 +110,18 @@ export function App() {
 
   return (
     <main className="game-shell">
-      <ThreeScene guidanceLocationId={guidanceLocationId} state={state} onPlayerPositionChange={setPlayerPosition} onTargetChange={setTarget} />
+      <ThreeScene
+        guidanceLocationId={guidanceLocationId}
+        state={state}
+        onPlayerPositionChange={setPlayerPosition}
+        onPlayerHeadingChange={setPlayerHeadingDegrees}
+        onTargetChange={setTarget}
+      />
       <div className="world-vignette" aria-hidden="true" />
       <Hud state={state} />
       <MissionTracker state={state} playerPosition={playerPosition} />
       <div className="crosshair" aria-hidden="true" />
-      {entered && <GuidanceArrow label={routeTask?.title} state={state} targetLocationId={guidanceLocationId} playerPosition={playerPosition} />}
+      {entered && <GuidanceArrow label={routeTask?.title} state={state} targetLocationId={guidanceLocationId} playerHeadingDegrees={playerHeadingDegrees} playerPosition={playerPosition} />}
       {entered && activeTarget && primaryInteraction && (
         <div className={`target-prompt ${primaryInteraction.disabled ? "disabled" : ""}`}>
           <span className="target-name">{activeTarget.label}</span>

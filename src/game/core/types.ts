@@ -3,6 +3,7 @@ export type ProductId = "soda" | "chips" | "energy" | "mystery_capsules";
 export type MachineUpgradeId = "reinforced_glass" | "smart_lock" | "security_camera" | "cashless_terminal" | "neon_sign" | "remote_monitor";
 export type MachineId = string;
 export type VehicleId = string;
+export type ContractId = string;
 export type LocationId = string;
 export type DistrictId = string;
 
@@ -140,6 +141,55 @@ export interface RoutePlanState {
   selectedTaskId: string | null;
 }
 
+export type ServiceContractStatus = "active" | "completed" | "failed";
+
+export interface ServiceContract {
+  id: ContractId;
+  title: string;
+  locationId: LocationId;
+  productId: ProductId;
+  requiredQuantity: number;
+  deliveredQuantity: number;
+  issuedHour: number;
+  deadlineHour: number;
+  rewardMoney: number;
+  rewardPublicReputation: number;
+  rewardStreetReputation: number;
+  failureHeat: number;
+  failureRivalPressure: number;
+  status: ServiceContractStatus;
+  completedHour?: number;
+  failedHour?: number;
+}
+
+export interface DayReport {
+  id: string;
+  day: number;
+  startHour: number;
+  endHour: number;
+  revenueCollected: number;
+  machineRevenueStored: number;
+  contractRewards: number;
+  contractPenalties: number;
+  contractsCompleted: number;
+  contractsFailed: number;
+  stockSold: number;
+  rivalActions: number;
+  summary: string;
+}
+
+export interface ProgressionState {
+  nextContractNumber: number;
+  lastReportDay: number;
+  revenueCollectedToday: number;
+  contractRewardsToday: number;
+  contractPenaltiesToday: number;
+  stockSoldToday: number;
+  contractsCompletedToday: number;
+  contractsFailedToday: number;
+  rivalActionsToday: number;
+}
+
 export interface NpcController {
   factionId: FactionId;
   aggression: number;
@@ -175,10 +225,13 @@ export interface GameState {
   locations: Record<LocationId, Location>;
   machines: Record<MachineId, VendingMachine>;
   vehicles: Record<VehicleId, RouteVehicle>;
+  contracts: Record<ContractId, ServiceContract>;
   npcControllers: Record<FactionId, NpcController>;
   eventLog: GameEvent[];
   mission: MissionState;
   routePlan: RoutePlanState;
+  dayReports: DayReport[];
+  progression: ProgressionState;
 }
 
 export type GameCommand =

@@ -1,5 +1,16 @@
-import type { CommandResult, FactionId, GameCommand, GameEvent, GameEventTone, GameState, MachineSlot, ProductId, VendingMachine } from "../core/types";
-import { cargoSpaceRemaining, garageStorageSpaceRemaining, inventoryUnits, machineAtLocation, missionProgress, ownedMachines, vehicleSpaceRemaining } from "../core/selectors";
+import type { CommandResult, FactionId, GameCommand, GameEvent, GameEventTone, GameState, Location, MachineSlot, ProductId, ServiceContract, VendingMachine } from "../core/types";
+import {
+  activeContracts,
+  cargoSpaceRemaining,
+  contractRemainingQuantity,
+  garageStorageSpaceRemaining,
+  inventoryUnits,
+  machineAtLocation,
+  machineStockUnits,
+  missionProgress,
+  ownedMachines,
+  vehicleSpaceRemaining
+} from "../core/selectors";
 import { machineUpgrades } from "../content/machineUpgrades";
 import { machineHasUpgrade, sabotageDamage } from "../core/machineStats";
 import { runMachineSales } from "./economy";
@@ -108,6 +119,221 @@ function travelHoursBetweenLocations(state: GameState, fromLocationId: string, t
   return Math.max(0.08, Math.hypot(from.position.x - to.position.x, from.position.z - to.position.z) * 0.018 / Math.max(0.4, speed));
 }
 
+function contractProductOptions(location: Location): ProductId[] {
+  if (location.demandTags.includes("gym")) {
+    return ["energy", "soda", "chips"];
+  }
+
+  if (location.demandTags.includes("arcade")) {
+    return ["chips", "mystery_capsules", "soda"];
+  }
+
+  if (location.demandTags.includes("commuter")) {
+    return ["energy", "soda", "chips"];
+  }
+
+  if (location.demandTags.includes("student")) {
+    return ["soda", "chips", "energy"];
+  }
+
+  return ["soda", "chips", "energy"];
+}
+
+function contractTitle(location: Location, productName: string): string {
+  if (location.kind === "gym") {
+    return `${location.name} training rush`;
+  }
+
+  if (location.kind === "arcade") {
+    return `${location.name} late shift`;
+  }
+
+  if (location.kind === "transit") {
+    return `${location.name} commuter stock`;
+  }
+
+  return `${location.name} ${productName} promise`;
+}
+
+function createServiceContract(state: GameState, location: Location, productId: ProductId, requiredQuantity: number, deadlineHour: number): ServiceContract {
+  const product = state.products[productId];
+  const id = `contract_${state.progression.nextContractNumber++}`;
+  return {
+    id,
+    title: contractTitle(location, product.name),
+    locationId: location.id,
+    productId,
+    requiredQuantity,
+    deliveredQuantity: 0,
+    issuedHour: state.worldTimeHours,
+    deadlineHour,
+    rewardMoney: Math.round(requiredQuantity * product.basePrice + 14 + location.footTraffic * 10),
+    rewardPublicReputation: 1 + (location.safety >= 0.7 ? 1 : 0),
+    rewardStreetReputation: location.rivalPressure >= 0.25 ? 2 : 1,
+    failureHeat: location.policePresence >= 0.25 ? 4 : 2,
+    failureRivalPressure: 0.08 + location.rivalPressure * 0.08,
+    status: "active"
+  };
+}
+
+function issueDailyContracts(state: GameState, events: GameEvent[]): void {
+  const active = activeContracts(state);
+  const openSlots = Math.max(0, 3 - active.length);
+  if (openSlots === 0) {
+    return;
+  }
+
+  const activeKeys = new Set(active.map((contract) => `${contract.locationId}:${contract.productId}`));
+  const dayStart = Math.floor(state.worldTimeHours / 24) * 24;
+  let deadlineHour = dayStart + 22;
+  if (deadlineHour <= state.worldTimeHours + 4) {
+    deadlineHour += 24;
+  }
+
+  const candidates = ownedMachines(state, state.playerFactionId)
+    .map((machine) => state.locations[machine.locationId])
+    .filter((location): location is Location => Boolean(location))
+    .sort((a, b) => b.footTraffic + b.rivalPressure - (a.footTraffic + a.rivalPressure));
+
+  let issued = 0;
+  for (const location of candidates) {
+    const options = contractProductOptions(location);
+    const productId = options[(state.progression.nextContractNumber + issued) % options.length];
+    const key = `${location.id}:${productId}`;
+    if (activeKeys.has(key)) {
+      continue;
+    }
+
+    const requiredQuantity = Math.max(6, Math.round(5 + location.footTraffic * 3 + issued * 2));
+    const contract = createServiceContract(state, location, productId, requiredQuantity, deadlineHour);
+    state.contracts[contract.id] = contract;
+    activeKeys.add(key);
+    issued += 1;
+    log(state, events, `${contract.title} posted: deliver ${contract.requiredQuantity}x ${state.products[contract.productId].name}.`, "neutral");
+
+    if (issued >= openSlots) {
+      break;
+    }
+  }
+}
+
+function completeContract(state: GameState, events: GameEvent[], contract: ServiceContract): void {
+  if (contract.status !== "active" || contract.deliveredQuantity < contract.requiredQuantity) {
+    return;
+  }
+
+  const player = state.factions[state.playerFactionId];
+  contract.status = "completed";
+  contract.completedHour = state.worldTimeHours;
+  player.money += contract.rewardMoney;
+  player.publicReputation += contract.rewardPublicReputation;
+  player.streetReputation += contract.rewardStreetReputation;
+  state.progression.contractRewardsToday += contract.rewardMoney;
+  state.progression.contractsCompletedToday += 1;
+
+  const location = state.locations[contract.locationId];
+  if (location) {
+    location.rivalPressure = Math.max(0, location.rivalPressure - 0.08);
+  }
+
+  log(state, events, `${contract.title} completed. $${contract.rewardMoney} bonus paid.`, "good");
+}
+
+function applyContractDelivery(state: GameState, events: GameEvent[], machine: VendingMachine, productId: ProductId, quantity: number): void {
+  let remainingDelivery = quantity;
+  for (const contract of activeContracts(state)
+    .filter((candidate) => candidate.locationId === machine.locationId && candidate.productId === productId)
+    .sort((a, b) => a.deadlineHour - b.deadlineHour)) {
+    if (remainingDelivery <= 0) {
+      return;
+    }
+
+    const applied = Math.min(remainingDelivery, contractRemainingQuantity(contract));
+    if (applied <= 0) {
+      continue;
+    }
+
+    contract.deliveredQuantity += applied;
+    remainingDelivery -= applied;
+    completeContract(state, events, contract);
+  }
+}
+
+function failExpiredContracts(state: GameState, events: GameEvent[]): void {
+  const player = state.factions[state.playerFactionId];
+  for (const contract of activeContracts(state)) {
+    if (state.worldTimeHours < contract.deadlineHour || contract.deliveredQuantity >= contract.requiredQuantity) {
+      continue;
+    }
+
+    contract.status = "failed";
+    contract.failedHour = contract.deadlineHour;
+    player.heat += contract.failureHeat;
+    player.publicReputation = Math.max(0, player.publicReputation - 1);
+    state.progression.contractPenaltiesToday += contract.failureHeat;
+    state.progression.contractsFailedToday += 1;
+
+    const location = state.locations[contract.locationId];
+    if (location) {
+      location.rivalPressure = Math.min(1, location.rivalPressure + contract.failureRivalPressure);
+    }
+
+    log(state, events, `${contract.title} missed. Heat and local pressure increased.`, "danger");
+  }
+}
+
+function createDayReport(state: GameState, day: number): void {
+  const machineRevenueStored = ownedMachines(state, state.playerFactionId).reduce((sum, machine) => sum + machine.revenueStored, 0);
+  const report = {
+    id: `day_report_${day}`,
+    day,
+    startHour: (day - 1) * 24,
+    endHour: day * 24,
+    revenueCollected: state.progression.revenueCollectedToday,
+    machineRevenueStored,
+    contractRewards: state.progression.contractRewardsToday,
+    contractPenalties: state.progression.contractPenaltiesToday,
+    contractsCompleted: state.progression.contractsCompletedToday,
+    contractsFailed: state.progression.contractsFailedToday,
+    stockSold: state.progression.stockSoldToday,
+    rivalActions: state.progression.rivalActionsToday,
+    summary:
+      state.progression.contractsFailedToday > 0
+        ? "Contracts slipped and rivals gained leverage."
+        : state.progression.contractsCompletedToday > 0
+          ? "Route promises paid out and the district noticed."
+          : "Machines stayed active, but no contract bonuses landed."
+  };
+
+  state.dayReports = [report, ...state.dayReports].slice(0, 5);
+}
+
+function resetDailyProgression(state: GameState, day: number): void {
+  state.progression.lastReportDay = day;
+  state.progression.revenueCollectedToday = 0;
+  state.progression.contractRewardsToday = 0;
+  state.progression.contractPenaltiesToday = 0;
+  state.progression.stockSoldToday = 0;
+  state.progression.contractsCompletedToday = 0;
+  state.progression.contractsFailedToday = 0;
+  state.progression.rivalActionsToday = 0;
+}
+
+function processDayBoundaries(state: GameState, events: GameEvent[], previousHour: number): void {
+  const previousDay = Math.floor(previousHour / 24);
+  const currentDay = Math.floor(state.worldTimeHours / 24);
+  if (currentDay <= previousDay) {
+    return;
+  }
+
+  for (let day = Math.max(1, state.progression.lastReportDay + 1); day <= currentDay; day += 1) {
+    createDayReport(state, day);
+    log(state, events, `Day ${day} report filed: ${state.dayReports[0].summary}`, state.dayReports[0].contractsFailed > 0 ? "warning" : "good");
+    resetDailyProgression(state, day);
+    issueDailyContracts(state, events);
+  }
+}
+
 function maybeCompleteMission(state: GameState, events: GameEvent[]): void {
   if (state.mission.completed) {
     return;
@@ -122,13 +348,17 @@ function maybeCompleteMission(state: GameState, events: GameEvent[]): void {
 }
 
 function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number): void {
+  const previousHour = state.worldTimeHours;
   state.worldTimeHours += hours;
 
   let playerEarned = 0;
   for (const machine of Object.values(state.machines)) {
+    const previousStock = machineStockUnits(machine);
     const earned = runMachineSales(state, machine, hours);
+    const stockSold = Math.max(0, previousStock - machineStockUnits(machine));
     if (machine.ownerFactionId === state.playerFactionId) {
       playerEarned += earned;
+      state.progression.stockSoldToday += stockSold;
     } else {
       state.factions[machine.ownerFactionId].money += earned * 0.75;
     }
@@ -144,6 +374,9 @@ function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number):
   if (playerEarned >= 18) {
     log(state, events, `Machines generated $${Math.round(playerEarned)} in stored revenue.`, "good");
   }
+
+  failExpiredContracts(state, events);
+  processDayBoundaries(state, events, previousHour);
 }
 
 export function reduceGameState(currentState: GameState, command: GameCommand): CommandResult {
@@ -407,6 +640,7 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       removeCarriedProduct(state, product.id, quantity);
       machine.lastServicedHour = state.worldTimeHours;
       log(state, events, `Loaded ${quantity}x ${product.name} into ${machine.name}.`, "good");
+      applyContractDelivery(state, events, machine, product.id, quantity);
       break;
     }
 
@@ -420,6 +654,9 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       actor.money += amount;
       machine.revenueStored = 0;
       machine.lastServicedHour = state.worldTimeHours;
+      if (actor.id === state.playerFactionId) {
+        state.progression.revenueCollectedToday += amount;
+      }
       log(state, events, `Collected $${amount} from ${machine.name}.`, "good");
       break;
     }
@@ -463,6 +700,9 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       actor.money -= location.placementCost;
       const machine = createMachine(state, actor.id, location.id);
       log(state, events, `${machine.name} installed at ${location.name}.`, actor.id === state.playerFactionId ? "good" : "danger");
+      if (actor.id === state.playerFactionId) {
+        issueDailyContracts(state, events);
+      }
       break;
     }
 
@@ -538,6 +778,9 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       const controller = state.npcControllers[actor.id];
       if (controller) {
         controller.lastActedHour = state.worldTimeHours;
+      }
+      if (actor.id !== state.playerFactionId) {
+        state.progression.rivalActionsToday += 1;
       }
 
       if (command.action === "sabotage" && command.targetMachineId) {

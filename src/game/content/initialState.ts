@@ -1,4 +1,4 @@
-import type { District, Faction, GameState, Location, RouteVehicle, VendingMachine } from "../core/types";
+import type { District, Faction, GameState, Location, RouteVehicle, ServiceContract, VendingMachine } from "../core/types";
 import { products } from "./products";
 
 const starterDistrict: District = {
@@ -178,6 +178,23 @@ const starterVehicle: RouteVehicle = {
   speed: 1
 };
 
+const starterContract: ServiceContract = {
+  id: "contract_1",
+  title: "Foam & Fold soda promise",
+  locationId: "laundromat",
+  productId: "soda",
+  requiredQuantity: 6,
+  deliveredQuantity: 0,
+  issuedHour: 8,
+  deadlineHour: 24,
+  rewardMoney: 36,
+  rewardPublicReputation: 2,
+  rewardStreetReputation: 1,
+  failureHeat: 3,
+  failureRivalPressure: 0.12,
+  status: "active"
+};
+
 export function createInitialState(): GameState {
   return {
     version: 1,
@@ -207,6 +224,9 @@ export function createInitialState(): GameState {
     vehicles: {
       [starterVehicle.id]: starterVehicle
     },
+    contracts: {
+      [starterContract.id]: starterContract
+    },
     npcControllers: {
       rival_redline: {
         factionId: "rival_redline",
@@ -230,6 +250,18 @@ export function createInitialState(): GameState {
     },
     routePlan: {
       selectedTaskId: null
+    },
+    dayReports: [],
+    progression: {
+      nextContractNumber: 2,
+      lastReportDay: 0,
+      revenueCollectedToday: 0,
+      contractRewardsToday: 0,
+      contractPenaltiesToday: 0,
+      stockSoldToday: 0,
+      contractsCompletedToday: 0,
+      contractsFailedToday: 0,
+      rivalActionsToday: 0
     }
   };
 }
