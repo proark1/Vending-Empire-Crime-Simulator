@@ -527,7 +527,7 @@ function capsuleLike(radius: number, height: number, color: string, roughness = 
   return mesh;
 }
 
-function addFace(group: THREE.Group, y: number, z: number): void {
+function addFace(group: THREE.Group, y: number, z: number, skinColor = "#9f6b45"): void {
   const eyeMaterial = new THREE.MeshBasicMaterial({ color: "#111827" });
   for (const x of [-0.065, 0.065]) {
     const eye = new THREE.Mesh(new THREE.SphereGeometry(0.018, 8, 6), eyeMaterial);
@@ -540,7 +540,7 @@ function addFace(group: THREE.Group, y: number, z: number): void {
     group.add(brow);
   }
 
-  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.065, 8), new THREE.MeshStandardMaterial({ color: "#9f6b45", roughness: 0.62 }));
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.065, 8), new THREE.MeshStandardMaterial({ color: skinColor, roughness: 0.62 }));
   nose.position.set(0, y - 0.03, z - 0.018);
   nose.rotation.x = Math.PI / 2;
   group.add(nose);
@@ -550,7 +550,97 @@ function addFace(group: THREE.Group, y: number, z: number): void {
   group.add(mouth);
 }
 
-export function createNpcCharacter(variant: "customer" | "rival" | "worker" | "scout"): THREE.Group {
+type NpcVariant = "customer" | "rival" | "worker" | "scout";
+type StreetNpcAction = "walk" | "carry" | "pace" | "scan";
+
+interface NpcLimbRig {
+  lower: THREE.Group;
+  upper: THREE.Group;
+  wrist: THREE.Group;
+}
+
+function createJoint(radius: number, material: THREE.Material): THREE.Mesh {
+  const joint = new THREE.Mesh(new THREE.SphereGeometry(radius, 10, 8), material);
+  joint.castShadow = true;
+  joint.receiveShadow = true;
+  return joint;
+}
+
+function createLimbSegment(length: number, topRadius: number, bottomRadius: number, material: THREE.Material): THREE.Mesh {
+  const segment = new THREE.Mesh(new THREE.CylinderGeometry(topRadius, bottomRadius, length, 10), material);
+  segment.position.y = -length / 2;
+  segment.castShadow = true;
+  segment.receiveShadow = true;
+  return segment;
+}
+
+function createArmRig(side: -1 | 1, jacketMaterial: THREE.Material, cuffMaterial: THREE.Material, skinMaterial: THREE.Material): NpcLimbRig {
+  const upperLength = 0.28;
+  const lowerLength = 0.27;
+  const upper = new THREE.Group();
+  upper.position.set(side * 0.29, 1.07, -0.018);
+  upper.rotation.z = -side * 0.18;
+
+  const shoulder = createJoint(0.055, jacketMaterial);
+  upper.add(shoulder);
+
+  upper.add(createLimbSegment(upperLength, 0.052, 0.047, jacketMaterial));
+
+  const elbow = createJoint(0.047, jacketMaterial);
+  elbow.position.y = -upperLength;
+  upper.add(elbow);
+
+  const lower = new THREE.Group();
+  lower.position.y = -upperLength;
+  lower.add(createLimbSegment(lowerLength, 0.044, 0.04, jacketMaterial));
+
+  const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.043, 0.045, 0.055, 10), cuffMaterial);
+  cuff.position.y = -lowerLength + 0.02;
+  cuff.castShadow = true;
+  lower.add(cuff);
+
+  const wrist = new THREE.Group();
+  wrist.position.y = -lowerLength;
+  const hand = createJoint(0.058, skinMaterial);
+  hand.scale.set(0.92, 1.08, 0.78);
+  wrist.add(hand);
+  lower.add(wrist);
+
+  upper.add(lower);
+  return { lower, upper, wrist };
+}
+
+function createLegRig(side: -1 | 1, pantsMaterial: THREE.Material, shoeMaterial: THREE.Material): NpcLimbRig {
+  const upperLength = 0.27;
+  const lowerLength = 0.26;
+  const upper = new THREE.Group();
+  upper.position.set(side * 0.115, 0.58, 0.015);
+  upper.rotation.z = -side * 0.04;
+
+  upper.add(createLimbSegment(upperLength, 0.062, 0.056, pantsMaterial));
+
+  const knee = createJoint(0.052, pantsMaterial);
+  knee.position.y = -upperLength;
+  upper.add(knee);
+
+  const lower = new THREE.Group();
+  lower.position.y = -upperLength;
+  lower.add(createLimbSegment(lowerLength, 0.052, 0.046, pantsMaterial));
+
+  const wrist = new THREE.Group();
+  wrist.position.y = -lowerLength;
+  const shoe = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.055, 0.24), shoeMaterial);
+  shoe.position.set(0, -0.005, -0.055);
+  shoe.castShadow = true;
+  shoe.receiveShadow = true;
+  wrist.add(shoe);
+  lower.add(wrist);
+
+  upper.add(lower);
+  return { lower, upper, wrist };
+}
+
+export function createNpcCharacter(variant: NpcVariant): THREE.Group {
   const palette = {
     customer: { jacket: "#0f766e", shirt: "#e0f2fe", pants: "#1e293b", accent: "#2dd4bf", skin: "#c08457" },
     rival: { jacket: "#991b1b", shirt: "#111827", pants: "#020617", accent: "#fb7185", skin: "#b45309" },
@@ -562,6 +652,12 @@ export function createNpcCharacter(variant: "customer" | "rival" | "worker" | "s
   group.userData.floatSpeed = variant === "rival" ? 1.4 : 1;
   group.userData.floatAmount = variant === "worker" ? 0.018 : 0.012;
 
+  const jacketMaterial = new THREE.MeshStandardMaterial({ color: palette.jacket, roughness: 0.66 });
+  const shirtMaterial = new THREE.MeshStandardMaterial({ color: palette.shirt, roughness: 0.64 });
+  const pantsMaterial = new THREE.MeshStandardMaterial({ color: palette.pants, roughness: 0.78 });
+  const skinMaterial = new THREE.MeshStandardMaterial({ color: palette.skin, roughness: 0.58 });
+  const shoeMaterial = new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.62 });
+
   const shadow = new THREE.Mesh(
     new THREE.CircleGeometry(0.42, 24),
     new THREE.MeshBasicMaterial({ color: "#020617", transparent: true, opacity: 0.35 })
@@ -570,31 +666,22 @@ export function createNpcCharacter(variant: "customer" | "rival" | "worker" | "s
   shadow.position.y = 0.012;
   group.add(shadow);
 
-  const legsMaterial = new THREE.MeshStandardMaterial({ color: palette.pants, roughness: 0.78 });
-  for (const x of [-0.11, 0.11]) {
-    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.065, 0.58, 8), legsMaterial);
-    leg.position.set(x, 0.32, 0);
-    leg.rotation.z = x > 0 ? -0.08 : 0.08;
-    leg.castShadow = true;
-    group.add(leg);
-
-    const shoe = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.055, 0.24), new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.62 }));
-    shoe.position.set(x, 0.055, -0.045);
-    shoe.castShadow = true;
-    group.add(shoe);
-  }
-
   const body = capsuleLike(0.22, 0.48, palette.jacket, 0.62);
   body.position.set(0, 0.84, 0);
   body.scale.x = 0.92;
   group.add(body);
 
-  const shoulders = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.16, 0.24), new THREE.MeshStandardMaterial({ color: palette.jacket, roughness: 0.64 }));
+  const hips = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.12, 0.22), pantsMaterial);
+  hips.position.set(0, 0.58, -0.005);
+  hips.castShadow = true;
+  group.add(hips);
+
+  const shoulders = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.16, 0.24), jacketMaterial);
   shoulders.position.set(0, 1.05, -0.01);
   shoulders.castShadow = true;
   group.add(shoulders);
 
-  const shirt = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.42, 0.035), new THREE.MeshStandardMaterial({ color: palette.shirt, roughness: 0.66 }));
+  const shirt = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.42, 0.035), shirtMaterial);
   shirt.position.set(0, 0.82, -0.205);
   group.add(shirt);
 
@@ -611,81 +698,113 @@ export function createNpcCharacter(variant: "customer" | "rival" | "worker" | "s
   belt.position.set(0, 0.57, -0.19);
   group.add(belt);
 
-  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 0.16, 12), new THREE.MeshStandardMaterial({ color: palette.skin, roughness: 0.58 }));
+  const leftLeg = createLegRig(-1, pantsMaterial, shoeMaterial);
+  const rightLeg = createLegRig(1, pantsMaterial, shoeMaterial);
+  group.add(leftLeg.upper, rightLeg.upper);
+
+  const leftArm = createArmRig(-1, jacketMaterial, shirtMaterial, skinMaterial);
+  const rightArm = createArmRig(1, jacketMaterial, shirtMaterial, skinMaterial);
+  group.add(leftArm.upper, rightArm.upper);
+
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 0.16, 12), skinMaterial);
   neck.position.set(0, 1.19, -0.005);
   neck.castShadow = true;
   group.add(neck);
 
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.18, 18, 14), new THREE.MeshStandardMaterial({ color: palette.skin, roughness: 0.58 }));
-  head.position.set(0, 1.34, -0.005);
+  const headPivot = new THREE.Group();
+  headPivot.position.set(0, 1.22, -0.005);
+  group.add(headPivot);
+
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.18, 18, 14), skinMaterial);
+  head.position.set(0, 0.12, 0);
   head.scale.set(0.88, 1.06, 0.96);
   head.castShadow = true;
-  group.add(head);
+  headPivot.add(head);
 
   for (const x of [-0.17, 0.17]) {
-    const ear = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), new THREE.MeshStandardMaterial({ color: palette.skin, roughness: 0.6 }));
-    ear.position.set(x, 1.34, -0.01);
+    const ear = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), skinMaterial);
+    ear.position.set(x, 0.12, -0.005);
     ear.scale.set(0.7, 1, 0.42);
-    group.add(ear);
+    headPivot.add(ear);
   }
 
   const hair = new THREE.Mesh(
     new THREE.SphereGeometry(0.185, 18, 8, 0, Math.PI * 2, 0, Math.PI * 0.48),
     new THREE.MeshStandardMaterial({ color: variant === "worker" ? "#78350f" : "#111827", roughness: 0.7 })
   );
-  hair.position.set(0, 1.41, -0.005);
-  group.add(hair);
-  addFace(group, 1.345, -0.17);
-
-  const armMaterial = new THREE.MeshStandardMaterial({ color: palette.jacket, roughness: 0.68 });
-  for (const x of [-0.31, 0.31]) {
-    const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.05, 0.55, 8), armMaterial);
-    arm.position.set(x, 0.86, -0.02);
-    arm.rotation.z = x > 0 ? -0.28 : 0.28;
-    arm.castShadow = true;
-    group.add(arm);
-
-    const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.047, 0.047, 0.055, 8), new THREE.MeshStandardMaterial({ color: palette.shirt, roughness: 0.62 }));
-    cuff.position.set(x + (x > 0 ? 0.1 : -0.1), 0.61, -0.025);
-    cuff.rotation.z = arm.rotation.z;
-    group.add(cuff);
-
-    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 8), new THREE.MeshStandardMaterial({ color: palette.skin, roughness: 0.62 }));
-    hand.position.set(x + (x > 0 ? 0.15 : -0.15), 0.55, -0.035);
-    hand.scale.set(0.9, 1.1, 0.75);
-    hand.castShadow = true;
-    group.add(hand);
-  }
+  hair.position.set(0, 0.19, 0);
+  headPivot.add(hair);
+  addFace(headPivot, 0.125, -0.17, palette.skin);
 
   const badge = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.05, 0.025), new THREE.MeshBasicMaterial({ color: palette.accent }));
   badge.position.set(0.08, 1.0, -0.215);
   group.add(badge);
 
+  const carryMount = new THREE.Group();
+  carryMount.position.set(0, 0.82, -0.29);
+  group.add(carryMount);
+
   if (variant === "rival") {
     const cap = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.055, 0.26), new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.45 }));
-    cap.position.set(0, 1.51, -0.04);
-    group.add(cap);
+    cap.position.set(0, 0.29, -0.035);
+    headPivot.add(cap);
 
     const chain = new THREE.Mesh(new THREE.TorusGeometry(0.13, 0.011, 8, 20), new THREE.MeshBasicMaterial({ color: "#facc15" }));
     chain.position.set(0, 1.15, -0.19);
     chain.rotation.x = Math.PI / 2;
     group.add(chain);
+
+    const phone = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.09, 0.015), new THREE.MeshBasicMaterial({ color: "#020617" }));
+    phone.position.set(0.02, -0.015, -0.07);
+    phone.rotation.x = 0.18;
+    leftArm.wrist.add(phone);
   }
 
   if (variant === "worker") {
     const crate = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.24, 0.22), new THREE.MeshStandardMaterial({ color: "#92400e", roughness: 0.8 }));
-    crate.position.set(-0.42, 0.78, -0.04);
-    crate.rotation.z = 0.1;
+    crate.position.set(0, 0, 0);
+    crate.rotation.z = 0.04;
     crate.castShadow = true;
-    group.add(crate);
+    carryMount.add(crate);
+
+    const strap = new THREE.Mesh(new THREE.BoxGeometry(0.37, 0.035, 0.235), new THREE.MeshStandardMaterial({ color: "#451a03", roughness: 0.7 }));
+    strap.position.y = 0.015;
+    carryMount.add(strap);
   }
 
   if (variant === "scout") {
     const tablet = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.16, 0.025), new THREE.MeshBasicMaterial({ color: "#38bdf8" }));
-    tablet.position.set(0.34, 0.93, -0.16);
-    tablet.rotation.z = -0.12;
-    group.add(tablet);
+    tablet.position.set(0.025, -0.015, -0.08);
+    tablet.rotation.set(0.35, -0.08, -0.12);
+    rightArm.wrist.add(tablet);
   }
+
+  if (variant === "customer") {
+    const bag = new THREE.Group();
+    const bagBody = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.18, 0.075), new THREE.MeshStandardMaterial({ color: palette.accent, roughness: 0.72 }));
+    bagBody.position.y = -0.12;
+    bagBody.castShadow = true;
+    bag.add(bagBody);
+    const handle = new THREE.Mesh(new THREE.TorusGeometry(0.07, 0.008, 6, 18, Math.PI), new THREE.MeshStandardMaterial({ color: "#e0f2fe", roughness: 0.52 }));
+    handle.position.y = -0.025;
+    handle.rotation.z = Math.PI;
+    bag.add(handle);
+    bag.position.set(-0.015, -0.03, 0.025);
+    leftArm.wrist.add(bag);
+  }
+
+  group.userData.npcVariant = variant;
+  group.userData.rig = {
+    body,
+    carryMount,
+    head: headPivot,
+    hips,
+    leftArm,
+    leftLeg,
+    rightArm,
+    rightLeg,
+    shoulders
+  };
 
   return group;
 }
@@ -743,21 +862,77 @@ export function createStreetProps(): THREE.Group {
     group.add(sprite);
   }
 
-  const npcs: Array<{ variant: "customer" | "rival" | "worker" | "scout"; x: number; z: number; rotation: number }> = [
-    { variant: "customer", x: -3.2, z: -1.8, rotation: 2.15 },
-    { variant: "worker", x: 7.0, z: 1.6, rotation: -0.7 },
-    { variant: "rival", x: 1.1, z: 2.9, rotation: Math.PI },
-    { variant: "scout", x: -6.3, z: -4.6, rotation: 0.15 }
+  const npcs: Array<{
+    action: StreetNpcAction;
+    path: Array<[number, number]>;
+    rotation: number;
+    speed: number;
+    variant: NpcVariant;
+  }> = [
+    {
+      action: "walk",
+      path: [
+        [-6.35, -3.35],
+        [-3.35, -3.35],
+        [-3.35, -1.45],
+        [-1.55, -1.45],
+        [-1.55, -3.35]
+      ],
+      rotation: 2.15,
+      speed: 0.55,
+      variant: "customer"
+    },
+    {
+      action: "carry",
+      path: [
+        [6.35, 2.55],
+        [8.25, 2.55],
+        [8.25, 4.8],
+        [6.35, 4.8]
+      ],
+      rotation: -0.7,
+      speed: 0.33,
+      variant: "worker"
+    },
+    {
+      action: "pace",
+      path: [
+        [0.42, 2.35],
+        [2.65, 2.35],
+        [2.65, 1.62],
+        [0.42, 1.62]
+      ],
+      rotation: Math.PI,
+      speed: 0.28,
+      variant: "rival"
+    },
+    {
+      action: "scan",
+      path: [
+        [-6.35, -4.55],
+        [-4.35, -4.55],
+        [-4.35, -3.35],
+        [-6.35, -3.35]
+      ],
+      rotation: 0.15,
+      speed: 0.36,
+      variant: "scout"
+    }
   ];
 
-  for (const npc of npcs) {
+  npcs.forEach((npc, index) => {
+    const [startX, startZ] = npc.path[0];
     const character = createNpcCharacter(npc.variant);
-    character.position.set(npc.x, 0, npc.z);
+    character.position.set(startX, 0, startZ);
     character.rotation.y = npc.rotation;
+    character.userData.action = npc.action;
     character.userData.baseY = character.position.y;
-    character.userData.phase = npc.x * 0.4 + npc.z * 0.7;
+    character.userData.pathOffset = index * 1.35;
+    character.userData.phase = startX * 0.4 + startZ * 0.7;
+    character.userData.walkPath = npc.path.map(([x, z]) => new THREE.Vector3(x, 0, z));
+    character.userData.walkSpeed = npc.speed;
     group.add(character);
-  }
+  });
 
   const metalMaterial = new THREE.MeshStandardMaterial({ color: "#334155", roughness: 0.5, metalness: 0.38 });
   const glassMaterial = new THREE.MeshPhysicalMaterial({ color: "#bfdbfe", roughness: 0.05, transparent: true, opacity: 0.34, transmission: 0.18 });

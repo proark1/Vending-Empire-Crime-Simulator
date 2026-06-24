@@ -18,6 +18,24 @@ interface Interactable {
   position: THREE.Vector3;
 }
 
+interface NpcRuntimeLimb {
+  lower?: THREE.Object3D;
+  upper?: THREE.Object3D;
+  wrist?: THREE.Object3D;
+}
+
+interface NpcRuntimeRig {
+  body?: THREE.Object3D;
+  carryMount?: THREE.Object3D;
+  head?: THREE.Object3D;
+  hips?: THREE.Object3D;
+  leftArm?: NpcRuntimeLimb;
+  leftLeg?: NpcRuntimeLimb;
+  rightArm?: NpcRuntimeLimb;
+  rightLeg?: NpcRuntimeLimb;
+  shoulders?: THREE.Object3D;
+}
+
 const productCrateColors: Record<ProductId, string> = {
   soda: "#38bdf8",
   chips: "#f59e0b",
@@ -58,6 +76,135 @@ function machinePlacementForLocation(location: Location): { position: THREE.Vect
     position: new THREE.Vector3(anchor.x, 0, anchor.z),
     rotationY: anchor.rotationY
   };
+}
+
+function pathStateAt(path: THREE.Vector3[], distance: number): { direction: THREE.Vector3; position: THREE.Vector3 } | null {
+  if (path.length < 2) {
+    return null;
+  }
+
+  let totalLength = 0;
+  for (let index = 0; index < path.length; index += 1) {
+    totalLength += path[index].distanceTo(path[(index + 1) % path.length]);
+  }
+
+  if (totalLength <= 0.001) {
+    return null;
+  }
+
+  let remaining = ((distance % totalLength) + totalLength) % totalLength;
+  for (let index = 0; index < path.length; index += 1) {
+    const start = path[index];
+    const end = path[(index + 1) % path.length];
+    const segmentLength = start.distanceTo(end);
+    if (segmentLength <= 0.001) {
+      continue;
+    }
+
+    if (remaining <= segmentLength || index === path.length - 1) {
+      const t = THREE.MathUtils.clamp(remaining / segmentLength, 0, 1);
+      const position = start.clone().lerp(end, t);
+      const direction = end.clone().sub(start).normalize();
+      return { direction, position };
+    }
+
+    remaining -= segmentLength;
+  }
+
+  return null;
+}
+
+function setLimbPose(limb: NpcRuntimeLimb | undefined, upperX: number, upperZ: number, lowerX: number): void {
+  if (limb?.upper) {
+    limb.upper.rotation.set(upperX, 0, upperZ);
+  }
+
+  if (limb?.lower) {
+    limb.lower.rotation.set(lowerX, 0, 0);
+  }
+}
+
+function updateNpcRig(object: THREE.Object3D, time: number, walkSpeed: number, isMoving: boolean): void {
+  const rig = object.userData.rig as NpcRuntimeRig | undefined;
+  if (!rig) {
+    return;
+  }
+
+  const phase = typeof object.userData.phase === "number" ? object.userData.phase : 0;
+  const action = typeof object.userData.action === "string" ? object.userData.action : "walk";
+  const cycle = time * 0.0055 * Math.max(0.8, walkSpeed * 2.8) + phase;
+  const stride = isMoving ? Math.sin(cycle) : 0;
+  const footLift = isMoving ? Math.abs(Math.cos(cycle)) : 0;
+  const legSwing = action === "pace" ? 0.3 : action === "carry" ? 0.34 : 0.46;
+  const armSwing = action === "pace" ? 0.2 : 0.38;
+
+  setLimbPose(rig.leftLeg, stride * legSwing, 0.04, Math.max(0, -stride) * 0.38 + footLift * 0.04);
+  setLimbPose(rig.rightLeg, -stride * legSwing, -0.04, Math.max(0, stride) * 0.38 + footLift * 0.04);
+
+  if (action === "carry") {
+    setLimbPose(rig.leftArm, 0.9, 0.5, 0.62);
+    setLimbPose(rig.rightArm, 0.9, -0.5, 0.62);
+  } else if (action === "scan") {
+    setLimbPose(rig.leftArm, -stride * armSwing, 0.2, 0.12 + Math.max(0, stride) * 0.18);
+    setLimbPose(rig.rightArm, 1.0, -0.24, 0.52 + Math.sin(cycle * 1.7) * 0.04);
+  } else if (action === "pace") {
+    setLimbPose(rig.leftArm, 0.58 + Math.sin(cycle * 0.65) * 0.08, 0.18, 0.44);
+    setLimbPose(rig.rightArm, stride * 0.18, -0.2, 0.08 + Math.max(0, -stride) * 0.12);
+  } else {
+    setLimbPose(rig.leftArm, -stride * armSwing, 0.2, 0.1 + Math.max(0, stride) * 0.18);
+    setLimbPose(rig.rightArm, stride * armSwing, -0.2, 0.1 + Math.max(0, -stride) * 0.18);
+  }
+
+  if (rig.body) {
+    rig.body.rotation.z = -stride * 0.018;
+  }
+
+  if (rig.hips) {
+    rig.hips.rotation.z = stride * 0.024;
+  }
+
+  if (rig.shoulders) {
+    rig.shoulders.rotation.z = -stride * 0.024;
+  }
+
+  if (rig.carryMount) {
+    rig.carryMount.position.y = 0.82 + footLift * 0.006;
+  }
+
+  if (rig.head) {
+    rig.head.rotation.x = action === "carry" ? -0.08 : Math.sin(cycle * 0.5) * 0.025;
+    rig.head.rotation.y = action === "scan"
+      ? Math.sin(cycle * 0.65) * 0.38
+      : action === "pace"
+        ? Math.sin(cycle * 0.45) * 0.22
+        : -stride * 0.045;
+    rig.head.rotation.z = action === "carry" ? 0 : stride * 0.025;
+  }
+}
+
+function updateAnimatedStreetProp(object: THREE.Object3D, time: number): void {
+  const baseY = typeof object.userData.baseY === "number" ? object.userData.baseY : 0;
+  const phase = typeof object.userData.phase === "number" ? object.userData.phase : 0;
+  const amount = typeof object.userData.floatAmount === "number" ? object.userData.floatAmount : 0.01;
+  const floatSpeed = typeof object.userData.floatSpeed === "number" ? object.userData.floatSpeed : 1;
+  const path = Array.isArray(object.userData.walkPath) ? object.userData.walkPath as THREE.Vector3[] : [];
+  const walkSpeed = typeof object.userData.walkSpeed === "number" ? object.userData.walkSpeed : 0;
+  let isMoving = false;
+
+  if (path.length > 1 && walkSpeed > 0) {
+    const pathOffset = typeof object.userData.pathOffset === "number" ? object.userData.pathOffset : 0;
+    const state = pathStateAt(path, time * 0.001 * walkSpeed + pathOffset);
+    if (state) {
+      object.position.x = state.position.x;
+      object.position.z = state.position.z;
+      object.rotation.y = Math.atan2(state.direction.x, -state.direction.z);
+      isMoving = true;
+    }
+  }
+
+  const walkBob = isMoving ? Math.abs(Math.cos(time * 0.0055 * Math.max(0.8, walkSpeed * 2.8) + phase)) * 0.01 : 0;
+  object.position.y = baseY + Math.sin(time * 0.003 * floatSpeed + phase) * amount + walkBob;
+  updateNpcRig(object, time, walkSpeed || floatSpeed, isMoving);
 }
 
 function createMachineSignTexture(color: string, damage: number): THREE.CanvasTexture {
@@ -949,11 +1096,7 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
         }
       });
       for (const object of animatedProps) {
-        const baseY = typeof object.userData.baseY === "number" ? object.userData.baseY : 0;
-        const phase = typeof object.userData.phase === "number" ? object.userData.phase : 0;
-        const amount = typeof object.userData.floatAmount === "number" ? object.userData.floatAmount : 0.01;
-        const speed = typeof object.userData.floatSpeed === "number" ? object.userData.floatSpeed : 1;
-        object.position.y = baseY + Math.sin(time * 0.003 * speed + phase) * amount;
+        updateAnimatedStreetProp(object, time);
       }
 
       updateTarget();
