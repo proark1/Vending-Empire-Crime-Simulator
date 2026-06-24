@@ -289,7 +289,7 @@ export function createSkyDome(): THREE.Mesh {
   return sky;
 }
 
-function createSpriteTexture(kind: "poster" | "trash" | "person" | "pallet" | "graffiti"): THREE.CanvasTexture {
+function createSpriteTexture(kind: "poster" | "trash" | "pallet" | "graffiti"): THREE.CanvasTexture {
   const canvas = document.createElement("canvas");
   canvas.width = 256;
   canvas.height = 256;
@@ -321,18 +321,6 @@ function createSpriteTexture(kind: "poster" | "trash" | "person" | "pallet" | "g
       context.beginPath();
       context.ellipse(100, 146, 34, 20, -0.5, 0, Math.PI * 2);
       context.fill();
-    }
-
-    if (kind === "person") {
-      context.fillStyle = "rgba(15, 23, 42, 0.86)";
-      context.beginPath();
-      context.arc(128, 64, 24, 0, Math.PI * 2);
-      context.fill();
-      context.fillRect(105, 88, 46, 88);
-      context.fillRect(92, 176, 28, 54);
-      context.fillRect(136, 176, 28, 54);
-      context.fillStyle = "rgba(45, 212, 191, 0.65)";
-      context.fillRect(110, 112, 36, 10);
     }
 
     if (kind === "pallet") {
@@ -369,7 +357,7 @@ function createSpriteTexture(kind: "poster" | "trash" | "person" | "pallet" | "g
   return texture;
 }
 
-function createBillboardSprite(kind: "poster" | "trash" | "person" | "pallet" | "graffiti", width: number, height: number): THREE.Sprite {
+function createBillboardSprite(kind: "poster" | "trash" | "pallet" | "graffiti", width: number, height: number): THREE.Sprite {
   const sprite = new THREE.Sprite(
     new THREE.SpriteMaterial({
       map: createSpriteTexture(kind),
@@ -381,15 +369,166 @@ function createBillboardSprite(kind: "poster" | "trash" | "person" | "pallet" | 
   return sprite;
 }
 
+function capsuleLike(radius: number, height: number, color: string, roughness = 0.7): THREE.Mesh {
+  const mesh = new THREE.Mesh(
+    new THREE.CapsuleGeometry(radius, height, 8, 12),
+    new THREE.MeshStandardMaterial({ color, roughness })
+  );
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+function addFace(group: THREE.Group, y: number, z: number): void {
+  const eyeMaterial = new THREE.MeshBasicMaterial({ color: "#111827" });
+  for (const x of [-0.065, 0.065]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.018, 8, 6), eyeMaterial);
+    eye.position.set(x, y, z);
+    group.add(eye);
+  }
+}
+
+export function createNpcCharacter(variant: "customer" | "rival" | "worker" | "scout"): THREE.Group {
+  const palette = {
+    customer: { jacket: "#0f766e", shirt: "#e0f2fe", pants: "#1e293b", accent: "#2dd4bf", skin: "#c08457" },
+    rival: { jacket: "#991b1b", shirt: "#111827", pants: "#020617", accent: "#fb7185", skin: "#b45309" },
+    worker: { jacket: "#f97316", shirt: "#fef3c7", pants: "#334155", accent: "#facc15", skin: "#d6a06f" },
+    scout: { jacket: "#4338ca", shirt: "#dbeafe", pants: "#111827", accent: "#93c5fd", skin: "#9a6a4f" }
+  }[variant];
+
+  const group = new THREE.Group();
+  group.userData.floatSpeed = variant === "rival" ? 1.4 : 1;
+  group.userData.floatAmount = variant === "worker" ? 0.018 : 0.012;
+
+  const shadow = new THREE.Mesh(
+    new THREE.CircleGeometry(0.42, 24),
+    new THREE.MeshBasicMaterial({ color: "#020617", transparent: true, opacity: 0.35 })
+  );
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = 0.012;
+  group.add(shadow);
+
+  const legsMaterial = new THREE.MeshStandardMaterial({ color: palette.pants, roughness: 0.78 });
+  for (const x of [-0.11, 0.11]) {
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.065, 0.58, 8), legsMaterial);
+    leg.position.set(x, 0.32, 0);
+    leg.rotation.z = x > 0 ? -0.08 : 0.08;
+    leg.castShadow = true;
+    group.add(leg);
+
+    const shoe = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.055, 0.24), new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.62 }));
+    shoe.position.set(x, 0.055, -0.045);
+    shoe.castShadow = true;
+    group.add(shoe);
+  }
+
+  const body = capsuleLike(0.22, 0.48, palette.jacket, 0.62);
+  body.position.set(0, 0.84, 0);
+  body.scale.x = 0.92;
+  group.add(body);
+
+  const shirt = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.42, 0.035), new THREE.MeshStandardMaterial({ color: palette.shirt, roughness: 0.66 }));
+  shirt.position.set(0, 0.82, -0.205);
+  group.add(shirt);
+
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.18, 18, 14), new THREE.MeshStandardMaterial({ color: palette.skin, roughness: 0.58 }));
+  head.position.set(0, 1.34, -0.005);
+  head.castShadow = true;
+  group.add(head);
+
+  const hair = new THREE.Mesh(
+    new THREE.SphereGeometry(0.185, 18, 8, 0, Math.PI * 2, 0, Math.PI * 0.48),
+    new THREE.MeshStandardMaterial({ color: variant === "worker" ? "#78350f" : "#111827", roughness: 0.7 })
+  );
+  hair.position.set(0, 1.41, -0.005);
+  group.add(hair);
+  addFace(group, 1.345, -0.17);
+
+  const armMaterial = new THREE.MeshStandardMaterial({ color: palette.jacket, roughness: 0.68 });
+  for (const x of [-0.31, 0.31]) {
+    const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.05, 0.55, 8), armMaterial);
+    arm.position.set(x, 0.86, -0.02);
+    arm.rotation.z = x > 0 ? -0.28 : 0.28;
+    arm.castShadow = true;
+    group.add(arm);
+  }
+
+  const badge = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.05, 0.025), new THREE.MeshBasicMaterial({ color: palette.accent }));
+  badge.position.set(0.08, 1.0, -0.215);
+  group.add(badge);
+
+  if (variant === "rival") {
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.055, 0.26), new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.45 }));
+    cap.position.set(0, 1.51, -0.04);
+    group.add(cap);
+
+    const chain = new THREE.Mesh(new THREE.TorusGeometry(0.13, 0.011, 8, 20), new THREE.MeshBasicMaterial({ color: "#facc15" }));
+    chain.position.set(0, 1.15, -0.19);
+    chain.rotation.x = Math.PI / 2;
+    group.add(chain);
+  }
+
+  if (variant === "worker") {
+    const crate = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.24, 0.22), new THREE.MeshStandardMaterial({ color: "#92400e", roughness: 0.8 }));
+    crate.position.set(-0.42, 0.78, -0.04);
+    crate.rotation.z = 0.1;
+    crate.castShadow = true;
+    group.add(crate);
+  }
+
+  if (variant === "scout") {
+    const tablet = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.16, 0.025), new THREE.MeshBasicMaterial({ color: "#38bdf8" }));
+    tablet.position.set(0.34, 0.93, -0.16);
+    tablet.rotation.z = -0.12;
+    group.add(tablet);
+  }
+
+  return group;
+}
+
+export function createAtmosphere(): THREE.Points {
+  const count = 160;
+  const positions = new Float32Array(count * 3);
+  const colors = new Float32Array(count * 3);
+  const color = new THREE.Color();
+
+  for (let i = 0; i < count; i += 1) {
+    const radius = 8 + Math.random() * 22;
+    const angle = Math.random() * Math.PI * 2;
+    positions[i * 3] = Math.cos(angle) * radius;
+    positions[i * 3 + 1] = 0.8 + Math.random() * 5.5;
+    positions[i * 3 + 2] = Math.sin(angle) * radius;
+    color.set(Math.random() > 0.7 ? "#67e8f9" : "#f8fafc");
+    colors[i * 3] = color.r;
+    colors[i * 3 + 1] = color.g;
+    colors[i * 3 + 2] = color.b;
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+
+  const points = new THREE.Points(
+    geometry,
+    new THREE.PointsMaterial({
+      size: 0.035,
+      transparent: true,
+      opacity: 0.48,
+      vertexColors: true,
+      depthWrite: false
+    })
+  );
+  points.userData.rotateSlowly = true;
+  return points;
+}
+
 export function createStreetProps(): THREE.Group {
   const group = new THREE.Group();
-  const props: Array<{ kind: "poster" | "trash" | "person" | "pallet" | "graffiti"; x: number; z: number; y: number; w: number; h: number }> = [
+  const props: Array<{ kind: "poster" | "trash" | "pallet" | "graffiti"; x: number; z: number; y: number; w: number; h: number }> = [
     { kind: "poster", x: -6.9, z: -6.6, y: 1.1, w: 0.85, h: 1.15 },
     { kind: "poster", x: 6.4, z: 7.0, y: 1.0, w: 0.85, h: 1.15 },
     { kind: "trash", x: -2.8, z: 2.2, y: 0.38, w: 0.9, h: 0.65 },
     { kind: "trash", x: 7.3, z: -4.2, y: 0.38, w: 0.85, h: 0.6 },
-    { kind: "person", x: -3.2, z: -1.8, y: 0.95, w: 0.62, h: 1.55 },
-    { kind: "person", x: 6.6, z: 1.6, y: 0.95, w: 0.62, h: 1.55 },
     { kind: "pallet", x: 7.0, z: 5.6, y: 0.5, w: 1.2, h: 0.9 },
     { kind: "graffiti", x: 1.5, z: 3.08, y: 1.25, w: 1.4, h: 0.9 }
   ];
@@ -398,6 +537,22 @@ export function createStreetProps(): THREE.Group {
     const sprite = createBillboardSprite(prop.kind, prop.w, prop.h);
     sprite.position.set(prop.x, prop.y, prop.z);
     group.add(sprite);
+  }
+
+  const npcs: Array<{ variant: "customer" | "rival" | "worker" | "scout"; x: number; z: number; rotation: number }> = [
+    { variant: "customer", x: -3.2, z: -1.8, rotation: 2.15 },
+    { variant: "worker", x: 7.0, z: 1.6, rotation: -0.7 },
+    { variant: "rival", x: 1.1, z: 2.9, rotation: Math.PI },
+    { variant: "scout", x: -6.3, z: -4.6, rotation: 0.15 }
+  ];
+
+  for (const npc of npcs) {
+    const character = createNpcCharacter(npc.variant);
+    character.position.set(npc.x, 0, npc.z);
+    character.rotation.y = npc.rotation;
+    character.userData.baseY = character.position.y;
+    character.userData.phase = npc.x * 0.4 + npc.z * 0.7;
+    group.add(character);
   }
 
   const lampMaterial = new THREE.MeshStandardMaterial({ color: "#1e293b", roughness: 0.5, metalness: 0.35 });

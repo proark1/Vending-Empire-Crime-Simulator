@@ -3,7 +3,7 @@ import * as THREE from "three";
 import type { GameState } from "../../game/core/types";
 import { machineAtLocation } from "../../game/core/selectors";
 import type { SceneTarget } from "./SceneTargets";
-import { createAsphaltMaterial, createBuilding, createRoadMaterial, createSidewalkMaterial, createSkyDome, createStreetProps } from "./proceduralArt";
+import { createAsphaltMaterial, createAtmosphere, createBuilding, createRoadMaterial, createSidewalkMaterial, createSkyDome, createStreetProps } from "./proceduralArt";
 
 interface ThreeSceneProps {
   state: GameState;
@@ -18,37 +18,127 @@ interface Interactable {
 
 function createMachineMesh(color: string, damage: number): THREE.Group {
   const group = new THREE.Group();
-  const body = new THREE.Mesh(
-    new THREE.BoxGeometry(0.75, 1.7, 0.48),
-    new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.08 })
+  const trimMaterial = new THREE.MeshStandardMaterial({ color, roughness: 0.38, metalness: 0.12 });
+  const darkMaterial = new THREE.MeshStandardMaterial({ color: "#0f172a", roughness: 0.44, metalness: 0.08 });
+  const glassMaterial = new THREE.MeshPhysicalMaterial({
+    color: damage > 65 ? "#7f1d1d" : "#dffbff",
+    emissive: damage > 65 ? "#3f1010" : "#0891b2",
+    emissiveIntensity: damage > 65 ? 0.18 : 0.42,
+    roughness: 0.08,
+    metalness: 0,
+    transparent: true,
+    opacity: 0.72,
+    transmission: 0.18
+  });
+
+  const base = new THREE.Mesh(
+    new THREE.BoxGeometry(0.88, 0.12, 0.58),
+    new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.55, metalness: 0.14 })
   );
-  body.position.y = 0.85;
+  base.position.y = 0.06;
+  base.castShadow = true;
+  base.receiveShadow = true;
+  group.add(base);
+
+  const body = new THREE.Mesh(
+    new THREE.BoxGeometry(0.78, 1.62, 0.5),
+    trimMaterial
+  );
+  body.position.y = 0.92;
   body.castShadow = true;
   body.receiveShadow = true;
   group.add(body);
 
-  const windowPanel = new THREE.Mesh(
-    new THREE.BoxGeometry(0.48, 0.82, 0.03),
-    new THREE.MeshStandardMaterial({ color: damage > 65 ? "#7f1d1d" : "#c7f9ff", emissive: damage > 65 ? "#3f1010" : "#0e7490", emissiveIntensity: 0.25 })
+  const topSign = new THREE.Mesh(
+    new THREE.BoxGeometry(0.68, 0.18, 0.035),
+    new THREE.MeshBasicMaterial({ color: "#f8fafc" })
   );
-  windowPanel.position.set(0, 1.05, -0.255);
+  topSign.position.set(0, 1.65, -0.275);
+  group.add(topSign);
+
+  const neonBar = new THREE.Mesh(
+    new THREE.BoxGeometry(0.66, 0.035, 0.04),
+    new THREE.MeshBasicMaterial({ color })
+  );
+  neonBar.position.set(0, 1.53, -0.285);
+  group.add(neonBar);
+
+  const windowPanel = new THREE.Mesh(
+    new THREE.BoxGeometry(0.44, 0.82, 0.035),
+    glassMaterial
+  );
+  windowPanel.position.set(-0.08, 1.1, -0.274);
   group.add(windowPanel);
 
-  const slot = new THREE.Mesh(
-    new THREE.BoxGeometry(0.44, 0.12, 0.035),
-    new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.35 })
+  const shelfMaterial = new THREE.MeshStandardMaterial({ color: "#1e293b", roughness: 0.55 });
+  const productColors = ["#ef4444", "#22c55e", "#f59e0b", "#38bdf8", "#e879f9", "#f8fafc"];
+  for (let row = 0; row < 3; row += 1) {
+    const shelf = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.025, 0.03), shelfMaterial);
+    shelf.position.set(-0.08, 0.84 + row * 0.22, -0.3);
+    group.add(shelf);
+
+    for (let col = 0; col < 4; col += 1) {
+      const product = new THREE.Mesh(
+        new THREE.BoxGeometry(0.055, 0.115, 0.04),
+        new THREE.MeshStandardMaterial({ color: productColors[(row * 2 + col) % productColors.length], roughness: 0.46, metalness: 0.04 })
+      );
+      product.position.set(-0.245 + col * 0.11, 0.91 + row * 0.22, -0.312);
+      group.add(product);
+    }
+  }
+
+  const sidePanel = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.82, 0.035), darkMaterial);
+  sidePanel.position.set(0.26, 1.1, -0.278);
+  group.add(sidePanel);
+
+  const display = new THREE.Mesh(
+    new THREE.BoxGeometry(0.11, 0.1, 0.02),
+    new THREE.MeshBasicMaterial({ color: damage > 75 ? "#7f1d1d" : "#22d3ee" })
   );
-  slot.position.set(0, 0.42, -0.265);
+  display.position.set(0.26, 1.36, -0.304);
+  group.add(display);
+
+  for (let row = 0; row < 3; row += 1) {
+    for (let col = 0; col < 3; col += 1) {
+      const key = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.024, 0.018), new THREE.MeshStandardMaterial({ color: "#cbd5e1", roughness: 0.32 }));
+      key.position.set(0.215 + col * 0.045, 1.16 - row * 0.045, -0.306);
+      group.add(key);
+    }
+  }
+
+  const slot = new THREE.Mesh(
+    new THREE.BoxGeometry(0.36, 0.11, 0.04),
+    darkMaterial
+  );
+  slot.position.set(-0.08, 0.39, -0.294);
   group.add(slot);
+
+  const dropLight = new THREE.Mesh(new THREE.BoxGeometry(0.29, 0.025, 0.02), new THREE.MeshBasicMaterial({ color: "#facc15" }));
+  dropLight.position.set(-0.08, 0.46, -0.318);
+  group.add(dropLight);
+
+  const sideStripe = new THREE.Mesh(new THREE.BoxGeometry(0.05, 1.42, 0.03), new THREE.MeshBasicMaterial({ color }));
+  sideStripe.position.set(-0.355, 0.98, -0.285);
+  group.add(sideStripe);
 
   if (damage > 15) {
     const dent = new THREE.Mesh(
       new THREE.BoxGeometry(0.18 + damage / 340, 0.05, 0.04),
       new THREE.MeshStandardMaterial({ color: "#fbbf24", emissive: "#92400e", emissiveIntensity: 0.25 })
     );
-    dent.position.set(0.16, 1.43, -0.285);
+    dent.position.set(0.16, 1.47, -0.315);
     dent.rotation.z = -0.4;
     group.add(dent);
+
+    const crackMaterial = new THREE.LineBasicMaterial({ color: "#020617", transparent: true, opacity: 0.75 });
+    const points = [
+      new THREE.Vector3(-0.18, 1.24, -0.326),
+      new THREE.Vector3(-0.1, 1.16, -0.326),
+      new THREE.Vector3(-0.15, 1.02, -0.326),
+      new THREE.Vector3(-0.02, 0.92, -0.326)
+    ];
+    const crack = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), crackMaterial);
+    group.add(crack);
   }
 
   return group;
@@ -106,7 +196,7 @@ function addLabel(group: THREE.Group, text: string, color: string, position: THR
 
 function disposeObject(object: THREE.Object3D): void {
   object.traverse((child) => {
-    if (child instanceof THREE.Mesh) {
+    if (child instanceof THREE.Mesh || child instanceof THREE.Line || child instanceof THREE.Points) {
       child.geometry.dispose();
       const materials = Array.isArray(child.material) ? child.material : [child.material];
       for (const material of materials) {
@@ -229,7 +319,6 @@ export function ThreeScene({ state, onPlayerPositionChange, onTargetChange }: Th
 
     const yaw = new THREE.Object3D();
     yaw.position.set(-8, 0, 1.4);
-    yaw.rotation.y = Math.PI;
     yaw.add(camera);
     scene.add(yaw);
 
@@ -241,6 +330,8 @@ export function ThreeScene({ state, onPlayerPositionChange, onTargetChange }: Th
     mount.appendChild(renderer.domElement);
 
     scene.add(createSkyDome());
+    const atmosphere = createAtmosphere();
+    scene.add(atmosphere);
 
     const hemi = new THREE.HemisphereLight("#dbeafe", "#172554", 1.05);
     scene.add(hemi);
@@ -297,7 +388,14 @@ export function ThreeScene({ state, onPlayerPositionChange, onTargetChange }: Th
     addBuilding(scene, 9.6, -2.8, 3.4, 4.6, 3.6, "arcade", "PIXEL");
     addBuilding(scene, -11.6, -2.1, 2.8, 5.3, 2.7, "transit", "BUS STOP");
     addBuilding(scene, 1.5, 4.7, 4.2, 3.4, 2.5, "rival", "REDLINE");
-    scene.add(createStreetProps());
+    const streetProps = createStreetProps();
+    const animatedProps: THREE.Object3D[] = [];
+    streetProps.traverse((object) => {
+      if (object.userData.floatSpeed) {
+        animatedProps.push(object);
+      }
+    });
+    scene.add(streetProps);
 
     const dynamicGroup = new THREE.Group();
     scene.add(dynamicGroup);
@@ -412,6 +510,15 @@ export function ThreeScene({ state, onPlayerPositionChange, onTargetChange }: Th
       if (time - lastPositionEmit > 180) {
         lastPositionEmit = time;
         onPlayerPositionChangeRef.current({ x: yaw.position.x, z: yaw.position.z });
+      }
+
+      atmosphere.rotation.y += delta * 0.015;
+      for (const object of animatedProps) {
+        const baseY = typeof object.userData.baseY === "number" ? object.userData.baseY : 0;
+        const phase = typeof object.userData.phase === "number" ? object.userData.phase : 0;
+        const amount = typeof object.userData.floatAmount === "number" ? object.userData.floatAmount : 0.01;
+        const speed = typeof object.userData.floatSpeed === "number" ? object.userData.floatSpeed : 1;
+        object.position.y = baseY + Math.sin(time * 0.003 * speed + phase) * amount;
       }
 
       updateTarget();
