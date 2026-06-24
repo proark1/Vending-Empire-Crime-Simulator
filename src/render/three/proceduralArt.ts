@@ -107,8 +107,54 @@ function createWallMaterial(base: string, mortar: string): THREE.MeshStandardMat
     (context, size) => {
       context.fillStyle = base;
       context.fillRect(0, 0, size, size);
+      const wash = context.createLinearGradient(0, 0, size, size);
+      wash.addColorStop(0, "rgba(255,255,255,0.08)");
+      wash.addColorStop(0.55, "rgba(15,23,42,0.05)");
+      wash.addColorStop(1, "rgba(2,6,23,0.16)");
+      context.fillStyle = wash;
+      context.fillRect(0, 0, size, size);
       context.strokeStyle = mortar;
       context.lineWidth = 3;
+      const brickHeight = 32;
+      const brickWidth = 74;
+      for (let y = 0; y <= size; y += brickHeight) {
+        context.beginPath();
+        context.moveTo(0, y);
+        context.lineTo(size, y);
+        context.stroke();
+        const offset = (y / brickHeight) % 2 === 0 ? 0 : brickWidth / 2;
+        for (let x = -offset; x <= size; x += brickWidth) {
+          const shade = 210 + Math.random() * 35;
+          context.fillStyle = `rgba(${shade}, ${shade}, ${shade}, 0.035)`;
+          context.fillRect(x + 4, y + 4, brickWidth - 9, brickHeight - 9);
+          context.beginPath();
+          context.moveTo(x, y);
+          context.lineTo(x, y + brickHeight);
+          context.stroke();
+        }
+      }
+      context.strokeStyle = "rgba(15, 23, 42, 0.22)";
+      context.lineWidth = 1.2;
+      for (let i = 0; i < 18; i += 1) {
+        const x = Math.random() * size;
+        const y = Math.random() * size;
+        context.beginPath();
+        context.moveTo(x, y);
+        context.lineTo(x + 12 + Math.random() * 30, y + Math.random() * 9 - 4);
+        context.stroke();
+      }
+      jitter(context, size, 550, 0.12);
+    },
+    2
+  );
+
+  const bumpMap = textureFromCanvas(
+    256,
+    (context, size) => {
+      context.fillStyle = "#8f8f8f";
+      context.fillRect(0, 0, size, size);
+      context.strokeStyle = "#303030";
+      context.lineWidth = 4;
       const brickHeight = 32;
       const brickWidth = 74;
       for (let y = 0; y <= size; y += brickHeight) {
@@ -124,12 +170,12 @@ function createWallMaterial(base: string, mortar: string): THREE.MeshStandardMat
           context.stroke();
         }
       }
-      jitter(context, size, 550, 0.12);
+      jitter(context, size, 420, 0.22);
     },
     2
   );
 
-  return new THREE.MeshStandardMaterial({ map, color: "#ffffff", roughness: 0.84 });
+  return new THREE.MeshStandardMaterial({ map, bumpMap, bumpScale: 0.035, color: "#ffffff", roughness: 0.9, metalness: 0.02 });
 }
 
 function createSignTexture(text: string, background: string, accent: string): THREE.CanvasTexture {
@@ -168,11 +214,14 @@ function addPlane(group: THREE.Group, width: number, height: number, material: T
 }
 
 function addWindows(group: THREE.Group, width: number, height: number, depth: number, buildingHeight: number, style: BuildingStyle): void {
+  const frameMaterial = new THREE.MeshStandardMaterial({ color: "#0f172a", roughness: 0.48, metalness: 0.12 });
+  const sillMaterial = new THREE.MeshStandardMaterial({ color: "#cbd5e1", roughness: 0.7, metalness: 0.05 });
   const windowMaterial = new THREE.MeshStandardMaterial({
     color: style === "arcade" ? "#f0abfc" : "#a7f3d0",
     emissive: style === "arcade" ? "#86198f" : "#0f766e",
     emissiveIntensity: style === "arcade" ? 0.7 : 0.25,
-    roughness: 0.28
+    roughness: 0.18,
+    metalness: 0.04
   });
 
   const cols = Math.max(2, Math.floor(width / 1.3));
@@ -188,9 +237,107 @@ function addWindows(group: THREE.Group, width: number, height: number, depth: nu
       if (y > height - 0.4) {
         continue;
       }
+      addPlane(group, 0.48, 0.42, frameMaterial, new THREE.Vector3(x, y, -depth / 2 - 0.012), 0);
       addPlane(group, 0.38, 0.32, windowMaterial, new THREE.Vector3(x, y, -depth / 2 - 0.011), 0);
+      const sill = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.045, 0.12), sillMaterial);
+      sill.position.set(x, y - 0.21, -depth / 2 - 0.045);
+      sill.castShadow = true;
+      group.add(sill);
     }
   }
+}
+
+function addFacadeDetails(group: THREE.Group, width: number, depth: number, height: number, style: BuildingStyle, accent: string): void {
+  const frontZ = -depth / 2;
+  const darkMaterial = new THREE.MeshStandardMaterial({ color: "#0f172a", roughness: 0.55, metalness: 0.12 });
+  const trimMaterial = new THREE.MeshStandardMaterial({ color: accent, roughness: 0.58, metalness: 0.08 });
+  const concreteMaterial = new THREE.MeshStandardMaterial({ color: "#94a3b8", roughness: 0.82, metalness: 0.02 });
+  const glassMaterial = new THREE.MeshPhysicalMaterial({
+    color: style === "arcade" ? "#f5d0fe" : "#bfdbfe",
+    emissive: style === "arcade" ? "#86198f" : "#075985",
+    emissiveIntensity: style === "arcade" ? 0.5 : 0.16,
+    roughness: 0.08,
+    metalness: 0,
+    transparent: true,
+    opacity: 0.64,
+    transmission: 0.12
+  });
+
+  const roofCap = new THREE.Mesh(new THREE.BoxGeometry(width + 0.32, 0.24, depth + 0.34), darkMaterial);
+  roofCap.position.set(0, height + 0.08, 0);
+  roofCap.castShadow = true;
+  roofCap.receiveShadow = true;
+  group.add(roofCap);
+
+  const parapet = new THREE.Mesh(new THREE.BoxGeometry(width + 0.42, 0.28, 0.22), trimMaterial);
+  parapet.position.set(0, height + 0.28, frontZ - 0.04);
+  parapet.castShadow = true;
+  group.add(parapet);
+
+  const foundation = new THREE.Mesh(new THREE.BoxGeometry(width + 0.16, 0.18, 0.2), concreteMaterial);
+  foundation.position.set(0, 0.09, frontZ - 0.08);
+  foundation.castShadow = true;
+  foundation.receiveShadow = true;
+  group.add(foundation);
+
+  const storefrontY = 0.82;
+  const doorX = -Math.min(width * 0.28, 1.1);
+  const doorFrame = new THREE.Mesh(new THREE.BoxGeometry(0.66, 1.32, 0.08), darkMaterial);
+  doorFrame.position.set(doorX, storefrontY, frontZ - 0.055);
+  doorFrame.castShadow = true;
+  group.add(doorFrame);
+
+  const door = new THREE.Mesh(new THREE.BoxGeometry(0.48, 1.12, 0.035), glassMaterial);
+  door.position.set(doorX, storefrontY, frontZ - 0.105);
+  group.add(door);
+
+  const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.18, 8), new THREE.MeshBasicMaterial({ color: "#f8fafc" }));
+  handle.position.set(doorX + 0.17, storefrontY, frontZ - 0.13);
+  handle.rotation.x = Math.PI / 2;
+  group.add(handle);
+
+  const displayWidth = Math.min(width * 0.44, 1.9);
+  const displayX = Math.min(width * 0.18, 1.0);
+  const displayFrame = new THREE.Mesh(new THREE.BoxGeometry(displayWidth + 0.18, 0.94, 0.075), darkMaterial);
+  displayFrame.position.set(displayX, 0.9, frontZ - 0.054);
+  displayFrame.castShadow = true;
+  group.add(displayFrame);
+
+  const displayGlass = new THREE.Mesh(new THREE.BoxGeometry(displayWidth, 0.76, 0.034), glassMaterial);
+  displayGlass.position.set(displayX, 0.9, frontZ - 0.104);
+  group.add(displayGlass);
+
+  for (const x of [-width / 2 + 0.22, width / 2 - 0.22]) {
+    const pilaster = new THREE.Mesh(new THREE.BoxGeometry(0.18, Math.min(height, 3.2), 0.14), concreteMaterial);
+    pilaster.position.set(x, Math.min(height, 3.2) / 2, frontZ - 0.055);
+    pilaster.castShadow = true;
+    group.add(pilaster);
+  }
+
+  const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, Math.max(1.7, height - 0.7), 10), darkMaterial);
+  pipe.position.set(width / 2 + 0.08, Math.max(1.7, height - 0.7) / 2, frontZ - 0.04);
+  pipe.castShadow = true;
+  group.add(pipe);
+
+  const vent = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.25, 0.08), new THREE.MeshStandardMaterial({ color: "#64748b", roughness: 0.54, metalness: 0.32 }));
+  vent.position.set(-width / 2 + 0.55, Math.min(height - 0.45, 1.95), frontZ - 0.075);
+  vent.castShadow = true;
+  group.add(vent);
+  for (let i = 0; i < 4; i += 1) {
+    const slit = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.014, 0.012), darkMaterial);
+    slit.position.set(vent.position.x, vent.position.y - 0.07 + i * 0.045, frontZ - 0.125);
+    group.add(slit);
+  }
+
+  const hvac = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.35, 0.58), new THREE.MeshStandardMaterial({ color: "#475569", roughness: 0.62, metalness: 0.22 }));
+  hvac.position.set(width / 2 - 0.85, height + 0.42, 0.1);
+  hvac.castShadow = true;
+  group.add(hvac);
+
+  const fan = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.015, 8, 26), darkMaterial);
+  fan.position.set(hvac.position.x, hvac.position.y + 0.01, hvac.position.z - 0.3);
+  fan.rotation.x = Math.PI / 2;
+  group.add(fan);
 }
 
 export function createBuilding(width: number, depth: number, height: number, style: BuildingStyle, signText: string): THREE.Group {
@@ -204,15 +351,6 @@ export function createBuilding(width: number, depth: number, height: number, sty
     transit: createWallMaterial("#0e7490", "rgba(15, 23, 42, 0.24)"),
     rival: createWallMaterial("#7f1d1d", "rgba(15, 23, 42, 0.32)")
   };
-
-  const body = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), materialByStyle[style]);
-  body.position.y = height / 2;
-  body.castShadow = true;
-  body.receiveShadow = true;
-  group.add(body);
-
-  addWindows(group, width, height, depth, height, style);
-
   const signAccent: Record<BuildingStyle, string> = {
     garage: "#38bdf8",
     supplier: "#f59e0b",
@@ -222,6 +360,16 @@ export function createBuilding(width: number, depth: number, height: number, sty
     transit: "#67e8f9",
     rival: "#fb7185"
   };
+
+  const body = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), materialByStyle[style]);
+  body.position.y = height / 2;
+  body.castShadow = true;
+  body.receiveShadow = true;
+  group.add(body);
+
+  addFacadeDetails(group, width, depth, height, style, signAccent[style]);
+  addWindows(group, width, height, depth, height, style);
+
   const signMaterial = new THREE.MeshStandardMaterial({
     map: createSignTexture(signText, "rgba(15, 23, 42, 0.96)", signAccent[style]),
     emissive: signAccent[style],
@@ -385,7 +533,21 @@ function addFace(group: THREE.Group, y: number, z: number): void {
     const eye = new THREE.Mesh(new THREE.SphereGeometry(0.018, 8, 6), eyeMaterial);
     eye.position.set(x, y, z);
     group.add(eye);
+
+    const brow = new THREE.Mesh(new THREE.BoxGeometry(0.062, 0.01, 0.01), new THREE.MeshBasicMaterial({ color: "#111827" }));
+    brow.position.set(x, y + 0.045, z - 0.004);
+    brow.rotation.z = x > 0 ? -0.15 : 0.15;
+    group.add(brow);
   }
+
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.065, 8), new THREE.MeshStandardMaterial({ color: "#9f6b45", roughness: 0.62 }));
+  nose.position.set(0, y - 0.03, z - 0.018);
+  nose.rotation.x = Math.PI / 2;
+  group.add(nose);
+
+  const mouth = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.01, 0.012), new THREE.MeshBasicMaterial({ color: "#7f1d1d" }));
+  mouth.position.set(0, y - 0.095, z - 0.01);
+  group.add(mouth);
 }
 
 export function createNpcCharacter(variant: "customer" | "rival" | "worker" | "scout"): THREE.Group {
@@ -427,14 +589,45 @@ export function createNpcCharacter(variant: "customer" | "rival" | "worker" | "s
   body.scale.x = 0.92;
   group.add(body);
 
+  const shoulders = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.16, 0.24), new THREE.MeshStandardMaterial({ color: palette.jacket, roughness: 0.64 }));
+  shoulders.position.set(0, 1.05, -0.01);
+  shoulders.castShadow = true;
+  group.add(shoulders);
+
   const shirt = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.42, 0.035), new THREE.MeshStandardMaterial({ color: palette.shirt, roughness: 0.66 }));
   shirt.position.set(0, 0.82, -0.205);
   group.add(shirt);
 
+  const collarLeft = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.04, 0.025), new THREE.MeshBasicMaterial({ color: palette.shirt }));
+  collarLeft.position.set(-0.055, 1.1, -0.205);
+  collarLeft.rotation.z = -0.42;
+  group.add(collarLeft);
+  const collarRight = collarLeft.clone();
+  collarRight.position.x = 0.055;
+  collarRight.rotation.z = 0.42;
+  group.add(collarRight);
+
+  const belt = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.045, 0.035), new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.5, metalness: 0.08 }));
+  belt.position.set(0, 0.57, -0.19);
+  group.add(belt);
+
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 0.16, 12), new THREE.MeshStandardMaterial({ color: palette.skin, roughness: 0.58 }));
+  neck.position.set(0, 1.19, -0.005);
+  neck.castShadow = true;
+  group.add(neck);
+
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.18, 18, 14), new THREE.MeshStandardMaterial({ color: palette.skin, roughness: 0.58 }));
   head.position.set(0, 1.34, -0.005);
+  head.scale.set(0.88, 1.06, 0.96);
   head.castShadow = true;
   group.add(head);
+
+  for (const x of [-0.17, 0.17]) {
+    const ear = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), new THREE.MeshStandardMaterial({ color: palette.skin, roughness: 0.6 }));
+    ear.position.set(x, 1.34, -0.01);
+    ear.scale.set(0.7, 1, 0.42);
+    group.add(ear);
+  }
 
   const hair = new THREE.Mesh(
     new THREE.SphereGeometry(0.185, 18, 8, 0, Math.PI * 2, 0, Math.PI * 0.48),
@@ -451,6 +644,17 @@ export function createNpcCharacter(variant: "customer" | "rival" | "worker" | "s
     arm.rotation.z = x > 0 ? -0.28 : 0.28;
     arm.castShadow = true;
     group.add(arm);
+
+    const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.047, 0.047, 0.055, 8), new THREE.MeshStandardMaterial({ color: palette.shirt, roughness: 0.62 }));
+    cuff.position.set(x + (x > 0 ? 0.1 : -0.1), 0.61, -0.025);
+    cuff.rotation.z = arm.rotation.z;
+    group.add(cuff);
+
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 8), new THREE.MeshStandardMaterial({ color: palette.skin, roughness: 0.62 }));
+    hand.position.set(x + (x > 0 ? 0.15 : -0.15), 0.55, -0.035);
+    hand.scale.set(0.9, 1.1, 0.75);
+    hand.castShadow = true;
+    group.add(hand);
   }
 
   const badge = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.05, 0.025), new THREE.MeshBasicMaterial({ color: palette.accent }));
@@ -553,6 +757,86 @@ export function createStreetProps(): THREE.Group {
     character.userData.baseY = character.position.y;
     character.userData.phase = npc.x * 0.4 + npc.z * 0.7;
     group.add(character);
+  }
+
+  const metalMaterial = new THREE.MeshStandardMaterial({ color: "#334155", roughness: 0.5, metalness: 0.38 });
+  const glassMaterial = new THREE.MeshPhysicalMaterial({ color: "#bfdbfe", roughness: 0.05, transparent: true, opacity: 0.34, transmission: 0.18 });
+  const busShelter = new THREE.Group();
+  busShelter.position.set(-10.55, 0, -1.95);
+  busShelter.rotation.y = Math.PI / 2;
+  const shelterRoof = new THREE.Mesh(new THREE.BoxGeometry(2.3, 0.12, 0.74), metalMaterial);
+  shelterRoof.position.set(0, 2.12, 0);
+  shelterRoof.castShadow = true;
+  busShelter.add(shelterRoof);
+  const shelterBack = new THREE.Mesh(new THREE.BoxGeometry(2.12, 1.52, 0.045), glassMaterial);
+  shelterBack.position.set(0, 1.22, 0.34);
+  busShelter.add(shelterBack);
+  for (const x of [-1.02, 1.02]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.04, 2.15, 10), metalMaterial);
+    post.position.set(x, 1.05, 0.34);
+    post.castShadow = true;
+    busShelter.add(post);
+  }
+  const bench = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.12, 0.34), new THREE.MeshStandardMaterial({ color: "#7c2d12", roughness: 0.62, metalness: 0.04 }));
+  bench.position.set(0, 0.55, 0.05);
+  bench.castShadow = true;
+  busShelter.add(bench);
+  for (const x of [-0.62, 0.62]) {
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.5, 8), metalMaterial);
+    leg.position.set(x, 0.28, 0.05);
+    busShelter.add(leg);
+  }
+  group.add(busShelter);
+
+  const utilityMaterial = new THREE.MeshStandardMaterial({ color: "#475569", roughness: 0.68, metalness: 0.12 });
+  for (const [x, z, color] of [
+    [5.8, 4.6, "#0ea5e9"],
+    [6.25, 4.62, "#f97316"],
+    [-6.7, 2.75, "#22c55e"]
+  ] as Array<[number, number, string]>) {
+    const box = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.72, 0.34), utilityMaterial);
+    box.position.set(x, 0.36, z);
+    box.castShadow = true;
+    box.receiveShadow = true;
+    group.add(box);
+    const label = new THREE.Mesh(new THREE.BoxGeometry(0.23, 0.14, 0.018), new THREE.MeshBasicMaterial({ color }));
+    label.position.set(x, 0.53, z - 0.18);
+    group.add(label);
+  }
+
+  const planterMaterial = new THREE.MeshStandardMaterial({ color: "#78350f", roughness: 0.72, metalness: 0.03 });
+  const leafMaterial = new THREE.MeshStandardMaterial({ color: "#15803d", roughness: 0.74 });
+  for (const [x, z] of [
+    [-4.1, -3.75],
+    [3.35, -4.55],
+    [8.1, 1.35]
+  ] as Array<[number, number]>) {
+    const planter = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.26, 0.34), planterMaterial);
+    planter.position.set(x, 0.13, z);
+    planter.castShadow = true;
+    group.add(planter);
+    for (let i = 0; i < 5; i += 1) {
+      const leaf = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.34, 5), leafMaterial);
+      leaf.position.set(x - 0.24 + i * 0.12, 0.42, z + (i % 2 === 0 ? 0.03 : -0.04));
+      leaf.rotation.z = -0.28 + i * 0.14;
+      group.add(leaf);
+    }
+  }
+
+  for (const [x, z] of [
+    [-3.25, -3.35],
+    [-2.85, -3.35],
+    [2.85, 3.35],
+    [3.25, 3.35],
+    [8.55, -0.78]
+  ] as Array<[number, number]>) {
+    const bollard = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.065, 0.54, 12), metalMaterial);
+    bollard.position.set(x, 0.27, z);
+    bollard.castShadow = true;
+    group.add(bollard);
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.066, 12, 8), new THREE.MeshBasicMaterial({ color: "#facc15" }));
+    cap.position.set(x, 0.56, z);
+    group.add(cap);
   }
 
   const lampMaterial = new THREE.MeshStandardMaterial({ color: "#1e293b", roughness: 0.5, metalness: 0.35 });

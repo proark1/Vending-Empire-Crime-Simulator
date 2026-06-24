@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { createInitialState } from "../content/initialState";
-import { reduceCommands, reduceGameState } from "../systems/reducer";
+import type { GameCommand, LocationId } from "./types";
+import { reduceCommands } from "../systems/reducer";
 import { getStarterMissionStep } from "./mission";
 
 const startPosition = { x: -8, z: 1.4 };
+
+function visit(locationId: LocationId): GameCommand {
+  return { type: "set_player_location", actorId: "player", locationId };
+}
 
 describe("starter mission flow", () => {
   it("starts by guiding the player to the supplier", () => {
@@ -14,7 +19,10 @@ describe("starter mission flow", () => {
   });
 
   it("guides supplier crates to the garage first", () => {
-    const state = reduceGameState(createInitialState(), { type: "buy_product", actorId: "player", productId: "soda", quantity: 5 }).state;
+    const state = reduceCommands(createInitialState(), [
+      visit("supplier"),
+      { type: "buy_product", actorId: "player", productId: "soda", quantity: 5 }
+    ]).state;
     const step = getStarterMissionStep(state, startPosition);
 
     expect(step.id).toBe("deposit_stock");
@@ -23,7 +31,9 @@ describe("starter mission flow", () => {
 
   it("guides stored stock into a carried route crate", () => {
     const state = reduceCommands(createInitialState(), [
+      visit("supplier"),
       { type: "buy_product", actorId: "player", productId: "soda", quantity: 5 },
+      visit("garage"),
       { type: "deposit_crate", actorId: "player" }
     ]).state;
     const step = getStarterMissionStep(state, startPosition);
@@ -34,7 +44,9 @@ describe("starter mission flow", () => {
 
   it("guides garage-loaded crates to the first machine", () => {
     const state = reduceCommands(createInitialState(), [
+      visit("supplier"),
       { type: "buy_product", actorId: "player", productId: "soda", quantity: 5 },
+      visit("garage"),
       { type: "deposit_crate", actorId: "player" },
       { type: "load_crate", actorId: "player", productId: "soda", quantity: 5 }
     ]).state;
@@ -46,7 +58,9 @@ describe("starter mission flow", () => {
 
   it("progresses to repair after the starter machine has stock", () => {
     const state = reduceCommands(createInitialState(), [
+      visit("supplier"),
       { type: "buy_product", actorId: "player", productId: "soda", quantity: 5 },
+      visit("laundromat"),
       { type: "stock_machine", actorId: "player", machineId: "machine_player_1", productId: "soda", quantity: 5 }
     ]).state;
     const step = getStarterMissionStep(state, startPosition);
@@ -56,7 +70,9 @@ describe("starter mission flow", () => {
 
   it("targets an affordable second placement after the first cash run", () => {
     const state = reduceCommands(createInitialState(), [
+      visit("supplier"),
       { type: "buy_product", actorId: "player", productId: "soda", quantity: 10 },
+      visit("laundromat"),
       { type: "stock_machine", actorId: "player", machineId: "machine_player_1", productId: "soda", quantity: 10 },
       { type: "repair_machine", actorId: "player", machineId: "machine_player_1" },
       { type: "advance_time", actorId: "player", hours: 10 },

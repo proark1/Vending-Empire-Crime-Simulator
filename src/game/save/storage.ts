@@ -29,6 +29,7 @@ function migrateGameState(parsed: GameState): GameState {
       ...baseline.player,
       ...parsedPlayer,
       activeVehicleId: parsedPlayer.activeVehicleId ?? baseline.player.activeVehicleId,
+      currentLocationId: parsedPlayer.currentLocationId ?? baseline.player.currentLocationId,
       cargo: isLegacyLogistics ? {} : parsedPlayer.cargo ?? {},
       cargoCapacity: isLegacyLogistics ? baseline.player.cargoCapacity : parsedPlayer.cargoCapacity ?? baseline.player.cargoCapacity,
       carriedCrate: parsedPlayer.carriedCrate ?? null,

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { createInitialState } from "../game/content/initialState";
-import { reduceCommands, reduceGameState } from "../game/systems/reducer";
+import type { GameCommand, LocationId } from "../game/core/types";
+import { reduceCommands } from "../game/systems/reducer";
 import { getPrimaryInteraction } from "./interactionActions";
+
+function visit(locationId: LocationId): GameCommand {
+  return { type: "set_player_location", actorId: "player", locationId };
+}
 
 describe("primary interactions", () => {
   it("recommends buying supplier stock", () => {
@@ -13,7 +18,10 @@ describe("primary interactions", () => {
   });
 
   it("prioritizes stocking an owned machine when cargo is available", () => {
-    const state = reduceGameState(createInitialState(), { type: "buy_product", actorId: "player", productId: "soda", quantity: 5 }).state;
+    const state = reduceCommands(createInitialState(), [
+      visit("supplier"),
+      { type: "buy_product", actorId: "player", productId: "soda", quantity: 5 }
+    ]).state;
     const action = getPrimaryInteraction(state, { type: "machine", id: "machine_player_1", label: "Rusty Starter" });
 
     expect(action?.kind).toBe("command");
@@ -24,7 +32,10 @@ describe("primary interactions", () => {
   });
 
   it("stores carried crates at the garage as the base primary action", () => {
-    const state = reduceGameState(createInitialState(), { type: "buy_product", actorId: "player", productId: "soda", quantity: 5 }).state;
+    const state = reduceCommands(createInitialState(), [
+      visit("supplier"),
+      { type: "buy_product", actorId: "player", productId: "soda", quantity: 5 }
+    ]).state;
     const action = getPrimaryInteraction(state, { type: "base", id: "garage", label: "Storage Garage" });
 
     expect(action?.kind).toBe("command");
@@ -36,7 +47,9 @@ describe("primary interactions", () => {
 
   it("loads stored garage crates when hands are free", () => {
     const state = reduceCommands(createInitialState(), [
+      visit("supplier"),
       { type: "buy_product", actorId: "player", productId: "soda", quantity: 5 },
+      visit("garage"),
       { type: "deposit_crate", actorId: "player" }
     ]).state;
     const action = getPrimaryInteraction(state, { type: "base", id: "garage", label: "Storage Garage" });
@@ -50,7 +63,9 @@ describe("primary interactions", () => {
 
   it("uses nearby van stock as a machine primary action when hands are free", () => {
     const state = reduceCommands(createInitialState(), [
+      visit("supplier"),
       { type: "buy_product", actorId: "player", productId: "soda", quantity: 10 },
+      visit("garage"),
       { type: "deposit_crate", actorId: "player" },
       { type: "load_vehicle", actorId: "player", vehicleId: "vehicle_starter_van", productId: "soda", quantity: 10 },
       { type: "dispatch_vehicle", actorId: "player", vehicleId: "vehicle_starter_van", locationId: "laundromat" }
@@ -76,7 +91,9 @@ describe("primary interactions", () => {
 
   it("repairs a stocked damaged machine before adding leftover cargo", () => {
     const state = reduceCommands(createInitialState(), [
+      visit("supplier"),
       { type: "buy_product", actorId: "player", productId: "soda", quantity: 10 },
+      visit("laundromat"),
       { type: "stock_machine", actorId: "player", machineId: "machine_player_1", productId: "soda", quantity: 6 }
     ]).state;
     const action = getPrimaryInteraction(state, { type: "machine", id: "machine_player_1", label: "Rusty Starter" });

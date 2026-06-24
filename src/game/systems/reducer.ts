@@ -109,6 +109,42 @@ function clampSlotPrice(price: number): number {
   return Math.max(1, Math.min(99, Math.round(price)));
 }
 
+function requirePlayerAtLocation(state: GameState, events: GameEvent[], locationId: string, actionLabel = "work this stop"): boolean {
+  if (state.player.currentLocationId === locationId) {
+    return true;
+  }
+
+  const location = state.locations[locationId];
+  log(state, events, `Get to ${location?.name ?? "that stop"} before you ${actionLabel}.`, "warning");
+  return false;
+}
+
+function canUseMachineRemotely(machine: VendingMachine, action: "collect" | "price"): boolean {
+  if (action === "collect") {
+    return machineHasUpgrade(machine, "cashless_terminal");
+  }
+
+  return machineHasUpgrade(machine, "remote_monitor");
+}
+
+function requirePlayerAtMachine(
+  state: GameState,
+  events: GameEvent[],
+  machine: VendingMachine,
+  actionLabel: string,
+  remoteAction?: "collect" | "price"
+): boolean {
+  if (state.player.currentLocationId === machine.locationId) {
+    return true;
+  }
+
+  if (remoteAction && canUseMachineRemotely(machine, remoteAction)) {
+    return true;
+  }
+
+  return requirePlayerAtLocation(state, events, machine.locationId, actionLabel);
+}
+
 function travelHoursBetweenLocations(state: GameState, fromLocationId: string, toLocationId: string, speed: number): number {
   const from = state.locations[fromLocationId];
   const to = state.locations[toLocationId];
@@ -390,8 +426,21 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       break;
     }
 
+    case "set_player_location": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      state.player.currentLocationId = command.locationId && state.locations[command.locationId] ? command.locationId : null;
+      break;
+    }
+
     case "buy_product": {
       if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      if (!requirePlayerAtLocation(state, events, "supplier", "buy stock")) {
         break;
       }
 
@@ -426,6 +475,10 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
         break;
       }
 
+      if (!requirePlayerAtLocation(state, events, "garage", "store stock")) {
+        break;
+      }
+
       const crate = state.player.carriedCrate;
       if (!crate) {
         log(state, events, "No crate in hand to store.", "warning");
@@ -452,6 +505,10 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
 
     case "load_crate": {
       if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      if (!requirePlayerAtLocation(state, events, "garage", "load route crates")) {
         break;
       }
 
@@ -486,6 +543,10 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
         break;
       }
 
+      if (!requirePlayerAtLocation(state, events, "garage", "load the van")) {
+        break;
+      }
+
       const vehicle = state.vehicles[command.vehicleId];
       const product = state.products[command.productId];
       if (!vehicle || !product) {
@@ -513,6 +574,10 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
 
     case "unload_vehicle": {
       if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      if (!requirePlayerAtLocation(state, events, "garage", "unload the van")) {
         break;
       }
 
@@ -554,6 +619,10 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       const vehicle = state.vehicles[command.vehicleId];
       const product = state.products[command.productId];
       if (!vehicle || !product) {
+        break;
+      }
+
+      if (!requirePlayerAtLocation(state, events, vehicle.locationId, "pull stock from the van")) {
         break;
       }
 
@@ -621,6 +690,10 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
         break;
       }
 
+      if (!requirePlayerAtMachine(state, events, machine, "stock this machine")) {
+        break;
+      }
+
       const product = state.products[command.productId];
       const available = state.player.carriedCrate?.productId === product.id ? state.player.carriedCrate.quantity : state.player.cargo[product.id] ?? 0;
       const slot = getOrCreateSlot(machine, product.id, product.basePrice);
@@ -650,6 +723,10 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
         break;
       }
 
+      if (actor.id === state.playerFactionId && !requirePlayerAtMachine(state, events, machine, "collect cash", "collect")) {
+        break;
+      }
+
       const amount = Math.round(machine.revenueStored);
       actor.money += amount;
       machine.revenueStored = 0;
@@ -664,6 +741,10 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
     case "repair_machine": {
       const machine = state.machines[command.machineId];
       if (!machine || machine.ownerFactionId !== actor.id || machine.damage <= 0) {
+        break;
+      }
+
+      if (actor.id === state.playerFactionId && !requirePlayerAtMachine(state, events, machine, "repair this machine")) {
         break;
       }
 
@@ -684,6 +765,10 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
     case "place_machine": {
       const location = state.locations[command.locationId];
       if (!location || location.kind === "garage" || location.kind === "supplier") {
+        break;
+      }
+
+      if (actor.id === state.playerFactionId && !requirePlayerAtLocation(state, events, location.id, "install a machine")) {
         break;
       }
 
@@ -712,6 +797,10 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
         break;
       }
 
+      if (actor.id === state.playerFactionId && !requirePlayerAtMachine(state, events, machine, "change prices", "price")) {
+        break;
+      }
+
       const product = state.products[command.productId];
       const slot = machine.slots.find((candidate) => candidate.productId === command.productId);
       if (!product || !slot) {
@@ -732,6 +821,10 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
     case "install_upgrade": {
       const machine = state.machines[command.machineId];
       if (!machine || machine.ownerFactionId !== actor.id) {
+        break;
+      }
+
+      if (actor.id === state.playerFactionId && !requirePlayerAtMachine(state, events, machine, "install upgrades")) {
         break;
       }
 
@@ -761,6 +854,10 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
     case "sabotage_machine": {
       const machine = state.machines[command.machineId];
       if (!machine || machine.ownerFactionId === actor.id) {
+        break;
+      }
+
+      if (actor.id === state.playerFactionId && !requirePlayerAtMachine(state, events, machine, "sabotage this machine")) {
         break;
       }
 

@@ -60,6 +60,36 @@ function machinePlacementForLocation(location: Location): { position: THREE.Vect
   };
 }
 
+function createMachineSignTexture(color: string, damage: number): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 384;
+  canvas.height = 128;
+  const context = canvas.getContext("2d");
+
+  if (context) {
+    context.fillStyle = "#0f172a";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = color;
+    context.fillRect(0, 0, canvas.width, 12);
+    context.fillRect(0, canvas.height - 12, canvas.width, 12);
+    context.fillStyle = damage > 70 ? "#fecdd3" : "#f8fafc";
+    context.font = "900 46px Inter, system-ui, sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.shadowColor = color;
+    context.shadowBlur = damage > 70 ? 0 : 16;
+    context.fillText("VEND", canvas.width / 2, 52);
+    context.shadowBlur = 0;
+    context.fillStyle = "#cbd5e1";
+    context.font = "700 18px Inter, system-ui, sans-serif";
+    context.fillText(damage > 70 ? "SERVICE NEEDED" : "COLD STOCK", canvas.width / 2, 92);
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
 function createMachineMesh(color: string, damage: number, installedUpgrades: MachineUpgradeId[] = []): THREE.Group {
   const group = new THREE.Group();
   const upgrades = new Set(installedUpgrades);
@@ -94,9 +124,13 @@ function createMachineMesh(color: string, damage: number, installedUpgrades: Mac
   body.receiveShadow = true;
   group.add(body);
 
+  const backPanel = new THREE.Mesh(new THREE.BoxGeometry(0.86, 1.56, 0.035), new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.46, metalness: 0.18 }));
+  backPanel.position.set(0, 0.92, 0.265);
+  group.add(backPanel);
+
   const topSign = new THREE.Mesh(
-    new THREE.BoxGeometry(0.68, 0.18, 0.035),
-    new THREE.MeshBasicMaterial({ color: "#f8fafc" })
+    new THREE.BoxGeometry(0.7, 0.2, 0.04),
+    new THREE.MeshStandardMaterial({ map: createMachineSignTexture(color, damage), emissive: color, emissiveIntensity: damage > 70 ? 0.05 : 0.28, roughness: 0.26 })
   );
   topSign.position.set(0, 1.65, -0.275);
   group.add(topSign);
@@ -109,11 +143,28 @@ function createMachineMesh(color: string, damage: number, installedUpgrades: Mac
   group.add(neonBar);
 
   const windowPanel = new THREE.Mesh(
-    new THREE.BoxGeometry(0.44, 0.82, 0.035),
+    new THREE.BoxGeometry(0.48, 0.86, 0.038),
     glassMaterial
   );
   windowPanel.position.set(-0.08, 1.1, -0.274);
   group.add(windowPanel);
+
+  const windowFrameMaterial = new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.38, metalness: 0.22 });
+  for (const [x, y, w, h] of [
+    [-0.08, 1.55, 0.54, 0.035],
+    [-0.08, 0.65, 0.54, 0.035],
+    [-0.36, 1.1, 0.035, 0.9],
+    [0.2, 1.1, 0.035, 0.9]
+  ]) {
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.04), windowFrameMaterial);
+    frame.position.set(x, y, -0.318);
+    group.add(frame);
+  }
+
+  const glare = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.78, 0.012), new THREE.MeshBasicMaterial({ color: "#f8fafc", transparent: true, opacity: 0.22 }));
+  glare.position.set(-0.25, 1.12, -0.333);
+  glare.rotation.z = -0.28;
+  group.add(glare);
 
   const shelfMaterial = new THREE.MeshStandardMaterial({ color: "#1e293b", roughness: 0.55 });
   const productColors = ["#ef4444", "#22c55e", "#f59e0b", "#38bdf8", "#e879f9", "#f8fafc"];
@@ -129,6 +180,11 @@ function createMachineMesh(color: string, damage: number, installedUpgrades: Mac
       );
       product.position.set(-0.245 + col * 0.11, 0.91 + row * 0.22, -0.312);
       group.add(product);
+
+      const coil = new THREE.Mesh(new THREE.TorusGeometry(0.035, 0.004, 6, 16), new THREE.MeshBasicMaterial({ color: "#cbd5e1" }));
+      coil.position.set(product.position.x, product.position.y - 0.085, -0.326);
+      coil.scale.y = 0.45;
+      group.add(coil);
     }
   }
 
@@ -137,11 +193,20 @@ function createMachineMesh(color: string, damage: number, installedUpgrades: Mac
   group.add(sidePanel);
 
   const display = new THREE.Mesh(
-    new THREE.BoxGeometry(0.11, 0.1, 0.02),
+    new THREE.BoxGeometry(0.12, 0.11, 0.023),
     new THREE.MeshBasicMaterial({ color: damage > 75 ? "#7f1d1d" : "#22d3ee" })
   );
   display.position.set(0.26, 1.36, -0.304);
   group.add(display);
+
+  const billSlot = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.025, 0.022), new THREE.MeshStandardMaterial({ color: "#cbd5e1", roughness: 0.28, metalness: 0.42 }));
+  billSlot.position.set(0.26, 1.02, -0.314);
+  group.add(billSlot);
+
+  const coinReturn = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.015, 16), new THREE.MeshStandardMaterial({ color: "#94a3b8", roughness: 0.34, metalness: 0.55 }));
+  coinReturn.position.set(0.32, 0.93, -0.314);
+  coinReturn.rotation.x = Math.PI / 2;
+  group.add(coinReturn);
 
   for (let row = 0; row < 3; row += 1) {
     for (let col = 0; col < 3; col += 1) {
@@ -158,9 +223,33 @@ function createMachineMesh(color: string, damage: number, installedUpgrades: Mac
   slot.position.set(-0.08, 0.39, -0.294);
   group.add(slot);
 
+  const pickupDoor = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.07, 0.018), new THREE.MeshStandardMaterial({ color: "#334155", roughness: 0.36, metalness: 0.32 }));
+  pickupDoor.position.set(-0.08, 0.38, -0.325);
+  group.add(pickupDoor);
+
   const dropLight = new THREE.Mesh(new THREE.BoxGeometry(0.29, 0.025, 0.02), new THREE.MeshBasicMaterial({ color: "#facc15" }));
   dropLight.position.set(-0.08, 0.46, -0.318);
   group.add(dropLight);
+
+  for (const y of [0.62, 0.95, 1.28]) {
+    const hinge = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.18, 10), new THREE.MeshStandardMaterial({ color: "#94a3b8", roughness: 0.36, metalness: 0.55 }));
+    hinge.position.set(0.405, y, -0.285);
+    hinge.rotation.x = Math.PI / 2;
+    group.add(hinge);
+  }
+
+  for (let i = 0; i < 5; i += 1) {
+    const vent = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.22, 0.018), new THREE.MeshBasicMaterial({ color: "#020617" }));
+    vent.position.set(-0.405, 0.72 + i * 0.11, -0.05);
+    group.add(vent);
+  }
+
+  for (const x of [-0.28, 0.28]) {
+    const foot = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.065, 0.08, 12), new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.54, metalness: 0.14 }));
+    foot.position.set(x, 0.04, -0.17);
+    foot.castShadow = true;
+    group.add(foot);
+  }
 
   const sideStripe = new THREE.Mesh(new THREE.BoxGeometry(0.05, 1.42, 0.03), new THREE.MeshBasicMaterial({ color }));
   sideStripe.position.set(-0.355, 0.98, -0.285);

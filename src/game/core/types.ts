@@ -116,6 +116,7 @@ export interface District {
 export interface PlayerState {
   factionId: FactionId;
   activeVehicleId: VehicleId;
+  currentLocationId: LocationId | null;
   /**
    * Legacy free-form cargo bucket. New logistics uses carriedCrate and garageStorage,
    * but this remains for save migration and defensive compatibility.
@@ -236,6 +237,7 @@ export interface GameState {
 
 export type GameCommand =
   | { type: "advance_time"; actorId: FactionId; hours: number }
+  | { type: "set_player_location"; actorId: FactionId; locationId: LocationId | null }
   | { type: "buy_product"; actorId: FactionId; productId: ProductId; quantity: number }
   | { type: "deposit_crate"; actorId: FactionId }
   | { type: "load_crate"; actorId: FactionId; productId: ProductId; quantity: number }

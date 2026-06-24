@@ -8,11 +8,61 @@ import { Minimap } from "./ui/Minimap";
 import { MissionTracker } from "./ui/MissionTracker";
 import { GuidanceArrow } from "./ui/GuidanceArrow";
 import { getStarterMissionStep } from "./game/core/mission";
-import { selectedRouteTask } from "./game/core/selectors";
+import { latestDayReport, selectedRouteTask } from "./game/core/selectors";
 import { executePrimaryInteraction, getPrimaryInteraction } from "./ui/interactionActions";
 import { useGame } from "./hooks/useGame";
 import { ToastStack, type ToastMessage } from "./ui/ToastStack";
-import type { Vec2 } from "./game/core/types";
+import type { DayReport, GameCommand, GameState, LocationId, Vec2 } from "./game/core/types";
+
+function targetLocationId(target: SceneTarget | null, state: GameState): LocationId | null {
+  if (!target) {
+    return null;
+  }
+
+  if (target.type === "machine") {
+    return state.machines[target.id]?.locationId ?? null;
+  }
+
+  return target.id;
+}
+
+function DayReportModal({ report, onClose }: { report: DayReport; onClose: () => void }) {
+  return (
+    <aside className="day-report-modal" aria-label={`Day ${report.day} report`}>
+      <div>
+        <span>Day {report.day} report</span>
+        <button aria-label="Close day report" onClick={onClose} type="button">
+          Close
+        </button>
+      </div>
+      <h2>{report.summary}</h2>
+      <dl>
+        <div>
+          <dt>Cash collected</dt>
+          <dd>${Math.round(report.revenueCollected)}</dd>
+        </div>
+        <div>
+          <dt>Stored revenue</dt>
+          <dd>${Math.round(report.machineRevenueStored)}</dd>
+        </div>
+        <div>
+          <dt>Contracts</dt>
+          <dd>
+            {report.contractsCompleted} done / {report.contractsFailed} missed
+          </dd>
+        </div>
+        <div>
+          <dt>Stock sold</dt>
+          <dd>{report.stockSold}</dd>
+        </div>
+        <div>
+          <dt>Rival moves</dt>
+          <dd>{report.rivalActions}</dd>
+        </div>
+      </dl>
+    </aside>
+  );
+}
 
 export function App() {
   const { state, sendCommand, advanceWorld, save, reload, restart } = useGame();
@@ -21,13 +71,17 @@ export function App() {
   const [playerPosition, setPlayerPosition] = useState<Vec2>({ x: -8, z: 1.4 });
   const [playerHeadingDegrees, setPlayerHeadingDegrees] = useState(0);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [visibleReport, setVisibleReport] = useState<DayReport | null>(null);
   const lastEventIdRef = useRef(state.eventLog[0]?.id ?? null);
   const lastMissionStepIdRef = useRef<string | null>(null);
+  const lastServiceLocationIdRef = useRef<LocationId | null>(state.player.currentLocationId);
+  const lastReportIdRef = useRef<string | null>(null);
   const activeTarget = entered ? target : null;
   const primaryInteraction = useMemo(() => getPrimaryInteraction(state, activeTarget), [activeTarget, state]);
   const missionStep = useMemo(() => getStarterMissionStep(state, playerPosition), [playerPosition, state]);
   const routeTask = useMemo(() => selectedRouteTask(state), [state]);
   const guidanceLocationId = routeTask?.locationId ?? missionStep.targetLocationId;
+  const report = latestDayReport(state);
 
   const addToast = useCallback((toast: Omit<ToastMessage, "id">) => {
     const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -77,6 +131,30 @@ export function App() {
     });
   }, [addToast, missionStep.id, missionStep.objective]);
 
+  useEffect(() => {
+    const nextLocationId = entered ? targetLocationId(target, state) : null;
+    if (nextLocationId === lastServiceLocationIdRef.current) {
+      return;
+    }
+
+    lastServiceLocationIdRef.current = nextLocationId;
+    sendCommand({ type: "set_player_location", actorId: state.playerFactionId, locationId: nextLocationId });
+  }, [entered, sendCommand, state, target]);
+
+  useEffect(() => {
+    if (!report || report.id === lastReportIdRef.current) {
+      return;
+    }
+
+    lastReportIdRef.current = report.id;
+    setVisibleReport(report);
+    addToast({
+      title: `Day ${report.day} report`,
+      message: report.summary,
+      tone: report.contractsFailed > 0 ? "warning" : "good"
+    });
+  }, [addToast, report]);
+
   const handleRestart = useCallback(() => {
     if (window.confirm("Restart this local MVP save?")) {
       restart();
@@ -87,12 +165,25 @@ export function App() {
     setEntered(true);
   }, []);
 
+  const sendCommandAtActiveTarget = useCallback(
+    (command: GameCommand) => {
+      const nextLocationId = targetLocationId(activeTarget, state);
+      if (nextLocationId !== lastServiceLocationIdRef.current) {
+        lastServiceLocationIdRef.current = nextLocationId;
+        sendCommand({ type: "set_player_location", actorId: state.playerFactionId, locationId: nextLocationId });
+      }
+
+      sendCommand(command);
+    },
+    [activeTarget, sendCommand, state]
+  );
+
   const handlePrimaryInteraction = useCallback(() => {
     executePrimaryInteraction(primaryInteraction, {
-      onCommand: sendCommand,
+      onCommand: sendCommandAtActiveTarget,
       onSave: save
     });
-  }, [primaryInteraction, save, sendCommand]);
+  }, [primaryInteraction, save, sendCommandAtActiveTarget]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -140,7 +231,8 @@ export function App() {
       )}
       <Dashboard state={state} onCommand={sendCommand} />
       <Minimap state={state} playerPosition={playerPosition} guidanceLocationId={guidanceLocationId} target={activeTarget} />
-      <InteractionPanel state={state} target={activeTarget} onCommand={sendCommand} onSave={save} onReload={reload} onRestart={handleRestart} />
+      <InteractionPanel state={state} target={activeTarget} onCommand={sendCommandAtActiveTarget} onSave={save} onReload={reload} onRestart={handleRestart} />
+      {visibleReport && <DayReportModal report={visibleReport} onClose={() => setVisibleReport(null)} />}
       <ToastStack messages={toasts} />
     </main>
   );

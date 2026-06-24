@@ -3,9 +3,14 @@ import type { GameCommand, GameState, MachineUpgradeId } from "../game/core/type
 import { machineUpgradeList } from "../game/content/machineUpgrades";
 import { effectiveMachineSecurity, effectiveMachineVisibility, getMachineUpgradeEffects, machineHasUpgrade, priceDemandMultiplier } from "../game/core/machineStats";
 import {
+  activeContractsAtLocation,
   activeVehicle,
   cargoSpaceRemaining,
   carriedCrateUnits,
+  contractNeedByProduct,
+  contractProgressRatio,
+  contractRemainingQuantity,
+  contractTone,
   garageStorageSpaceRemaining,
   garageStorageUnits,
   machineAtLocation,
@@ -96,6 +101,7 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
     const storageUsed = garageStorageUnits(state);
     const storageRemaining = garageStorageSpaceRemaining(state);
     const vehicle = activeVehicle(state);
+    const contractNeeds = contractNeedByProduct(state);
 
     return (
       <section className="interaction-panel">
@@ -133,12 +139,13 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
             {Object.values(state.products).map((product) => {
               const quantity = state.player.garageStorage[product.id] ?? 0;
               const crateQuantity = Math.min(quantity, Math.floor(state.player.cargoCapacity / product.size));
+              const contractNeed = contractNeeds[product.id] ?? 0;
               return (
-                <article className="inventory-row" key={product.id}>
+                <article className={`inventory-row ${contractNeed > 0 ? "contract-needed" : ""}`} key={product.id}>
                   <div>
                     <h3>{product.name}</h3>
                     <p>
-                      {quantity} stored · {storageRemaining} free capacity
+                      {quantity} stored · {storageRemaining} free capacity{contractNeed > 0 ? ` · Contract need ${contractNeed}` : ""}
                     </p>
                   </div>
                   <ActionButton
@@ -170,12 +177,13 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
                 const stored = state.player.garageStorage[product.id] ?? 0;
                 const inVehicle = vehicle.inventory[product.id] ?? 0;
                 const loadQuantity = Math.min(stored, Math.floor(vehicleSpaceRemaining(state, vehicle) / product.size), 12);
+                const contractNeed = contractNeeds[product.id] ?? 0;
                 return (
-                  <article className="inventory-row" key={product.id}>
+                  <article className={`inventory-row ${contractNeed > 0 ? "contract-needed" : ""}`} key={product.id}>
                     <div>
                       <h3>{product.name}</h3>
                       <p>
-                        Garage {stored} · Van {inVehicle}
+                        Garage {stored} · Van {inVehicle}{contractNeed > 0 ? ` · Contract need ${contractNeed}` : ""}
                       </p>
                     </div>
                     <div className="row-actions">
@@ -311,6 +319,7 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
   const carriedProduct = carriedCrate ? state.products[carriedCrate.productId] : null;
   const vehicle = activeVehicle(state);
   const vehicleAtMachine = vehicle?.locationId === machine.locationId;
+  const stopContracts = activeContractsAtLocation(state, machine.locationId);
 
   return (
     <section className="interaction-panel">
@@ -341,6 +350,35 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
 
       {isPlayerMachine ? (
         <>
+          {stopContracts.length > 0 && (
+            <div className="machine-section">
+              <div className="section-title">
+                <PackagePlus size={16} aria-hidden="true" />
+                <span>Contracts at this stop</span>
+                <em>{stopContracts.length}</em>
+              </div>
+              <div className="contract-mini-list">
+                {stopContracts.map((contract) => {
+                  const product = state.products[contract.productId];
+                  const tone = contractTone(state, contract);
+                  return (
+                    <article className={`contract-mini-card ${tone}`} key={contract.id}>
+                      <div>
+                        <h3>{product.name}</h3>
+                        <p>
+                          {contractRemainingQuantity(contract)} due · {contract.deliveredQuantity}/{contract.requiredQuantity} delivered
+                        </p>
+                      </div>
+                      <div className="contract-meter" aria-hidden="true">
+                        <span style={{ width: `${contractProgressRatio(contract) * 100}%` }} />
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           <div className="action-grid">
             <ActionButton
               disabled={machine.revenueStored <= 0}

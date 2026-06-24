@@ -1,4 +1,4 @@
-import type { DayReport, FactionId, GameState, Inventory, Location, LocationId, MachineId, RouteVehicle, ServiceContract, VendingMachine } from "./types";
+import type { DayReport, FactionId, GameState, Inventory, Location, LocationId, MachineId, ProductId, RouteVehicle, ServiceContract, VendingMachine } from "./types";
 
 export type RouteTaskType = "supplier" | "garage" | "stock" | "collect" | "repair" | "pressure" | "contract";
 
@@ -10,6 +10,7 @@ export interface RouteTask {
   locationId: LocationId;
   machineId?: MachineId;
   contractId?: string;
+  productId?: ProductId;
   priority: number;
   tone: "good" | "warning" | "danger";
 }
@@ -106,6 +107,25 @@ export function formatClock(worldTimeHours: number): string {
 
 export function activeContracts(state: GameState): ServiceContract[] {
   return Object.values(state.contracts).filter((contract) => contract.status === "active");
+}
+
+export function activeContractsAtLocation(state: GameState, locationId: LocationId): ServiceContract[] {
+  return activeContracts(state)
+    .filter((contract) => contract.locationId === locationId)
+    .sort((a, b) => a.deadlineHour - b.deadlineHour);
+}
+
+export function contractNeedByProduct(state: GameState, locationId?: LocationId): Partial<Record<ProductId, number>> {
+  const needs: Partial<Record<ProductId, number>> = {};
+  for (const contract of activeContracts(state)) {
+    if (locationId && contract.locationId !== locationId) {
+      continue;
+    }
+
+    needs[contract.productId] = (needs[contract.productId] ?? 0) + contractRemainingQuantity(contract);
+  }
+
+  return needs;
 }
 
 export function latestDayReport(state: GameState): DayReport | undefined {
@@ -206,12 +226,17 @@ export function routeTasks(state: GameState): RouteTask[] {
   const garageUnits = garageStorageUnits(state);
   const vehicleUnits = vehicleInventoryUnits(state, vehicle);
   const vehicleFree = vehicleSpaceRemaining(state, vehicle);
+  const contractNeeds = contractNeedByProduct(state);
+  const contractNeedSummary = Object.entries(contractNeeds)
+    .filter(([, quantity]) => (quantity ?? 0) > 0)
+    .map(([productId, quantity]) => `${quantity} ${state.products[productId as ProductId]?.name ?? "stock"}`)
+    .join(" · ");
   if (garageUnits > 0 && vehicleFree > 0) {
     tasks.push({
       id: "garage:load_vehicle",
       type: "garage",
       title: "Load the van",
-      detail: `${garageUnits} stock in garage · ${vehicleFree} trunk space open`,
+      detail: contractNeedSummary ? `Contracts need ${contractNeedSummary} · ${vehicleFree} trunk space open` : `${garageUnits} stock in garage · ${vehicleFree} trunk space open`,
       locationId: "garage",
       priority: 7,
       tone: "good"
@@ -223,7 +248,7 @@ export function routeTasks(state: GameState): RouteTask[] {
       id: "supplier:stock_run",
       type: "supplier",
       title: "Supplier stock run",
-      detail: "Buy crates for garage storage before the route runs dry.",
+      detail: contractNeedSummary ? `Buy contract stock: ${contractNeedSummary}.` : "Buy crates for garage storage before the route runs dry.",
       locationId: "supplier",
       priority: garageUnits + vehicleUnits === 0 ? 8 : 3,
       tone: garageUnits + vehicleUnits === 0 ? "warning" : "good"
@@ -239,11 +264,12 @@ export function routeTasks(state: GameState): RouteTask[] {
     tasks.push({
       id: `contract:${contract.id}`,
       type: "contract",
-      title: contract.title,
-      detail: `${remaining} ${product?.name ?? "stock"} due by ${formatClock(contract.deadlineHour)} · ${Math.max(0, Math.ceil(hoursLeft))}h left`,
+      title: `Deliver ${remaining}x ${product?.name ?? "stock"}`,
+      detail: `${contract.title} · due by ${formatClock(contract.deadlineHour)} · ${Math.max(0, Math.ceil(hoursLeft))}h left`,
       locationId: contract.locationId,
       machineId: Object.values(state.machines).find((machine) => machine.ownerFactionId === state.playerFactionId && machine.locationId === contract.locationId)?.id,
       contractId: contract.id,
+      productId: contract.productId,
       priority: tone === "danger" ? 12 : tone === "warning" ? 9 : 5,
       tone
     });

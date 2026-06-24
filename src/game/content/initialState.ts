@@ -205,6 +205,7 @@ export function createInitialState(): GameState {
     player: {
       factionId: "player",
       activeVehicleId: starterVehicle.id,
+      currentLocationId: null,
       cargo: {},
       cargoCapacity: 12,
       carriedCrate: null,
