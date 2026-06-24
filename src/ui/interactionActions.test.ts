@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createInitialState } from "../game/content/initialState";
-import { reduceGameState } from "../game/systems/reducer";
+import { reduceCommands, reduceGameState } from "../game/systems/reducer";
 import { getPrimaryInteraction } from "./interactionActions";
 
 describe("primary interactions", () => {
@@ -30,6 +30,19 @@ describe("primary interactions", () => {
     expect(action?.kind).toBe("command");
     if (action?.kind === "command") {
       expect(action.command.type).toBe("sabotage_machine");
+    }
+  });
+
+  it("repairs a stocked damaged machine before adding leftover cargo", () => {
+    const state = reduceCommands(createInitialState(), [
+      { type: "buy_product", actorId: "player", productId: "soda", quantity: 10 },
+      { type: "stock_machine", actorId: "player", machineId: "machine_player_1", productId: "soda", quantity: 6 }
+    ]).state;
+    const action = getPrimaryInteraction(state, { type: "machine", id: "machine_player_1", label: "Rusty Starter" });
+
+    expect(action?.kind).toBe("command");
+    if (action?.kind === "command") {
+      expect(action.command.type).toBe("repair_machine");
     }
   });
 });

@@ -5,6 +5,7 @@ import type { SceneTarget } from "../render/three/SceneTargets";
 interface MinimapProps {
   state: GameState;
   playerPosition: Vec2;
+  guidanceLocationId?: string;
   target: SceneTarget | null;
 }
 
@@ -25,7 +26,7 @@ function toMapPoint(position: Vec2): { x: number; y: number } {
   };
 }
 
-export function Minimap({ state, playerPosition, target }: MinimapProps) {
+export function Minimap({ state, playerPosition, guidanceLocationId, target }: MinimapProps) {
   const targetLocationId = target?.type === "placement" ? target.id : target?.type === "machine" ? state.machines[target.id]?.locationId : target?.id;
   const player = toMapPoint(playerPosition);
 
@@ -39,11 +40,12 @@ export function Minimap({ state, playerPosition, target }: MinimapProps) {
           const point = toMapPoint(location.position);
           const machine = machineAtLocation(state, location.id);
           const isTarget = targetLocationId === location.id;
+          const isGuidance = guidanceLocationId === location.id;
           const ownerClass = machine?.ownerFactionId === state.playerFactionId ? "player" : machine ? "rival" : location.kind;
 
           return (
-            <g className={`map-location ${ownerClass} ${isTarget ? "target" : ""}`} key={location.id}>
-              <circle cx={point.x} cy={point.y} r={isTarget ? 4.4 : 3.1} />
+            <g className={`map-location ${ownerClass} ${isTarget ? "target" : ""} ${isGuidance ? "guidance" : ""}`} key={location.id}>
+              <circle cx={point.x} cy={point.y} r={isGuidance ? 5.2 : isTarget ? 4.4 : 3.1} />
             </g>
           );
         })}

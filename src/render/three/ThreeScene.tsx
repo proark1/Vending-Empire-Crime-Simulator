@@ -6,6 +6,7 @@ import type { SceneTarget } from "./SceneTargets";
 import { createAsphaltMaterial, createAtmosphere, createBuilding, createRoadMaterial, createSidewalkMaterial, createSkyDome, createStreetProps } from "./proceduralArt";
 
 interface ThreeSceneProps {
+  guidanceLocationId?: string;
   state: GameState;
   onPlayerPositionChange: (position: { x: number; z: number }) => void;
   onTargetChange: (target: SceneTarget | null) => void;
@@ -194,6 +195,35 @@ function addLabel(group: THREE.Group, text: string, color: string, position: THR
   group.add(label);
 }
 
+function createMissionBeacon(color: string): THREE.Group {
+  const group = new THREE.Group();
+  group.userData.beacon = true;
+
+  const ringMaterial = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 });
+  const beamMaterial = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.22, depthWrite: false });
+
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.64, 0.025, 8, 48), ringMaterial);
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.08;
+  group.add(ring);
+
+  const innerRing = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.018, 8, 36), ringMaterial);
+  innerRing.rotation.x = Math.PI / 2;
+  innerRing.position.y = 0.11;
+  group.add(innerRing);
+
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.55, 3.6, 24, 1, true), beamMaterial);
+  beam.position.y = 1.85;
+  group.add(beam);
+
+  const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.42, 4), new THREE.MeshBasicMaterial({ color }));
+  arrow.position.y = 3.9;
+  arrow.rotation.y = Math.PI / 4;
+  group.add(arrow);
+
+  return group;
+}
+
 function disposeObject(object: THREE.Object3D): void {
   object.traverse((child) => {
     if (child instanceof THREE.Mesh || child instanceof THREE.Line || child instanceof THREE.Points) {
@@ -236,18 +266,30 @@ function addBuilding(scene: THREE.Scene, x: number, z: number, width: number, de
   scene.add(building);
 }
 
-function populateDynamicObjects(group: THREE.Group, currentState: GameState): Interactable[] {
+function populateDynamicObjects(group: THREE.Group, currentState: GameState, guidanceLocationId?: string): Interactable[] {
   clearGroup(group);
   const interactables: Interactable[] = [];
 
   for (const location of Object.values(currentState.locations)) {
     const position = new THREE.Vector3(location.position.x, 0, location.position.z);
+    const isGuidanceTarget = guidanceLocationId === location.id;
+    const addGuidanceBeacon = (color: string) => {
+      if (!isGuidanceTarget) {
+        return;
+      }
+
+      const beacon = createMissionBeacon(color);
+      beacon.position.copy(position);
+      group.add(beacon);
+      addLabel(group, "NEXT", color, position, 3.75);
+    };
 
     if (location.kind === "garage") {
       const marker = addMarker("#38bdf8");
       marker.position.copy(position);
       group.add(marker);
       addLabel(group, location.name, "#38bdf8", position, 1.1);
+      addGuidanceBeacon("#38bdf8");
       interactables.push({ target: { type: "base", id: "garage", label: location.name }, position });
       continue;
     }
@@ -257,6 +299,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState): In
       marker.position.copy(position);
       group.add(marker);
       addLabel(group, location.name, "#f59e0b", position, 1.1);
+      addGuidanceBeacon("#f59e0b");
       interactables.push({ target: { type: "supplier", id: "supplier", label: location.name }, position });
       continue;
     }
@@ -269,12 +312,14 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState): In
       machineGroup.lookAt(new THREE.Vector3(0, 0, 0));
       group.add(machineGroup);
       addLabel(group, machine.name, owner?.color ?? "#94a3b8", position, 2.2);
+      addGuidanceBeacon(owner?.color ?? "#94a3b8");
       interactables.push({ target: { type: "machine", id: machine.id, label: machine.name }, position });
     } else {
       const marker = addMarker("#a3e635");
       marker.position.copy(position);
       group.add(marker);
       addLabel(group, location.name, "#a3e635", position, 1.1);
+      addGuidanceBeacon("#a3e635");
       interactables.push({ target: { type: "placement", id: location.id, label: location.name }, position });
     }
   }
@@ -282,11 +327,12 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState): In
   return interactables;
 }
 
-export function ThreeScene({ state, onPlayerPositionChange, onTargetChange }: ThreeSceneProps) {
+export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, onTargetChange }: ThreeSceneProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const stateRef = useRef(state);
   const dynamicGroupRef = useRef<THREE.Group | null>(null);
   const interactablesRef = useRef<Interactable[]>([]);
+  const guidanceLocationIdRef = useRef(guidanceLocationId);
   const targetIdRef = useRef<string | null>(null);
   const onPlayerPositionChangeRef = useRef(onPlayerPositionChange);
   const onTargetChangeRef = useRef(onTargetChange);
@@ -294,6 +340,10 @@ export function ThreeScene({ state, onPlayerPositionChange, onTargetChange }: Th
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  useEffect(() => {
+    guidanceLocationIdRef.current = guidanceLocationId;
+  }, [guidanceLocationId]);
 
   useEffect(() => {
     onPlayerPositionChangeRef.current = onPlayerPositionChange;
@@ -412,7 +462,7 @@ export function ThreeScene({ state, onPlayerPositionChange, onTargetChange }: Th
         return;
       }
 
-      interactablesRef.current = populateDynamicObjects(dynamicGroupRef.current, stateRef.current);
+      interactablesRef.current = populateDynamicObjects(dynamicGroupRef.current, stateRef.current, guidanceLocationIdRef.current);
     };
 
     updateDynamicObjects();
@@ -461,16 +511,20 @@ export function ThreeScene({ state, onPlayerPositionChange, onTargetChange }: Th
       for (const interactable of interactablesRef.current) {
         const toTarget = interactable.position.clone().sub(cameraWorld);
         const distance = toTarget.length();
-        if (distance > 3.2) {
+        if (distance > 3.4) {
           continue;
         }
 
         const alignment = forward.dot(toTarget.normalize());
-        if (alignment < 0.22) {
+        if (distance > 2.2 && alignment < 0.55) {
           continue;
         }
 
-        const score = distance - alignment;
+        if (distance > 1.4 && alignment < 0.18) {
+          continue;
+        }
+
+        const score = distance - alignment * 1.4;
         if (score < bestScore) {
           bestScore = score;
           best = interactable;
@@ -513,6 +567,15 @@ export function ThreeScene({ state, onPlayerPositionChange, onTargetChange }: Th
       }
 
       atmosphere.rotation.y += delta * 0.015;
+      dynamicGroup.traverse((object) => {
+        if (!object.userData.beacon) {
+          return;
+        }
+
+        const pulse = 1 + Math.sin(time * 0.004) * 0.08;
+        object.scale.set(pulse, 1, pulse);
+        object.rotation.y += delta * 0.65;
+      });
       for (const object of animatedProps) {
         const baseY = typeof object.userData.baseY === "number" ? object.userData.baseY : 0;
         const phase = typeof object.userData.phase === "number" ? object.userData.phase : 0;
@@ -556,8 +619,8 @@ export function ThreeScene({ state, onPlayerPositionChange, onTargetChange }: Th
       return;
     }
 
-    interactablesRef.current = populateDynamicObjects(dynamicGroup, state);
-  }, [state]);
+    interactablesRef.current = populateDynamicObjects(dynamicGroup, state, guidanceLocationId);
+  }, [guidanceLocationId, state]);
 
   return <div className="scene-mount" ref={mountRef} aria-label="3D district view" />;
 }

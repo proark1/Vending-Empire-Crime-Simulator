@@ -62,7 +62,7 @@ const locations: Record<string, Location> = {
     safety: 0.72,
     policePresence: 0.18,
     rentCost: 18,
-    placementCost: 160,
+    placementCost: 95,
     rivalPressure: 0.18,
     demandTags: ["gym", "commuter"]
   },
@@ -76,7 +76,7 @@ const locations: Record<string, Location> = {
     safety: 0.52,
     policePresence: 0.16,
     rentCost: 22,
-    placementCost: 210,
+    placementCost: 145,
     rivalPressure: 0.24,
     demandTags: ["arcade", "student", "night"]
   },
@@ -90,7 +90,7 @@ const locations: Record<string, Location> = {
     safety: 0.58,
     policePresence: 0.32,
     rentCost: 28,
-    placementCost: 260,
+    placementCost: 125,
     rivalPressure: 0.35,
     demandTags: ["commuter"]
   },

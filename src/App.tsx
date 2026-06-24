@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ThreeScene } from "./render/three/ThreeScene";
 import type { SceneTarget } from "./render/three/SceneTargets";
 import { Dashboard } from "./ui/Dashboard";
@@ -6,8 +6,11 @@ import { Hud } from "./ui/Hud";
 import { InteractionPanel } from "./ui/InteractionPanel";
 import { Minimap } from "./ui/Minimap";
 import { MissionTracker } from "./ui/MissionTracker";
+import { GuidanceArrow } from "./ui/GuidanceArrow";
+import { getStarterMissionStep } from "./game/core/mission";
 import { executePrimaryInteraction, getPrimaryInteraction } from "./ui/interactionActions";
 import { useGame } from "./hooks/useGame";
+import { ToastStack, type ToastMessage } from "./ui/ToastStack";
 import type { Vec2 } from "./game/core/types";
 
 export function App() {
@@ -15,7 +18,20 @@ export function App() {
   const [target, setTarget] = useState<SceneTarget | null>(null);
   const [entered, setEntered] = useState(false);
   const [playerPosition, setPlayerPosition] = useState<Vec2>({ x: -8, z: 1.4 });
-  const primaryInteraction = useMemo(() => getPrimaryInteraction(state, target), [state, target]);
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const lastEventIdRef = useRef(state.eventLog[0]?.id ?? null);
+  const lastMissionStepIdRef = useRef<string | null>(null);
+  const activeTarget = entered ? target : null;
+  const primaryInteraction = useMemo(() => getPrimaryInteraction(state, activeTarget), [activeTarget, state]);
+  const missionStep = useMemo(() => getStarterMissionStep(state, playerPosition), [playerPosition, state]);
+
+  const addToast = useCallback((toast: Omit<ToastMessage, "id">) => {
+    const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    setToasts((current) => [{ ...toast, id }, ...current].slice(0, 4));
+    window.setTimeout(() => {
+      setToasts((current) => current.filter((message) => message.id !== id));
+    }, 4200);
+  }, []);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -24,6 +40,38 @@ export function App() {
 
     return () => window.clearInterval(timer);
   }, [advanceWorld]);
+
+  useEffect(() => {
+    const newestEvent = state.eventLog[0];
+    if (!newestEvent || newestEvent.id === lastEventIdRef.current) {
+      return;
+    }
+
+    lastEventIdRef.current = newestEvent.id;
+    addToast({
+      title: "Street update",
+      message: newestEvent.message,
+      tone: newestEvent.tone
+    });
+  }, [addToast, state.eventLog]);
+
+  useEffect(() => {
+    if (!lastMissionStepIdRef.current) {
+      lastMissionStepIdRef.current = missionStep.id;
+      return;
+    }
+
+    if (missionStep.id === lastMissionStepIdRef.current) {
+      return;
+    }
+
+    lastMissionStepIdRef.current = missionStep.id;
+    addToast({
+      title: "Objective updated",
+      message: missionStep.objective,
+      tone: missionStep.id === "completed" ? "good" : "neutral"
+    });
+  }, [addToast, missionStep.id, missionStep.objective]);
 
   const handleRestart = useCallback(() => {
     if (window.confirm("Restart this local MVP save?")) {
@@ -58,14 +106,15 @@ export function App() {
 
   return (
     <main className="game-shell">
-      <ThreeScene state={state} onPlayerPositionChange={setPlayerPosition} onTargetChange={setTarget} />
+      <ThreeScene guidanceLocationId={missionStep.targetLocationId} state={state} onPlayerPositionChange={setPlayerPosition} onTargetChange={setTarget} />
       <div className="world-vignette" aria-hidden="true" />
       <Hud state={state} />
-      <MissionTracker state={state} />
+      <MissionTracker state={state} playerPosition={playerPosition} />
       <div className="crosshair" aria-hidden="true" />
-      {entered && target && primaryInteraction && (
+      {entered && <GuidanceArrow state={state} playerPosition={playerPosition} step={missionStep} />}
+      {entered && activeTarget && primaryInteraction && (
         <div className={`target-prompt ${primaryInteraction.disabled ? "disabled" : ""}`}>
-          <span className="target-name">{target.label}</span>
+          <span className="target-name">{activeTarget.label}</span>
           <span className="target-action">
             <kbd>E</kbd>
             {primaryInteraction.label}
@@ -80,8 +129,9 @@ export function App() {
         </div>
       )}
       <Dashboard state={state} />
-      <Minimap state={state} playerPosition={playerPosition} target={target} />
-      <InteractionPanel state={state} target={target} onCommand={sendCommand} onSave={save} onReload={reload} onRestart={handleRestart} />
+      <Minimap state={state} playerPosition={playerPosition} guidanceLocationId={missionStep.targetLocationId} target={activeTarget} />
+      <InteractionPanel state={state} target={activeTarget} onCommand={sendCommand} onSave={save} onReload={reload} onRestart={handleRestart} />
+      <ToastStack messages={toasts} />
     </main>
   );
 }

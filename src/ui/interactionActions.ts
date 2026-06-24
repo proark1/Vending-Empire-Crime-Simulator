@@ -45,7 +45,7 @@ function recommendedSupplierBuy(state: GameState): { productId: ProductId; quant
   const player = state.factions[state.playerFactionId];
   const remaining = cargoSpaceRemaining(state);
   const recommendations: Array<{ productId: ProductId; quantity: number }> = [
-    { productId: "soda", quantity: 5 },
+    { productId: "soda", quantity: 10 },
     { productId: "chips", quantity: 5 },
     { productId: "energy", quantity: 5 },
     { productId: "mystery_capsules", quantity: 3 }
@@ -105,6 +105,16 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
       kind: "command",
       label: "Jam rival display",
       command: { type: "sabotage_machine", actorId, machineId: machine.id }
+    };
+  }
+
+  const hasStock = machine.slots.some((slot) => slot.quantity > 0);
+  if (machine.damage > 0 && hasStock) {
+    return {
+      kind: "command",
+      label: "Repair machine",
+      command: { type: "repair_machine", actorId, machineId: machine.id },
+      disabled: player.money < Math.ceil(10 + Math.min(35, machine.damage) * 0.45)
     };
   }
 
