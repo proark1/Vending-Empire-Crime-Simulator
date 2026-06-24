@@ -3,6 +3,7 @@ export type ProductId = "soda" | "chips" | "energy" | "mystery_capsules";
 export type MachineUpgradeId = "reinforced_glass" | "smart_lock" | "security_camera" | "cashless_terminal" | "neon_sign" | "remote_monitor";
 export type MachineId = string;
 export type VehicleId = string;
+export type EmployeeId = string;
 export type ContractId = string;
 export type LocationId = string;
 export type DistrictId = string;
@@ -198,6 +199,27 @@ export interface NpcController {
   cooldownHours: number;
 }
 
+export type EmployeeRole = "restocker" | "collector" | "technician";
+export type EmployeeStatus = "idle" | "working" | "blocked";
+
+export interface Employee {
+  assignedMachineIds: MachineId[];
+  criminalTolerance: number;
+  employeeNumber: number;
+  fear: number;
+  id: EmployeeId;
+  lastWorkedHour: number;
+  loyalty: number;
+  name: string;
+  reliability: number;
+  role: EmployeeRole;
+  skill: number;
+  speed: number;
+  status: EmployeeStatus;
+  statusDetail: string;
+  wagePerDay: number;
+}
+
 export type GameEventTone = "neutral" | "good" | "warning" | "danger";
 
 export interface GameEvent {
@@ -240,6 +262,7 @@ export interface GameState {
   worldTimeHours: number;
   eventSequence: number;
   nextMachineNumber: number;
+  nextEmployeeNumber: number;
   playerFactionId: FactionId;
   player: PlayerState;
   factions: Record<FactionId, Faction>;
@@ -248,6 +271,7 @@ export interface GameState {
   locations: Record<LocationId, Location>;
   machines: Record<MachineId, VendingMachine>;
   vehicles: Record<VehicleId, RouteVehicle>;
+  employees: Record<EmployeeId, Employee>;
   contracts: Record<ContractId, ServiceContract>;
   npcControllers: Record<FactionId, NpcController>;
   eventLog: GameEvent[];
@@ -269,6 +293,8 @@ export type GameCommand =
   | { type: "take_vehicle_crate"; actorId: FactionId; vehicleId: VehicleId; productId: ProductId; quantity: number }
   | { type: "dispatch_vehicle"; actorId: FactionId; vehicleId: VehicleId; locationId: LocationId }
   | { type: "select_route_task"; actorId: FactionId; taskId: string | null }
+  | { type: "hire_employee"; actorId: FactionId; role: EmployeeRole }
+  | { type: "assign_employee"; actorId: FactionId; employeeId: EmployeeId; machineId: MachineId; assigned: boolean }
   | { type: "stock_machine"; actorId: FactionId; machineId: MachineId; productId: ProductId; quantity: number }
   | { type: "collect_revenue"; actorId: FactionId; machineId: MachineId }
   | { type: "repair_machine"; actorId: FactionId; machineId: MachineId }

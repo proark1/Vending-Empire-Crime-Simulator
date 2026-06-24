@@ -1,14 +1,18 @@
-import { AlertTriangle, Boxes, ClipboardList, Map, Navigation, Package, Route, ShieldAlert, Truck } from "lucide-react";
+import { AlertTriangle, Boxes, ClipboardList, HandCoins, Map, Navigation, Package, PackagePlus, Route, ShieldAlert, Truck, UserPlus, Users, Wrench } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { GameCommand, GameState } from "../game/core/types";
+import { employeeRoleList, employeeRoles } from "../game/content/employees";
 import { getMachineUpgradeEffects } from "../game/core/machineStats";
 import {
   activeContracts,
   activeVehicle,
+  assignedEmployeesForMachine,
   carriedCrateUnits,
   contractProgressRatio,
   contractRemainingQuantity,
   contractTone,
+  dailyEmployeeWages,
+  employeeList,
   formatClock,
   garageStorageUnits,
   getMachineLocation,
@@ -23,7 +27,7 @@ import {
 } from "../game/core/selectors";
 import { estimateMachineSalesPerHour } from "../game/systems/economy";
 
-type DashboardTab = "machines" | "jobs" | "route" | "logistics" | "rival" | "log";
+type DashboardTab = "machines" | "jobs" | "route" | "logistics" | "crew" | "rival" | "log";
 
 interface DashboardProps {
   state: GameState;
@@ -38,11 +42,24 @@ function MiniButton({ children, disabled, onClick }: { children: React.ReactNode
   );
 }
 
+function roleIcon(role: string): React.ReactNode {
+  if (role === "collector") {
+    return <HandCoins size={16} aria-hidden="true" />;
+  }
+
+  if (role === "technician") {
+    return <Wrench size={16} aria-hidden="true" />;
+  }
+
+  return <PackagePlus size={16} aria-hidden="true" />;
+}
+
 export function Dashboard({ state, onCommand }: DashboardProps) {
   const [tab, setTab] = useState<DashboardTab>("machines");
   const playerMachines = useMemo(() => ownedMachines(state, state.playerFactionId), [state]);
   const rival = state.factions.rival_redline;
   const vehicle = activeVehicle(state);
+  const employees = useMemo(() => employeeList(state), [state]);
   const tasks = useMemo(() => routeTasks(state), [state]);
   const selectedTask = selectedRouteTask(state);
   const contracts = useMemo(() => activeContracts(state), [state]);
@@ -67,6 +84,10 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
           <Boxes size={16} aria-hidden="true" />
           Logistics
         </button>
+        <button className={tab === "crew" ? "tab active" : "tab"} onClick={() => setTab("crew")} type="button">
+          <Users size={16} aria-hidden="true" />
+          Crew
+        </button>
         <button className={tab === "rival" ? "tab active" : "tab"} onClick={() => setTab("rival")} type="button">
           <ShieldAlert size={16} aria-hidden="true" />
           Rival
@@ -85,12 +106,14 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
             const effects = getMachineUpgradeEffects(machine);
             const hourlySales = estimateMachineSalesPerHour(state, machine).reduce((sum, slot) => sum + slot.unitsPerHour, 0);
             const pressure = machineRoutePressure(state, machine);
+            const assignedCrew = assignedEmployeesForMachine(state, machine.id);
             return (
               <article className="machine-card" key={machine.id}>
                 <div>
                   <h3>{machine.name}</h3>
                   <p>{location?.name ?? "Unknown location"}</p>
                   {effects.remoteMonitoring && <p className="remote-chip">Remote monitor online</p>}
+                  {assignedCrew.length > 0 && <p className="remote-chip">Crew: {assignedCrew.map((employee) => employee.name).join(", ")}</p>}
                   {pressure.reasons.length > 0 && <p className={`route-chip ${pressure.tone}`}>{pressure.reasons.join(" · ")}</p>}
                 </div>
                 <div className="machine-metrics">
@@ -295,6 +318,85 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
               <strong>{state.player.garageStorage[product.id] ?? 0}</strong>
             </article>
           ))}
+        </div>
+      )}
+
+      {tab === "crew" && (
+        <div className="panel-list">
+          <div className="cargo-summary">
+            <Users size={18} aria-hidden="true" />
+            <span>
+              {employees.length} crew · ${dailyEmployeeWages(state)}/day wages
+            </span>
+          </div>
+
+          <div className="action-grid">
+            {employeeRoleList.map((role) => (
+              <button
+                className="action-button"
+                disabled={state.factions[state.playerFactionId].money < role.hireCost}
+                key={role.role}
+                onClick={() => onCommand({ type: "hire_employee", actorId: state.playerFactionId, role: role.role })}
+                type="button"
+              >
+                <UserPlus size={17} aria-hidden="true" />
+                <span>
+                  Hire {role.title} ${role.hireCost}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          {employees.length === 0 ? (
+            <article className="inventory-row">
+              <div>
+                <h3>No crew hired</h3>
+                <p>Hire a restocker, collector, or technician to automate assigned machines.</p>
+              </div>
+              <strong>0</strong>
+            </article>
+          ) : (
+            employees.map((employee) => {
+              const role = employeeRoles[employee.role];
+              return (
+                <article className={`route-task ${employee.status === "blocked" ? "warning" : "good"}`} key={employee.id}>
+                  <div>
+                    <h3>
+                      {roleIcon(employee.role)}
+                      {employee.name}
+                    </h3>
+                    <p>
+                      {role.title} · ${employee.wagePerDay}/day · {employee.statusDetail}
+                    </p>
+                    <p>
+                      Reliability {Math.round(employee.reliability * 100)} · Skill {Math.round(employee.skill * 100)} · Loyalty {Math.round(employee.loyalty * 100)}
+                    </p>
+                  </div>
+                  <div className="route-actions">
+                    {playerMachines.map((machine) => {
+                      const assigned = employee.assignedMachineIds.includes(machine.id);
+                      return (
+                        <MiniButton
+                          key={machine.id}
+                          onClick={() =>
+                            onCommand({
+                              type: "assign_employee",
+                              actorId: state.playerFactionId,
+                              employeeId: employee.id,
+                              machineId: machine.id,
+                              assigned: !assigned
+                            })
+                          }
+                        >
+                          {assigned ? "Unassign" : "Assign"} {machine.name}
+                        </MiniButton>
+                      );
+                    })}
+                  </div>
+                </article>
+              );
+            })
+          )}
         </div>
       )}
 

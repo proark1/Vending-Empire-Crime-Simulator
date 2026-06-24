@@ -25,6 +25,7 @@ function migrateGameState(parsed: GameState): GameState {
   return {
     ...baseline,
     ...parsed,
+    nextEmployeeNumber: parsed.nextEmployeeNumber ?? baseline.nextEmployeeNumber,
     player: {
       ...baseline.player,
       ...parsedPlayer,
@@ -82,6 +83,7 @@ function migrateGameState(parsed: GameState): GameState {
         }
       ])
     ),
+    employees: parsed.employees ?? baseline.employees,
     routePlan: {
       ...baseline.routePlan,
       ...(parsed.routePlan ?? {})

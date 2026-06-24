@@ -109,6 +109,98 @@ describe("game reducer", () => {
     expect(selectedRouteTask(state)?.id).toBe(stockTask!.id);
   });
 
+  it("hires and assigns a restocker that moves garage stock onto the route", () => {
+    const hired = reduceGameState(createInitialState(), { type: "hire_employee", actorId: "player", role: "restocker" }).state;
+    const employee = Object.values(hired.employees)[0]!;
+    hired.player.garageStorage.soda = 12;
+
+    const assigned = reduceGameState(hired, {
+      type: "assign_employee",
+      actorId: "player",
+      employeeId: employee.id,
+      machineId: "machine_player_1",
+      assigned: true
+    }).state;
+    const result = reduceGameState(assigned, { type: "advance_time", actorId: "player", hours: 2 });
+    const machine = result.state.machines.machine_player_1;
+
+    expect(result.state.employees[employee.id].assignedMachineIds).toContain("machine_player_1");
+    expect(machine.slots.find((slot) => slot.productId === "soda")?.quantity).toBeGreaterThan(0);
+    expect(result.state.player.garageStorage.soda).toBeLessThan(12);
+    expect(result.events.some((event) => event.message.includes("restocked"))).toBe(true);
+  });
+
+  it("lets restockers use empty machine bays even when one slot is full", () => {
+    const hired = reduceGameState(createInitialState(), { type: "hire_employee", actorId: "player", role: "restocker" }).state;
+    const employee = Object.values(hired.employees)[0]!;
+    hired.player.garageStorage.chips = 8;
+    hired.machines.machine_player_1.slots = [{ productId: "soda", quantity: 24, capacity: 24, price: 4, salesAccumulator: 0 }];
+
+    const assigned = reduceGameState(hired, {
+      type: "assign_employee",
+      actorId: "player",
+      employeeId: employee.id,
+      machineId: "machine_player_1",
+      assigned: true
+    }).state;
+    const result = reduceGameState(assigned, { type: "advance_time", actorId: "player", hours: 2 });
+
+    expect(result.state.machines.machine_player_1.slots.find((slot) => slot.productId === "chips")?.quantity).toBeGreaterThan(0);
+  });
+
+  it("lets an assigned collector pull cash from player machines", () => {
+    const hired = reduceGameState(createInitialState(), { type: "hire_employee", actorId: "player", role: "collector" }).state;
+    const employee = Object.values(hired.employees)[0]!;
+    hired.machines.machine_player_1.revenueStored = 30;
+
+    const assigned = reduceGameState(hired, {
+      type: "assign_employee",
+      actorId: "player",
+      employeeId: employee.id,
+      machineId: "machine_player_1",
+      assigned: true
+    }).state;
+    const moneyBeforeCollection = assigned.factions.player.money;
+    const result = reduceGameState(assigned, { type: "advance_time", actorId: "player", hours: 2 });
+
+    expect(result.state.machines.machine_player_1.revenueStored).toBe(0);
+    expect(result.state.factions.player.money).toBeGreaterThan(moneyBeforeCollection);
+    expect(result.state.progression.revenueCollectedToday).toBe(30);
+  });
+
+  it("lets an assigned technician repair damaged machines for parts cost", () => {
+    const hired = reduceGameState(createInitialState(), { type: "hire_employee", actorId: "player", role: "technician" }).state;
+    const employee = Object.values(hired.employees)[0]!;
+    hired.factions.player.money = 80;
+    hired.machines.machine_player_1.damage = 70;
+
+    const assigned = reduceGameState(hired, {
+      type: "assign_employee",
+      actorId: "player",
+      employeeId: employee.id,
+      machineId: "machine_player_1",
+      assigned: true
+    }).state;
+    const result = reduceGameState(assigned, { type: "advance_time", actorId: "player", hours: 2 });
+
+    expect(result.state.machines.machine_player_1.damage).toBeLessThan(70);
+    expect(result.state.factions.player.money).toBeLessThan(80);
+    expect(result.state.employees[employee.id].statusDetail).toContain("Repaired");
+  });
+
+  it("short-pays daily crew wages when cash is low", () => {
+    const hired = reduceGameState(createInitialState(), { type: "hire_employee", actorId: "player", role: "restocker" }).state;
+    const employee = Object.values(hired.employees)[0]!;
+    hired.factions.player.money = 5;
+
+    const result = reduceGameState(hired, { type: "advance_time", actorId: "player", hours: 16 });
+
+    expect(result.state.factions.player.money).toBe(0);
+    expect(result.state.employees[employee.id].loyalty).toBeLessThan(employee.loyalty);
+    expect(result.state.employees[employee.id].statusDetail).toBe("Crew was short-paid.");
+    expect(result.events.some((event) => event.message.includes("Crew wages were short"))).toBe(true);
+  });
+
   it("surfaces active service contracts as route tasks", () => {
     const state = createInitialState();
     const task = routeTasks(state).find((candidate) => candidate.id === "contract:contract_1");

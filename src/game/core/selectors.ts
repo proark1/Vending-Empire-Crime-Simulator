@@ -1,4 +1,4 @@
-import type { DayReport, FactionId, GameState, Inventory, Location, LocationId, MachineId, ProductId, RouteVehicle, ServiceContract, VendingMachine } from "./types";
+import type { DayReport, Employee, FactionId, GameState, Inventory, Location, LocationId, MachineId, ProductId, RouteVehicle, ServiceContract, VendingMachine } from "./types";
 
 export type RouteTaskType = "supplier" | "garage" | "stock" | "collect" | "repair" | "pressure" | "contract";
 
@@ -24,6 +24,18 @@ export function inventoryUnits(inventory: Inventory, state: GameState): number {
 
 export function ownedMachines(state: GameState, factionId: FactionId): VendingMachine[] {
   return Object.values(state.machines).filter((machine) => machine.ownerFactionId === factionId);
+}
+
+export function employeeList(state: GameState): Employee[] {
+  return Object.values(state.employees).sort((a, b) => a.employeeNumber - b.employeeNumber);
+}
+
+export function assignedEmployeesForMachine(state: GameState, machineId: MachineId): Employee[] {
+  return employeeList(state).filter((employee) => employee.assignedMachineIds.includes(machineId));
+}
+
+export function dailyEmployeeWages(state: GameState): number {
+  return employeeList(state).reduce((sum, employee) => sum + employee.wagePerDay, 0);
 }
 
 export function machineAtLocation(state: GameState, locationId: LocationId): VendingMachine | undefined {

@@ -201,6 +201,7 @@ export function createInitialState(): GameState {
     worldTimeHours: 8,
     eventSequence: 1,
     nextMachineNumber: 2,
+    nextEmployeeNumber: 1,
     playerFactionId: "player",
     player: {
       factionId: "player",
@@ -225,6 +226,7 @@ export function createInitialState(): GameState {
     vehicles: {
       [starterVehicle.id]: starterVehicle
     },
+    employees: {},
     contracts: {
       [starterContract.id]: starterContract
     },

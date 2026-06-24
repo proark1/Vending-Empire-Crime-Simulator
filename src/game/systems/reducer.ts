@@ -1,5 +1,7 @@
 import type {
   CommandResult,
+  Employee,
+  EmployeeRole,
   FactionId,
   GameCommand,
   GameEvent,
@@ -25,6 +27,7 @@ import {
   vehicleSpaceRemaining
 } from "../core/selectors";
 import { machineUpgrades } from "../content/machineUpgrades";
+import { employeeRoles } from "../content/employees";
 import { machineHasUpgrade, sabotageDamage } from "../core/machineStats";
 import { runMachineSales } from "./economy";
 
@@ -142,6 +145,37 @@ function createMachine(state: GameState, ownerFactionId: FactionId, locationId: 
   };
   state.machines[id] = machine;
   return machine;
+}
+
+const employeeNames: Record<EmployeeRole, string[]> = {
+  restocker: ["Mara", "Niko", "Sol"],
+  collector: ["Jules", "Vera", "Rafi"],
+  technician: ["Patch", "Inez", "Cal"]
+};
+
+function createEmployee(state: GameState, role: EmployeeRole): Employee {
+  const definition = employeeRoles[role];
+  const employeeNumber = state.nextEmployeeNumber++;
+  const names = employeeNames[role];
+  const name = `${names[(employeeNumber - 1) % names.length]} ${definition.title}`;
+
+  return {
+    assignedMachineIds: [],
+    criminalTolerance: definition.criminalTolerance,
+    employeeNumber,
+    fear: definition.fear,
+    id: `employee_${employeeNumber}`,
+    lastWorkedHour: state.worldTimeHours,
+    loyalty: definition.loyalty,
+    name,
+    reliability: definition.reliability,
+    role,
+    skill: definition.skill,
+    speed: definition.speed,
+    status: "idle",
+    statusDetail: "Waiting for assignments.",
+    wagePerDay: definition.wagePerDay
+  };
 }
 
 function clampSlotPrice(price: number): number {
@@ -484,6 +518,187 @@ function applyContractDelivery(state: GameState, events: GameEvent[], machine: V
   }
 }
 
+function machineCapacity(machine: VendingMachine): number {
+  const filledSlotCapacity = machine.slots.reduce((sum, slot) => sum + slot.capacity, 0);
+  const openSlotCapacity = Math.max(0, machine.maxSlots - machine.slots.length) * 24;
+  return filledSlotCapacity + openSlotCapacity;
+}
+
+function assignedPlayerMachines(state: GameState, employee: Employee): VendingMachine[] {
+  return employee.assignedMachineIds
+    .map((machineId) => state.machines[machineId])
+    .filter((machine): machine is VendingMachine => Boolean(machine) && machine.ownerFactionId === state.playerFactionId);
+}
+
+function employeeWorkInterval(employee: Employee): number {
+  return Math.max(0.55, 1.35 / Math.max(0.35, employee.speed));
+}
+
+function markEmployeeBlocked(employee: Employee, detail: string): void {
+  employee.status = "blocked";
+  employee.statusDetail = detail;
+}
+
+function sortedStoredProductsForMachine(state: GameState, machine: VendingMachine): ProductId[] {
+  const location = state.locations[machine.locationId];
+  const stored = Object.entries(state.player.garageStorage ?? {})
+    .filter(([, quantity]) => quantity > 0)
+    .map(([productId]) => productId as ProductId);
+  const existing = machine.slots.map((slot) => slot.productId).filter((productId) => stored.includes(productId));
+  const fresh = stored
+    .filter((productId) => !existing.includes(productId))
+    .sort((a, b) => {
+      const productA = state.products[a];
+      const productB = state.products[b];
+      const scoreA = productA.demand + (location ? productA.demandTags.filter((tag) => location.demandTags.includes(tag)).length * 0.35 : 0);
+      const scoreB = productB.demand + (location ? productB.demandTags.filter((tag) => location.demandTags.includes(tag)).length * 0.35 : 0);
+      return scoreB - scoreA;
+    });
+  return [...existing, ...fresh];
+}
+
+function runRestocker(state: GameState, events: GameEvent[], employee: Employee): boolean {
+  const machines = assignedPlayerMachines(state, employee)
+    .filter((machine) => machineStockUnits(machine) / machineCapacity(machine) <= 0.72)
+    .sort((a, b) => machineStockUnits(a) / machineCapacity(a) - machineStockUnits(b) / machineCapacity(b));
+
+  if (machines.length === 0) {
+    markEmployeeBlocked(employee, employee.assignedMachineIds.length === 0 ? "Assign a machine route." : "Assigned machines have enough stock.");
+    return false;
+  }
+
+  for (const machine of machines) {
+    for (const productId of sortedStoredProductsForMachine(state, machine)) {
+      const product = state.products[productId];
+      const available = state.player.garageStorage?.[productId] ?? 0;
+      if (!product || available <= 0) {
+        continue;
+      }
+
+      const slot = getOrCreateSlot(machine, product.id, product.basePrice);
+      if (!slot) {
+        continue;
+      }
+
+      const quantity = Math.min(slot.capacity - slot.quantity, available, Math.max(3, Math.round(4 + employee.skill * 8)));
+      if (quantity <= 0) {
+        continue;
+      }
+
+      removeInventory(state.player.garageStorage, product.id, quantity);
+      slot.quantity += quantity;
+      machine.lastServicedHour = state.worldTimeHours;
+      employee.status = "working";
+      employee.statusDetail = `Restocked ${machine.name}.`;
+      applyContractDelivery(state, events, machine, product.id, quantity);
+      log(state, events, `${employee.name} restocked ${quantity}x ${product.name} into ${machine.name}.`, "good");
+      return true;
+    }
+  }
+
+  markEmployeeBlocked(employee, "Garage storage has no useful stock.");
+  return false;
+}
+
+function runCollector(state: GameState, events: GameEvent[], employee: Employee): boolean {
+  const machines = assignedPlayerMachines(state, employee)
+    .filter((machine) => machine.revenueStored >= 18)
+    .sort((a, b) => b.revenueStored - a.revenueStored);
+  const machine = machines[0];
+  if (!machine) {
+    markEmployeeBlocked(employee, employee.assignedMachineIds.length === 0 ? "Assign machines to collect." : "No assigned cash boxes ready.");
+    return false;
+  }
+
+  const amount = Math.round(machine.revenueStored);
+  const player = state.factions[state.playerFactionId];
+  player.money += amount;
+  machine.revenueStored = 0;
+  machine.lastServicedHour = state.worldTimeHours;
+  state.progression.revenueCollectedToday += amount;
+  employee.status = "working";
+  employee.statusDetail = `Collected from ${machine.name}.`;
+  log(state, events, `${employee.name} collected $${amount} from ${machine.name}.`, "good");
+  return true;
+}
+
+function runTechnician(state: GameState, events: GameEvent[], employee: Employee): boolean {
+  const machines = assignedPlayerMachines(state, employee)
+    .filter((machine) => machine.damage > 0)
+    .sort((a, b) => b.damage - a.damage);
+  const machine = machines[0];
+  if (!machine) {
+    markEmployeeBlocked(employee, employee.assignedMachineIds.length === 0 ? "Assign machines to maintain." : "Assigned machines are stable.");
+    return false;
+  }
+
+  const repairAmount = Math.min(machine.damage, Math.round(10 + employee.skill * 24));
+  const cost = Math.ceil(4 + repairAmount * 0.28);
+  const player = state.factions[state.playerFactionId];
+  if (player.money < cost) {
+    markEmployeeBlocked(employee, `Needs $${cost} for parts.`);
+    return false;
+  }
+
+  player.money -= cost;
+  machine.damage = Math.max(0, machine.damage - repairAmount);
+  machine.lastServicedHour = state.worldTimeHours;
+  employee.status = "working";
+  employee.statusDetail = `Repaired ${machine.name}.`;
+  log(state, events, `${employee.name} repaired ${machine.name} for $${cost}.`, "good");
+  return true;
+}
+
+function runEmployeeWork(state: GameState, events: GameEvent[], employee: Employee): boolean {
+  if (employee.role === "restocker") {
+    return runRestocker(state, events, employee);
+  }
+
+  if (employee.role === "collector") {
+    return runCollector(state, events, employee);
+  }
+
+  return runTechnician(state, events, employee);
+}
+
+function applyEmployeeAutomation(state: GameState, events: GameEvent[]): void {
+  for (const employee of Object.values(state.employees)) {
+    const interval = employeeWorkInterval(employee);
+    let workCount = 0;
+
+    while (state.worldTimeHours - employee.lastWorkedHour >= interval && workCount < 3) {
+      employee.lastWorkedHour += interval;
+      runEmployeeWork(state, events, employee);
+      workCount += 1;
+    }
+  }
+}
+
+function payEmployeeWages(state: GameState, events: GameEvent[]): void {
+  const employees = Object.values(state.employees);
+  if (employees.length === 0) {
+    return;
+  }
+
+  const wageTotal = employees.reduce((sum, employee) => sum + employee.wagePerDay, 0);
+  const player = state.factions[state.playerFactionId];
+  const paid = Math.min(player.money, wageTotal);
+  player.money -= paid;
+
+  if (paid < wageTotal) {
+    for (const employee of employees) {
+      employee.loyalty = Math.max(0, employee.loyalty - 0.08);
+      employee.reliability = Math.max(0.25, employee.reliability - 0.04);
+      employee.status = "blocked";
+      employee.statusDetail = "Crew was short-paid.";
+    }
+    log(state, events, `Crew wages were short by $${wageTotal - paid}. Loyalty slipped.`, "warning");
+    return;
+  }
+
+  log(state, events, `Paid $${wageTotal} in crew wages.`, "neutral");
+}
+
 function failExpiredContracts(state: GameState, events: GameEvent[]): void {
   const player = state.factions[state.playerFactionId];
   for (const contract of activeContracts(state)) {
@@ -552,6 +767,7 @@ function processDayBoundaries(state: GameState, events: GameEvent[], previousHou
   }
 
   for (let day = Math.max(1, state.progression.lastReportDay + 1); day <= currentDay; day += 1) {
+    payEmployeeWages(state, events);
     createDayReport(state, day);
     log(state, events, `Day ${day} report filed: ${state.dayReports[0].summary}`, state.dayReports[0].contractsFailed > 0 ? "warning" : "good");
     resetDailyProgression(state, day);
@@ -600,6 +816,8 @@ function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number):
   if (playerEarned >= 18) {
     log(state, events, `Machines generated $${Math.round(playerEarned)} in stored revenue.`, "good");
   }
+
+  applyEmployeeAutomation(state, events);
 
   let streetActivities = 0;
   while (state.streetLife.nextActivityHour <= state.worldTimeHours && streetActivities < 8) {
@@ -877,6 +1095,56 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       if (command.taskId) {
         log(state, events, "Route stop selected.", "neutral");
       }
+      break;
+    }
+
+    case "hire_employee": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      const role = employeeRoles[command.role];
+      if (!role) {
+        break;
+      }
+
+      if (actor.money < role.hireCost) {
+        log(state, events, `${role.title} needs $${role.hireCost} to hire.`, "warning");
+        break;
+      }
+
+      actor.money -= role.hireCost;
+      const employee = createEmployee(state, role.role);
+      state.employees[employee.id] = employee;
+      log(state, events, `${employee.name} joined the route crew.`, "good");
+      break;
+    }
+
+    case "assign_employee": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      const employee = state.employees[command.employeeId];
+      const machine = state.machines[command.machineId];
+      if (!employee || !machine || machine.ownerFactionId !== actor.id) {
+        break;
+      }
+
+      const assignments = new Set(employee.assignedMachineIds);
+      if (command.assigned) {
+        assignments.add(machine.id);
+        employee.status = "idle";
+        employee.statusDetail = `Assigned to ${machine.name}.`;
+        log(state, events, `${employee.name} assigned to ${machine.name}.`, "neutral");
+      } else {
+        assignments.delete(machine.id);
+        employee.status = assignments.size > 0 ? "idle" : "blocked";
+        employee.statusDetail = assignments.size > 0 ? "Route assignment updated." : "Assign a machine route.";
+        log(state, events, `${employee.name} removed from ${machine.name}.`, "neutral");
+      }
+
+      employee.assignedMachineIds = [...assignments];
       break;
     }
 
