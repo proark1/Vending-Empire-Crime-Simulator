@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
-import type { GameState } from "../../game/core/types";
+import type { GameState, Location, MachineUpgradeId } from "../../game/core/types";
 import { machineAtLocation } from "../../game/core/selectors";
 import type { SceneTarget } from "./SceneTargets";
 import { createAsphaltMaterial, createAtmosphere, createBuilding, createRoadMaterial, createSidewalkMaterial, createSkyDome, createStreetProps } from "./proceduralArt";
@@ -17,8 +17,44 @@ interface Interactable {
   position: THREE.Vector3;
 }
 
-function createMachineMesh(color: string, damage: number): THREE.Group {
+const machinePlacementAnchors: Record<string, { x: number; z: number; rotationY: number }> = {
+  laundromat: { x: -5.2, z: -5.15, rotationY: Math.PI },
+  gym: { x: 4.25, z: -6.05, rotationY: Math.PI },
+  arcade: { x: 8.75, z: 0.05, rotationY: Math.PI },
+  transit: { x: -9.72, z: -1.1, rotationY: -Math.PI / 2 },
+  rival_corner: { x: 1.35, z: 2.38, rotationY: 0 }
+};
+
+function fallbackMachinePlacement(location: Location): { position: THREE.Vector3; rotationY: number } {
+  const position = new THREE.Vector3(location.position.x, 0, location.position.z);
+  const directionToStreet = new THREE.Vector3(-location.position.x, 0, -location.position.z);
+
+  if (directionToStreet.lengthSq() < 0.001) {
+    return { position, rotationY: 0 };
+  }
+
+  directionToStreet.normalize();
+  return {
+    position,
+    rotationY: Math.atan2(-directionToStreet.x, -directionToStreet.z)
+  };
+}
+
+function machinePlacementForLocation(location: Location): { position: THREE.Vector3; rotationY: number } {
+  const anchor = machinePlacementAnchors[location.id];
+  if (!anchor) {
+    return fallbackMachinePlacement(location);
+  }
+
+  return {
+    position: new THREE.Vector3(anchor.x, 0, anchor.z),
+    rotationY: anchor.rotationY
+  };
+}
+
+function createMachineMesh(color: string, damage: number, installedUpgrades: MachineUpgradeId[] = []): THREE.Group {
   const group = new THREE.Group();
+  const upgrades = new Set(installedUpgrades);
   const trimMaterial = new THREE.MeshStandardMaterial({ color, roughness: 0.38, metalness: 0.12 });
   const darkMaterial = new THREE.MeshStandardMaterial({ color: "#0f172a", roughness: 0.44, metalness: 0.08 });
   const glassMaterial = new THREE.MeshPhysicalMaterial({
@@ -121,6 +157,69 @@ function createMachineMesh(color: string, damage: number): THREE.Group {
   const sideStripe = new THREE.Mesh(new THREE.BoxGeometry(0.05, 1.42, 0.03), new THREE.MeshBasicMaterial({ color }));
   sideStripe.position.set(-0.355, 0.98, -0.285);
   group.add(sideStripe);
+
+  if (upgrades.has("reinforced_glass")) {
+    const railMaterial = new THREE.MeshStandardMaterial({ color: "#bae6fd", roughness: 0.22, metalness: 0.45 });
+    const rails = [
+      { x: -0.31, y: 1.1, width: 0.035, height: 0.9 },
+      { x: 0.15, y: 1.1, width: 0.035, height: 0.9 },
+      { x: -0.08, y: 1.55, width: 0.5, height: 0.035 },
+      { x: -0.08, y: 0.65, width: 0.5, height: 0.035 }
+    ];
+    for (const rail of rails) {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(rail.width, rail.height, 0.035), railMaterial);
+      mesh.position.set(rail.x, rail.y, -0.326);
+      group.add(mesh);
+    }
+  }
+
+  if (upgrades.has("smart_lock")) {
+    const lock = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.12, 0.032), new THREE.MeshStandardMaterial({ color: "#f8fafc", roughness: 0.26, metalness: 0.5 }));
+    lock.position.set(0.27, 0.92, -0.323);
+    group.add(lock);
+    const shackle = new THREE.Mesh(new THREE.TorusGeometry(0.045, 0.007, 8, 18, Math.PI), new THREE.MeshStandardMaterial({ color: "#94a3b8", roughness: 0.28, metalness: 0.65 }));
+    shackle.position.set(0.27, 1.0, -0.324);
+    shackle.rotation.z = Math.PI;
+    group.add(shackle);
+  }
+
+  if (upgrades.has("security_camera")) {
+    const cameraMount = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.08, 0.12), new THREE.MeshStandardMaterial({ color: "#e2e8f0", roughness: 0.38, metalness: 0.2 }));
+    cameraMount.position.set(0.29, 1.88, -0.12);
+    group.add(cameraMount);
+    const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.042, 0.08, 16), new THREE.MeshBasicMaterial({ color: "#38bdf8" }));
+    lens.position.set(0.29, 1.88, -0.205);
+    lens.rotation.x = Math.PI / 2;
+    group.add(lens);
+  }
+
+  if (upgrades.has("cashless_terminal")) {
+    const reader = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.18, 0.03), new THREE.MeshBasicMaterial({ color: "#22c55e" }));
+    reader.position.set(0.26, 0.78, -0.324);
+    group.add(reader);
+    const readerLine = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.018, 0.032), new THREE.MeshBasicMaterial({ color: "#052e16" }));
+    readerLine.position.set(0.26, 0.81, -0.343);
+    group.add(readerLine);
+  }
+
+  if (upgrades.has("neon_sign")) {
+    const glow = new THREE.Mesh(new THREE.TorusGeometry(0.43, 0.018, 8, 56), new THREE.MeshBasicMaterial({ color }));
+    glow.position.set(0, 1.73, -0.314);
+    glow.scale.y = 0.22;
+    group.add(glow);
+    const light = new THREE.PointLight(color, 0.7, 3);
+    light.position.set(0, 1.55, -0.45);
+    group.add(light);
+  }
+
+  if (upgrades.has("remote_monitor")) {
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.32, 10), new THREE.MeshStandardMaterial({ color: "#cbd5e1", roughness: 0.28, metalness: 0.5 }));
+    mast.position.set(-0.28, 1.98, 0);
+    group.add(mast);
+    const antenna = new THREE.Mesh(new THREE.SphereGeometry(0.045, 12, 8), new THREE.MeshBasicMaterial({ color: "#60a5fa" }));
+    antenna.position.set(-0.28, 2.16, 0);
+    group.add(antenna);
+  }
 
   if (damage > 15) {
     const dent = new THREE.Mesh(
@@ -272,16 +371,17 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
 
   for (const location of Object.values(currentState.locations)) {
     const position = new THREE.Vector3(location.position.x, 0, location.position.z);
+    const machinePlacement = machinePlacementForLocation(location);
     const isGuidanceTarget = guidanceLocationId === location.id;
-    const addGuidanceBeacon = (color: string) => {
+    const addGuidanceBeacon = (color: string, beaconPosition = position) => {
       if (!isGuidanceTarget) {
         return;
       }
 
       const beacon = createMissionBeacon(color);
-      beacon.position.copy(position);
+      beacon.position.copy(beaconPosition);
       group.add(beacon);
-      addLabel(group, "NEXT", color, position, 3.75);
+      addLabel(group, "NEXT", color, beaconPosition, 3.75);
     };
 
     if (location.kind === "garage") {
@@ -307,20 +407,20 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
     const machine = machineAtLocation(currentState, location.id);
     if (machine) {
       const owner = currentState.factions[machine.ownerFactionId];
-      const machineGroup = createMachineMesh(owner?.color ?? "#94a3b8", machine.damage);
-      machineGroup.position.copy(position);
-      machineGroup.lookAt(new THREE.Vector3(0, 0, 0));
+      const machineGroup = createMachineMesh(owner?.color ?? "#94a3b8", machine.damage, machine.upgrades ?? []);
+      machineGroup.position.copy(machinePlacement.position);
+      machineGroup.rotation.y = machinePlacement.rotationY;
       group.add(machineGroup);
-      addLabel(group, machine.name, owner?.color ?? "#94a3b8", position, 2.2);
-      addGuidanceBeacon(owner?.color ?? "#94a3b8");
-      interactables.push({ target: { type: "machine", id: machine.id, label: machine.name }, position });
+      addLabel(group, machine.name, owner?.color ?? "#94a3b8", machinePlacement.position, 2.2);
+      addGuidanceBeacon(owner?.color ?? "#94a3b8", machinePlacement.position);
+      interactables.push({ target: { type: "machine", id: machine.id, label: machine.name }, position: machinePlacement.position });
     } else {
       const marker = addMarker("#a3e635");
-      marker.position.copy(position);
+      marker.position.copy(machinePlacement.position);
       group.add(marker);
-      addLabel(group, location.name, "#a3e635", position, 1.1);
-      addGuidanceBeacon("#a3e635");
-      interactables.push({ target: { type: "placement", id: location.id, label: location.name }, position });
+      addLabel(group, location.name, "#a3e635", machinePlacement.position, 1.1);
+      addGuidanceBeacon("#a3e635", machinePlacement.position);
+      interactables.push({ target: { type: "placement", id: location.id, label: location.name }, position: machinePlacement.position });
     }
   }
 

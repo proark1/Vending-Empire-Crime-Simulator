@@ -1,7 +1,9 @@
 import { AlertTriangle, Boxes, ClipboardList, Map, Package, ShieldAlert } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { GameState } from "../game/core/types";
+import { getMachineUpgradeEffects } from "../game/core/machineStats";
 import { formatClock, getMachineLocation, inventoryUnits, ownedMachines } from "../game/core/selectors";
+import { estimateMachineSalesPerHour } from "../game/systems/economy";
 
 type DashboardTab = "machines" | "cargo" | "rival" | "log";
 
@@ -40,16 +42,21 @@ export function Dashboard({ state }: DashboardProps) {
           {playerMachines.map((machine) => {
             const location = getMachineLocation(state, machine.id);
             const stock = machine.slots.reduce((sum, slot) => sum + slot.quantity, 0);
+            const effects = getMachineUpgradeEffects(machine);
+            const hourlySales = estimateMachineSalesPerHour(state, machine).reduce((sum, slot) => sum + slot.unitsPerHour, 0);
             return (
               <article className="machine-card" key={machine.id}>
                 <div>
                   <h3>{machine.name}</h3>
                   <p>{location?.name ?? "Unknown location"}</p>
+                  {effects.remoteMonitoring && <p className="remote-chip">Remote monitor online</p>}
                 </div>
                 <div className="machine-metrics">
                   <span>${Math.round(machine.revenueStored)}</span>
                   <span>{stock} stock</span>
+                  <span>{hourlySales.toFixed(1)}/hr</span>
                   <span>{Math.round(machine.damage)}% damage</span>
+                  <span>{(machine.upgrades ?? []).length} upgrades</span>
                 </div>
               </article>
             );

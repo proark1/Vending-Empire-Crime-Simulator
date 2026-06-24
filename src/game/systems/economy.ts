@@ -1,4 +1,5 @@
 import type { GameState, Location, Product, VendingMachine } from "../core/types";
+import { effectiveMachineDamage, effectiveMachineVisibility, getMachineUpgradeEffects, priceDemandMultiplier } from "../core/machineStats";
 
 function tagDemandMultiplier(product: Product, location: Location): number {
   const tagMatches = product.demandTags.filter((tag) => location.demandTags.includes(tag)).length;
@@ -22,39 +23,24 @@ function timeOfDayMultiplier(worldTimeHours: number, product: Product): number {
 }
 
 export function runMachineSales(state: GameState, machine: VendingMachine, hours: number): number {
-  const location = state.locations[machine.locationId];
-  if (!location || machine.damage >= 100) {
-    return 0;
-  }
-
+  const slotSalesRate = estimateMachineSalesPerHour(state, machine);
   let earned = 0;
-  const damageMultiplier = Math.max(0.18, 1 - machine.damage / 115);
-  const rivalMultiplier = machine.ownerFactionId === state.playerFactionId ? Math.max(0.45, 1 - location.rivalPressure * 0.28) : 1;
 
-  for (const slot of machine.slots) {
-    if (slot.quantity <= 0) {
+  for (const slotRate of slotSalesRate) {
+    const slot = machine.slots.find((candidate) => candidate.productId === slotRate.productId);
+    if (!slot || slot.quantity <= 0) {
       continue;
     }
 
-    const product = state.products[slot.productId];
-    const demand =
-      location.footTraffic *
-      product.demand *
-      tagDemandMultiplier(product, location) *
-      timeOfDayMultiplier(state.worldTimeHours, product) *
-      machine.visibility *
-      damageMultiplier *
-      rivalMultiplier;
-
-    const expectedUnits = demand * hours * 1.55;
-    slot.salesAccumulator += expectedUnits;
+    slot.salesAccumulator += slotRate.unitsPerHour * hours;
     const soldUnits = Math.min(slot.quantity, Math.floor(slot.salesAccumulator));
 
     if (soldUnits > 0) {
+      const product = state.products[slot.productId];
       slot.quantity -= soldUnits;
       slot.salesAccumulator -= soldUnits;
       earned += soldUnits * slot.price;
-      machine.heat += product.heat * soldUnits * 0.05;
+      machine.heat += product.heat * soldUnits * 0.05 * slotRate.heatMultiplier;
     }
   }
 
@@ -63,4 +49,44 @@ export function runMachineSales(state: GameState, machine: VendingMachine, hours
   }
 
   return earned;
+}
+
+export function estimateMachineSalesPerHour(state: GameState, machine: VendingMachine): Array<{ productId: string; unitsPerHour: number; heatMultiplier: number }> {
+  const location = state.locations[machine.locationId];
+  if (!location || machine.damage >= 100) {
+    return [];
+  }
+
+  const effects = getMachineUpgradeEffects(machine);
+  const damageMultiplier = Math.max(0.18, 1 - effectiveMachineDamage(machine) / 115);
+  const rivalMultiplier = machine.ownerFactionId === state.playerFactionId ? Math.max(0.45, 1 - location.rivalPressure * 0.28) : 1;
+  const visibility = effectiveMachineVisibility(machine);
+
+  return machine.slots.map((slot) => {
+    if (slot.quantity <= 0) {
+      return {
+        productId: slot.productId,
+        unitsPerHour: 0,
+        heatMultiplier: effects.heatMultiplier
+      };
+    }
+
+    const product = state.products[slot.productId];
+    const demand =
+      location.footTraffic *
+      product.demand *
+      tagDemandMultiplier(product, location) *
+      timeOfDayMultiplier(state.worldTimeHours, product) *
+      visibility *
+      damageMultiplier *
+      rivalMultiplier *
+      priceDemandMultiplier(slot.price, product.basePrice) *
+      (1 + effects.salesMultiplier);
+
+    return {
+      productId: slot.productId,
+      unitsPerHour: demand * 1.55,
+      heatMultiplier: effects.heatMultiplier
+    };
+  });
 }

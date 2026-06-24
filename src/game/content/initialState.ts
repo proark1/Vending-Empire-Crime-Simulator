@@ -145,7 +145,8 @@ const playerMachine: VendingMachine = {
   security: 0.2,
   visibility: 0.75,
   heat: 0,
-  lastServicedHour: 8
+  lastServicedHour: 8,
+  upgrades: []
 };
 
 const rivalMachine: VendingMachine = {
@@ -163,7 +164,8 @@ const rivalMachine: VendingMachine = {
   security: 0.25,
   visibility: 0.8,
   heat: 0,
-  lastServicedHour: 8
+  lastServicedHour: 8,
+  upgrades: ["smart_lock"]
 };
 
 export function createInitialState(): GameState {

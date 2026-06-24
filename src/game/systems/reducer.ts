@@ -1,5 +1,7 @@
 import type { CommandResult, FactionId, GameCommand, GameEvent, GameEventTone, GameState, MachineSlot, ProductId, VendingMachine } from "../core/types";
 import { cargoSpaceRemaining, machineAtLocation, missionProgress, ownedMachines } from "../core/selectors";
+import { machineUpgrades } from "../content/machineUpgrades";
+import { machineHasUpgrade, sabotageDamage } from "../core/machineStats";
 import { runMachineSales } from "./economy";
 
 function cloneState(state: GameState): GameState {
@@ -72,10 +74,15 @@ function createMachine(state: GameState, ownerFactionId: FactionId, locationId: 
     security: 0.2,
     visibility: location.kind === "transit" ? 0.95 : 0.8,
     heat: 0,
-    lastServicedHour: state.worldTimeHours
+    lastServicedHour: state.worldTimeHours,
+    upgrades: []
   };
   state.machines[id] = machine;
   return machine;
+}
+
+function clampSlotPrice(price: number): number {
+  return Math.max(1, Math.min(99, Math.round(price)));
 }
 
 function maybeCompleteMission(state: GameState, events: GameEvent[]): void {
@@ -236,13 +243,66 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       break;
     }
 
+    case "set_slot_price": {
+      const machine = state.machines[command.machineId];
+      if (!machine || machine.ownerFactionId !== actor.id) {
+        break;
+      }
+
+      const product = state.products[command.productId];
+      const slot = machine.slots.find((candidate) => candidate.productId === command.productId);
+      if (!product || !slot) {
+        break;
+      }
+
+      const nextPrice = clampSlotPrice(command.price);
+      if (slot.price === nextPrice) {
+        break;
+      }
+
+      slot.price = nextPrice;
+      machine.lastServicedHour = state.worldTimeHours;
+      log(state, events, `${product.name} now sells for $${nextPrice} at ${machine.name}.`, "neutral");
+      break;
+    }
+
+    case "install_upgrade": {
+      const machine = state.machines[command.machineId];
+      if (!machine || machine.ownerFactionId !== actor.id) {
+        break;
+      }
+
+      const upgrade = machineUpgrades[command.upgradeId];
+      if (!upgrade) {
+        break;
+      }
+
+      machine.upgrades ??= [];
+      if (machineHasUpgrade(machine, upgrade.id)) {
+        log(state, events, `${machine.name} already has ${upgrade.name}.`, "warning");
+        break;
+      }
+
+      if (actor.money < upgrade.cost) {
+        log(state, events, `${upgrade.name} needs $${upgrade.cost}.`, "warning");
+        break;
+      }
+
+      actor.money -= upgrade.cost;
+      machine.upgrades.push(upgrade.id);
+      machine.lastServicedHour = state.worldTimeHours;
+      log(state, events, `${upgrade.name} installed on ${machine.name}.`, "good");
+      break;
+    }
+
     case "sabotage_machine": {
       const machine = state.machines[command.machineId];
       if (!machine || machine.ownerFactionId === actor.id) {
         break;
       }
 
-      machine.damage = Math.min(100, machine.damage + 28);
+      const damage = sabotageDamage(28, machine);
+      machine.damage = Math.min(100, machine.damage + damage);
       actor.heat += 8;
       actor.streetReputation += 2;
       const location = state.locations[machine.locationId];
@@ -260,7 +320,8 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       if (command.action === "sabotage" && command.targetMachineId) {
         const target = state.machines[command.targetMachineId];
         if (target && target.ownerFactionId !== actor.id) {
-          target.damage = Math.min(100, target.damage + 18 + Math.round(controller?.aggression ?? 0));
+          const baseDamage = 18 + Math.round((controller?.aggression ?? 0) * 8);
+          target.damage = Math.min(100, target.damage + sabotageDamage(baseDamage, target));
           state.locations[target.locationId].rivalPressure = Math.min(1, state.locations[target.locationId].rivalPressure + 0.15);
           log(state, events, `${actor.name} roughed up ${target.name}.`, "danger");
         }

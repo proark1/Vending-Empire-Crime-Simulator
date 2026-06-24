@@ -1,4 +1,5 @@
 import type { GameCommand, GameState } from "../core/types";
+import { effectiveMachineSecurity, getMachineUpgradeEffects } from "../core/machineStats";
 import { machineAtLocation, ownedMachines } from "../core/selectors";
 import { mostProfitablePlayerMachine } from "../systems/reducer";
 
@@ -20,7 +21,11 @@ export function planNpcCommands(state: GameState): GameCommand[] {
     const playerMachineCount = ownedMachines(state, state.playerFactionId).length;
     const rivalMachineCount = ownedMachines(state, faction.id).length;
 
-    if (target && target.revenueStored >= 28 && target.damage < 82) {
+    const targetEffects = target ? getMachineUpgradeEffects(target) : undefined;
+    const targetSecurity = target ? effectiveMachineSecurity(target) : 0;
+    const sabotageRisk = targetSecurity + (targetEffects?.sabotageResistance ?? 0);
+
+    if (target && target.revenueStored >= 28 && target.damage < 82 && sabotageRisk < 0.48) {
       commands.push({ type: "rival_action", actorId: faction.id, action: "sabotage", targetMachineId: target.id });
       continue;
     }

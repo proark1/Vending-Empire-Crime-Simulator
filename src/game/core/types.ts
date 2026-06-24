@@ -1,5 +1,6 @@
 export type FactionId = "player" | "rival_redline" | string;
 export type ProductId = "soda" | "chips" | "energy" | "mystery_capsules";
+export type MachineUpgradeId = "reinforced_glass" | "smart_lock" | "security_camera" | "cashless_terminal" | "neon_sign" | "remote_monitor";
 export type MachineId = string;
 export type LocationId = string;
 export type DistrictId = string;
@@ -25,6 +26,24 @@ export interface Product {
   legality: 0 | 1 | 2;
   demandTags: string[];
   description: string;
+}
+
+export interface MachineUpgradeEffects {
+  damageResistance: number;
+  sabotageResistance: number;
+  securityBonus: number;
+  visibilityBonus: number;
+  salesMultiplier: number;
+  heatMultiplier: number;
+  remoteMonitoring: boolean;
+}
+
+export interface MachineUpgradeDefinition {
+  id: MachineUpgradeId;
+  name: string;
+  description: string;
+  cost: number;
+  effects: Partial<MachineUpgradeEffects>;
 }
 
 export interface Faction {
@@ -59,6 +78,7 @@ export interface VendingMachine {
   visibility: number;
   heat: number;
   lastServicedHour: number;
+  upgrades: MachineUpgradeId[];
 }
 
 export interface Location {
@@ -136,6 +156,8 @@ export type GameCommand =
   | { type: "collect_revenue"; actorId: FactionId; machineId: MachineId }
   | { type: "repair_machine"; actorId: FactionId; machineId: MachineId }
   | { type: "place_machine"; actorId: FactionId; locationId: LocationId }
+  | { type: "set_slot_price"; actorId: FactionId; machineId: MachineId; productId: ProductId; price: number }
+  | { type: "install_upgrade"; actorId: FactionId; machineId: MachineId; upgradeId: MachineUpgradeId }
   | { type: "sabotage_machine"; actorId: FactionId; machineId: MachineId }
   | { type: "rival_action"; actorId: FactionId; action: "undercut" | "sabotage" | "expand"; targetMachineId?: MachineId; locationId?: LocationId };
 
