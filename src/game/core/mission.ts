@@ -1,7 +1,17 @@
 import type { GameState, LocationId, Vec2 } from "./types";
-import { inventoryUnits, machineAtLocation, missionProgress, ownedMachines } from "./selectors";
+import { carriedCrateUnits, garageStorageUnits, machineAtLocation, missionProgress, ownedMachines, totalOwnedStockUnits } from "./selectors";
 
-export type MissionStepId = "buy_stock" | "stock_machine" | "repair_machine" | "collect_cash" | "install_second" | "install_third" | "stabilize" | "completed";
+export type MissionStepId =
+  | "buy_stock"
+  | "deposit_stock"
+  | "load_crate"
+  | "stock_machine"
+  | "repair_machine"
+  | "collect_cash"
+  | "install_second"
+  | "install_third"
+  | "stabilize"
+  | "completed";
 
 export interface MissionStep {
   id: MissionStepId;
@@ -49,7 +59,9 @@ function hasAffordableOpenPlacement(state: GameState): boolean {
 export function getStarterMissionStep(state: GameState, playerPosition: Vec2): MissionStep {
   const firstMachine = state.machines.machine_player_1;
   const playerMachines = ownedMachines(state, state.playerFactionId);
-  const cargoUnits = inventoryUnits(state.player.cargo, state);
+  const carriedUnits = carriedCrateUnits(state);
+  const storageUnits = garageStorageUnits(state);
+  const stockUnits = totalOwnedStockUnits(state);
   const starterStock = firstMachine.slots.reduce((sum, slot) => sum + slot.quantity, 0);
   const starterHasEverBeenStocked = firstMachine.slots.length > 0;
   const progress = missionProgress(state);
@@ -65,27 +77,51 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
     };
   }
 
-  if (cargoUnits === 0 && !starterHasEverBeenStocked) {
+  if (stockUnits === 0 && !starterHasEverBeenStocked) {
     return {
       id: "buy_stock",
       title: "Get stock",
-      objective: "Buy starter stock from Backdoor Supplier.",
-      guidance: "Follow the yellow ping to the supplier and press E.",
+      objective: "Pick up a starter crate from Backdoor Supplier.",
+      guidance: "Follow the yellow ping to the supplier and press E to buy one crate.",
       targetLocationId: "supplier",
-      progressLabel: "Step 1 / 6",
-      progressRatio: 1 / 6
+      progressLabel: "Step 1 / 8",
+      progressRatio: 1 / 8
     };
   }
 
-  if (cargoUnits > 0 && !starterHasEverBeenStocked) {
+  if (carriedUnits > 0 && state.player.carriedCrate?.source === "supplier" && !starterHasEverBeenStocked) {
+    return {
+      id: "deposit_stock",
+      title: "Build the route",
+      objective: "Store the supplier crate at your garage.",
+      guidance: "Carry the crate to Storage Garage and press E to stash it.",
+      targetLocationId: "garage",
+      progressLabel: "Step 2 / 8",
+      progressRatio: 2 / 8
+    };
+  }
+
+  if (carriedUnits === 0 && storageUnits > 0 && !starterHasEverBeenStocked) {
+    return {
+      id: "load_crate",
+      title: "Load out",
+      objective: "Take one crate from garage storage.",
+      guidance: "Face Storage Garage and press E to carry a crate for the route.",
+      targetLocationId: "garage",
+      progressLabel: "Step 3 / 8",
+      progressRatio: 3 / 8
+    };
+  }
+
+  if (carriedUnits > 0 && !starterHasEverBeenStocked) {
     return {
       id: "stock_machine",
       title: "Load Rusty Starter",
       objective: "Stock your first vending machine at Foam & Fold.",
-      guidance: "Follow the teal ping to Rusty Starter and press E.",
+      guidance: "Carry the crate to Rusty Starter and press E to load it.",
       targetLocationId: firstMachine.locationId,
-      progressLabel: "Step 2 / 6",
-      progressRatio: 2 / 6
+      progressLabel: "Step 4 / 8",
+      progressRatio: 4 / 8
     };
   }
 
@@ -96,8 +132,8 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
       objective: "Repair Rusty Starter before rivals exploit it.",
       guidance: "Face the machine and press E to spend cash on repairs.",
       targetLocationId: firstMachine.locationId,
-      progressLabel: "Step 3 / 6",
-      progressRatio: 3 / 6
+      progressLabel: "Step 5 / 8",
+      progressRatio: 5 / 8
     };
   }
 
@@ -108,8 +144,8 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
       objective: "Install a second machine at an open placement.",
       guidance: "Follow the green ping to a placement pad and press E.",
       targetLocationId: nearestOpenPlacement(state, playerPosition),
-      progressLabel: "Step 5 / 6",
-      progressRatio: 5 / 6
+      progressLabel: "Step 7 / 8",
+      progressRatio: 7 / 8
     };
   }
 
@@ -121,7 +157,7 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
       guidance: "Stay close to the machine or scout the block while revenue builds.",
       targetLocationId: firstMachine.locationId,
       progressLabel: `$${Math.round(firstMachine.revenueStored)} / $25 stored`,
-      progressRatio: Math.min(4 / 6, 3 / 6 + firstMachine.revenueStored / 150)
+      progressRatio: Math.min(6 / 8, 5 / 8 + firstMachine.revenueStored / 200)
     };
   }
 
@@ -132,8 +168,8 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
       objective: "Install a second machine at an open placement.",
       guidance: "Follow the green ping to a placement pad and press E.",
       targetLocationId: nearestOpenPlacement(state, playerPosition),
-      progressLabel: "Step 5 / 6",
-      progressRatio: 5 / 6
+      progressLabel: "Step 7 / 8",
+      progressRatio: 7 / 8
     };
   }
 

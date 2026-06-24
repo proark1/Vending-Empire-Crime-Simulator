@@ -3,16 +3,17 @@ import { createInitialState } from "../content/initialState";
 import { reduceCommands, reduceGameState } from "./reducer";
 
 describe("game reducer", () => {
-  it("buys product into player cargo", () => {
+  it("buys product as a carried crate", () => {
     const state = createInitialState();
     const result = reduceGameState(state, { type: "buy_product", actorId: "player", productId: "soda", quantity: 5 });
 
-    expect(result.state.player.cargo.soda).toBe(5);
+    expect(result.state.player.carriedCrate).toMatchObject({ productId: "soda", quantity: 5, source: "supplier" });
+    expect(result.state.player.cargo.soda).toBeUndefined();
     expect(result.state.factions.player.money).toBe(110);
-    expect(result.events[0]?.message).toContain("Bought 5x");
+    expect(result.events[0]?.message).toContain("Picked up");
   });
 
-  it("stocks an owned machine from cargo", () => {
+  it("stocks an owned machine from the carried crate", () => {
     const state = createInitialState();
     const result = reduceCommands(state, [
       { type: "buy_product", actorId: "player", productId: "chips", quantity: 5 },
@@ -20,8 +21,19 @@ describe("game reducer", () => {
     ]);
 
     const machine = result.state.machines.machine_player_1;
-    expect(result.state.player.cargo.chips).toBeUndefined();
+    expect(result.state.player.carriedCrate).toBeNull();
     expect(machine.slots[0].quantity).toBe(5);
+  });
+
+  it("moves stock from supplier crate into garage storage and back out", () => {
+    const state = reduceCommands(createInitialState(), [
+      { type: "buy_product", actorId: "player", productId: "soda", quantity: 10 },
+      { type: "deposit_crate", actorId: "player" },
+      { type: "load_crate", actorId: "player", productId: "soda", quantity: 6 }
+    ]).state;
+
+    expect(state.player.garageStorage.soda).toBe(4);
+    expect(state.player.carriedCrate).toMatchObject({ productId: "soda", quantity: 6, source: "garage" });
   });
 
   it("stores revenue over time and lets the player collect it", () => {

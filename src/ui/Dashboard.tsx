@@ -2,10 +2,10 @@ import { AlertTriangle, Boxes, ClipboardList, Map, Package, ShieldAlert } from "
 import { useMemo, useState } from "react";
 import type { GameState } from "../game/core/types";
 import { getMachineUpgradeEffects } from "../game/core/machineStats";
-import { formatClock, getMachineLocation, inventoryUnits, ownedMachines } from "../game/core/selectors";
+import { carriedCrateUnits, formatClock, garageStorageUnits, getMachineLocation, machineRoutePressure, machineStockUnits, ownedMachines } from "../game/core/selectors";
 import { estimateMachineSalesPerHour } from "../game/systems/economy";
 
-type DashboardTab = "machines" | "cargo" | "rival" | "log";
+type DashboardTab = "machines" | "logistics" | "rival" | "log";
 
 interface DashboardProps {
   state: GameState;
@@ -23,9 +23,9 @@ export function Dashboard({ state }: DashboardProps) {
           <Map size={16} aria-hidden="true" />
           Machines
         </button>
-        <button className={tab === "cargo" ? "tab active" : "tab"} onClick={() => setTab("cargo")} type="button">
+        <button className={tab === "logistics" ? "tab active" : "tab"} onClick={() => setTab("logistics")} type="button">
           <Boxes size={16} aria-hidden="true" />
-          Cargo
+          Logistics
         </button>
         <button className={tab === "rival" ? "tab active" : "tab"} onClick={() => setTab("rival")} type="button">
           <ShieldAlert size={16} aria-hidden="true" />
@@ -41,15 +41,17 @@ export function Dashboard({ state }: DashboardProps) {
         <div className="panel-list">
           {playerMachines.map((machine) => {
             const location = getMachineLocation(state, machine.id);
-            const stock = machine.slots.reduce((sum, slot) => sum + slot.quantity, 0);
+            const stock = machineStockUnits(machine);
             const effects = getMachineUpgradeEffects(machine);
             const hourlySales = estimateMachineSalesPerHour(state, machine).reduce((sum, slot) => sum + slot.unitsPerHour, 0);
+            const pressure = machineRoutePressure(state, machine);
             return (
               <article className="machine-card" key={machine.id}>
                 <div>
                   <h3>{machine.name}</h3>
                   <p>{location?.name ?? "Unknown location"}</p>
                   {effects.remoteMonitoring && <p className="remote-chip">Remote monitor online</p>}
+                  {pressure.reasons.length > 0 && <p className={`route-chip ${pressure.tone}`}>{pressure.reasons.join(" · ")}</p>}
                 </div>
                 <div className="machine-metrics">
                   <span>${Math.round(machine.revenueStored)}</span>
@@ -64,21 +66,40 @@ export function Dashboard({ state }: DashboardProps) {
         </div>
       )}
 
-      {tab === "cargo" && (
+      {tab === "logistics" && (
         <div className="panel-list">
           <div className="cargo-summary">
             <Package size={18} aria-hidden="true" />
             <span>
-              {inventoryUnits(state.player.cargo, state)}/{state.player.cargoCapacity} capacity used
+              {carriedCrateUnits(state)}/{state.player.cargoCapacity} carried · {garageStorageUnits(state)}/{state.player.garageCapacity} stored
             </span>
           </div>
+          {state.player.carriedCrate ? (
+            <article className="inventory-row">
+              <div>
+                <h3>In hand</h3>
+                <p>
+                  {state.products[state.player.carriedCrate.productId].name} crate · {state.player.carriedCrate.source}
+                </p>
+              </div>
+              <strong>{state.player.carriedCrate.quantity}</strong>
+            </article>
+          ) : (
+            <article className="inventory-row">
+              <div>
+                <h3>In hand</h3>
+                <p>No crate carried</p>
+              </div>
+              <strong>0</strong>
+            </article>
+          )}
           {Object.values(state.products).map((product) => (
             <article className="inventory-row" key={product.id}>
               <div>
                 <h3>{product.name}</h3>
-                <p>{product.description}</p>
+                <p>Garage storage · {product.description}</p>
               </div>
-              <strong>{state.player.cargo[product.id] ?? 0}</strong>
+              <strong>{state.player.garageStorage[product.id] ?? 0}</strong>
             </article>
           ))}
         </div>

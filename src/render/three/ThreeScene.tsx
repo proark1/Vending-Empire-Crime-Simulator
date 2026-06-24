@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
-import type { GameState, Location, MachineUpgradeId } from "../../game/core/types";
-import { machineAtLocation } from "../../game/core/selectors";
+import type { GameState, Location, MachineUpgradeId, ProductId, StockCrate } from "../../game/core/types";
+import { garageStorageUnits, machineAtLocation, machineRoutePressure } from "../../game/core/selectors";
 import type { SceneTarget } from "./SceneTargets";
 import { createAsphaltMaterial, createAtmosphere, createBuilding, createRoadMaterial, createSidewalkMaterial, createSkyDome, createStreetProps } from "./proceduralArt";
 
@@ -16,6 +16,13 @@ interface Interactable {
   target: SceneTarget;
   position: THREE.Vector3;
 }
+
+const productCrateColors: Record<ProductId, string> = {
+  soda: "#38bdf8",
+  chips: "#f59e0b",
+  energy: "#22c55e",
+  mystery_capsules: "#e879f9"
+};
 
 const machinePlacementAnchors: Record<string, { x: number; z: number; rotationY: number }> = {
   laundromat: { x: -5.2, z: -5.15, rotationY: Math.PI },
@@ -244,6 +251,60 @@ function createMachineMesh(color: string, damage: number, installedUpgrades: Mac
   return group;
 }
 
+function createStockCrateMesh(productId: ProductId, quantity: number, compact = false): THREE.Group {
+  const color = productCrateColors[productId] ?? "#94a3b8";
+  const group = new THREE.Group();
+  const crate = new THREE.Mesh(
+    new THREE.BoxGeometry(compact ? 0.34 : 0.58, compact ? 0.24 : 0.36, compact ? 0.28 : 0.42),
+    new THREE.MeshStandardMaterial({ color, roughness: 0.62, metalness: 0.04 })
+  );
+  crate.castShadow = true;
+  crate.receiveShadow = true;
+  group.add(crate);
+
+  const strapMaterial = new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.48, metalness: 0.08 });
+  const strapA = new THREE.Mesh(new THREE.BoxGeometry(compact ? 0.36 : 0.62, compact ? 0.035 : 0.045, compact ? 0.29 : 0.44), strapMaterial);
+  strapA.position.y = compact ? 0.02 : 0.03;
+  group.add(strapA);
+
+  const strapB = new THREE.Mesh(new THREE.BoxGeometry(compact ? 0.04 : 0.055, compact ? 0.25 : 0.37, compact ? 0.3 : 0.45), strapMaterial);
+  group.add(strapB);
+
+  const countBars = Math.max(1, Math.min(4, Math.ceil(quantity / 4)));
+  for (let index = 0; index < countBars; index += 1) {
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.03, 0.018), new THREE.MeshBasicMaterial({ color: "#f8fafc" }));
+    bar.position.set(-0.12 + index * 0.08, compact ? 0.135 : 0.205, compact ? -0.151 : -0.226);
+    group.add(bar);
+  }
+
+  return group;
+}
+
+function createCrateStack(productIds: ProductId[]): THREE.Group {
+  const group = new THREE.Group();
+  productIds.slice(0, 5).forEach((productId, index) => {
+    const crate = createStockCrateMesh(productId, 6);
+    crate.position.set((index % 3) * 0.46 - 0.46, 0.22 + Math.floor(index / 3) * 0.34, Math.floor(index / 3) * 0.18);
+    crate.rotation.y = (index % 2 === 0 ? 0.08 : -0.1);
+    group.add(crate);
+  });
+  return group;
+}
+
+function createRoutePressureRing(tone: "good" | "warning" | "danger"): THREE.Group {
+  const color = tone === "danger" ? "#fb7185" : tone === "warning" ? "#fbbf24" : "#86efac";
+  const group = new THREE.Group();
+  group.userData.routePressure = true;
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.56, 0.018, 8, 44), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.82 }));
+  ring.rotation.x = Math.PI / 2;
+  group.add(ring);
+  const marker = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.28, 3), new THREE.MeshBasicMaterial({ color }));
+  marker.position.y = 0.46;
+  marker.rotation.y = Math.PI;
+  group.add(marker);
+  return group;
+}
+
 function addMarker(color: string): THREE.Mesh {
   const marker = new THREE.Mesh(
     new THREE.CylinderGeometry(0.5, 0.5, 0.06, 28),
@@ -359,6 +420,19 @@ function clearGroup(group: THREE.Group): void {
   group.clear();
 }
 
+function updateCarriedCrateMount(mount: THREE.Group, crate: StockCrate | null): void {
+  clearGroup(mount);
+  if (!crate) {
+    return;
+  }
+
+  const crateMesh = createStockCrateMesh(crate.productId, crate.quantity, true);
+  crateMesh.position.set(0.42, -0.46, -0.78);
+  crateMesh.rotation.set(-0.16, -0.32, 0.08);
+  crateMesh.scale.setScalar(0.92);
+  mount.add(crateMesh);
+}
+
 function addBuilding(scene: THREE.Scene, x: number, z: number, width: number, depth: number, height: number, style: Parameters<typeof createBuilding>[3], signText: string): void {
   const building = createBuilding(width, depth, height, style, signText);
   building.position.set(x, 0, z);
@@ -388,6 +462,15 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       const marker = addMarker("#38bdf8");
       marker.position.copy(position);
       group.add(marker);
+      if (garageStorageUnits(currentState) > 0) {
+        const storedProductIds = Object.entries(currentState.player.garageStorage)
+          .filter(([, quantity]) => quantity > 0)
+          .map(([productId]) => productId as ProductId);
+        const stack = createCrateStack(storedProductIds);
+        stack.position.set(position.x + 0.78, 0.02, position.z - 0.22);
+        stack.rotation.y = -0.35;
+        group.add(stack);
+      }
       addLabel(group, location.name, "#38bdf8", position, 1.1);
       addGuidanceBeacon("#38bdf8");
       interactables.push({ target: { type: "base", id: "garage", label: location.name }, position });
@@ -398,6 +481,10 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       const marker = addMarker("#f59e0b");
       marker.position.copy(position);
       group.add(marker);
+      const supplierStack = createCrateStack(["soda", "chips", "energy", "mystery_capsules"]);
+      supplierStack.position.set(position.x - 0.76, 0.02, position.z - 0.2);
+      supplierStack.rotation.y = 0.45;
+      group.add(supplierStack);
       addLabel(group, location.name, "#f59e0b", position, 1.1);
       addGuidanceBeacon("#f59e0b");
       interactables.push({ target: { type: "supplier", id: "supplier", label: location.name }, position });
@@ -411,6 +498,12 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       machineGroup.position.copy(machinePlacement.position);
       machineGroup.rotation.y = machinePlacement.rotationY;
       group.add(machineGroup);
+      const pressure = machine.ownerFactionId === currentState.playerFactionId ? machineRoutePressure(currentState, machine) : undefined;
+      if (pressure && pressure.score >= 2) {
+        const pressureRing = createRoutePressureRing(pressure.tone);
+        pressureRing.position.set(machinePlacement.position.x, 2.02, machinePlacement.position.z);
+        group.add(pressureRing);
+      }
       addLabel(group, machine.name, owner?.color ?? "#94a3b8", machinePlacement.position, 2.2);
       addGuidanceBeacon(owner?.color ?? "#94a3b8", machinePlacement.position);
       interactables.push({ target: { type: "machine", id: machine.id, label: machine.name }, position: machinePlacement.position });
@@ -431,6 +524,8 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
   const mountRef = useRef<HTMLDivElement | null>(null);
   const stateRef = useRef(state);
   const dynamicGroupRef = useRef<THREE.Group | null>(null);
+  const carriedCrateMountRef = useRef<THREE.Group | null>(null);
+  const carriedCrateSignatureRef = useRef<string | null>(null);
   const interactablesRef = useRef<Interactable[]>([]);
   const guidanceLocationIdRef = useRef(guidanceLocationId);
   const targetIdRef = useRef<string | null>(null);
@@ -471,6 +566,14 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
     yaw.position.set(-8, 0, 1.4);
     yaw.add(camera);
     scene.add(yaw);
+
+    const carriedCrateMount = new THREE.Group();
+    camera.add(carriedCrateMount);
+    carriedCrateMountRef.current = carriedCrateMount;
+    updateCarriedCrateMount(carriedCrateMount, stateRef.current.player.carriedCrate ?? null);
+    carriedCrateSignatureRef.current = stateRef.current.player.carriedCrate
+      ? `${stateRef.current.player.carriedCrate.productId}:${stateRef.current.player.carriedCrate.quantity}:${stateRef.current.player.carriedCrate.source}`
+      : null;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -668,13 +771,17 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
 
       atmosphere.rotation.y += delta * 0.015;
       dynamicGroup.traverse((object) => {
-        if (!object.userData.beacon) {
-          return;
+        if (object.userData.beacon) {
+          const pulse = 1 + Math.sin(time * 0.004) * 0.08;
+          object.scale.set(pulse, 1, pulse);
+          object.rotation.y += delta * 0.65;
         }
 
-        const pulse = 1 + Math.sin(time * 0.004) * 0.08;
-        object.scale.set(pulse, 1, pulse);
-        object.rotation.y += delta * 0.65;
+        if (object.userData.routePressure) {
+          const pulse = 1 + Math.sin(time * 0.006) * 0.12;
+          object.scale.set(pulse, pulse, pulse);
+          object.rotation.y -= delta * 0.8;
+        }
       });
       for (const object of animatedProps) {
         const baseY = typeof object.userData.baseY === "number" ? object.userData.baseY : 0;
@@ -709,6 +816,8 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
       renderer.dispose();
       mount.removeChild(renderer.domElement);
       dynamicGroupRef.current = null;
+      carriedCrateMountRef.current = null;
+      carriedCrateSignatureRef.current = null;
       interactablesRef.current = [];
     };
   }, []);
@@ -721,6 +830,22 @@ export function ThreeScene({ guidanceLocationId, state, onPlayerPositionChange, 
 
     interactablesRef.current = populateDynamicObjects(dynamicGroup, state, guidanceLocationId);
   }, [guidanceLocationId, state]);
+
+  useEffect(() => {
+    const mount = carriedCrateMountRef.current;
+    if (!mount) {
+      return;
+    }
+
+    const crate = state.player.carriedCrate ?? null;
+    const signature = crate ? `${crate.productId}:${crate.quantity}:${crate.source}` : null;
+    if (carriedCrateSignatureRef.current === signature) {
+      return;
+    }
+
+    carriedCrateSignatureRef.current = signature;
+    updateCarriedCrateMount(mount, crate);
+  }, [state.player.carriedCrate]);
 
   return <div className="scene-mount" ref={mountRef} aria-label="3D district view" />;
 }

@@ -9,9 +9,31 @@ function migrateGameState(parsed: GameState): GameState {
     return baseline;
   }
 
+  const parsedPlayer = (parsed.player ?? baseline.player) as Partial<GameState["player"]>;
+  const parsedPlayerRecord = parsedPlayer as Record<string, unknown>;
+  const isLegacyLogistics = !("garageStorage" in parsedPlayerRecord) && !("carriedCrate" in parsedPlayerRecord);
+  const garageStorage = isLegacyLogistics
+    ? {
+        ...baseline.player.garageStorage,
+        ...(parsedPlayer.cargo ?? {})
+      }
+    : {
+        ...baseline.player.garageStorage,
+        ...(parsedPlayer.garageStorage ?? {})
+      };
+
   return {
     ...baseline,
     ...parsed,
+    player: {
+      ...baseline.player,
+      ...parsedPlayer,
+      cargo: isLegacyLogistics ? {} : parsedPlayer.cargo ?? {},
+      cargoCapacity: isLegacyLogistics ? baseline.player.cargoCapacity : parsedPlayer.cargoCapacity ?? baseline.player.cargoCapacity,
+      carriedCrate: parsedPlayer.carriedCrate ?? null,
+      garageStorage,
+      garageCapacity: parsedPlayer.garageCapacity ?? baseline.player.garageCapacity
+    },
     products: {
       ...baseline.products,
       ...parsed.products

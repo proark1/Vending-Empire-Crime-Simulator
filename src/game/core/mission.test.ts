@@ -13,8 +13,31 @@ describe("starter mission flow", () => {
     expect(step.targetLocationId).toBe("supplier");
   });
 
-  it("guides stocked cargo to the first machine", () => {
+  it("guides supplier crates to the garage first", () => {
     const state = reduceGameState(createInitialState(), { type: "buy_product", actorId: "player", productId: "soda", quantity: 5 }).state;
+    const step = getStarterMissionStep(state, startPosition);
+
+    expect(step.id).toBe("deposit_stock");
+    expect(step.targetLocationId).toBe("garage");
+  });
+
+  it("guides stored stock into a carried route crate", () => {
+    const state = reduceCommands(createInitialState(), [
+      { type: "buy_product", actorId: "player", productId: "soda", quantity: 5 },
+      { type: "deposit_crate", actorId: "player" }
+    ]).state;
+    const step = getStarterMissionStep(state, startPosition);
+
+    expect(step.id).toBe("load_crate");
+    expect(step.targetLocationId).toBe("garage");
+  });
+
+  it("guides garage-loaded crates to the first machine", () => {
+    const state = reduceCommands(createInitialState(), [
+      { type: "buy_product", actorId: "player", productId: "soda", quantity: 5 },
+      { type: "deposit_crate", actorId: "player" },
+      { type: "load_crate", actorId: "player", productId: "soda", quantity: 5 }
+    ]).state;
     const step = getStarterMissionStep(state, startPosition);
 
     expect(step.id).toBe("stock_machine");

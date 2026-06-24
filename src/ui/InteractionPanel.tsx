@@ -1,8 +1,8 @@
 import { Camera, CreditCard, HandCoins, Lightbulb, Lock, Minus, PackagePlus, Plus, RadioTower, RotateCcw, Save, Shield, ShoppingCart, Sparkles, Wrench, Zap } from "lucide-react";
-import type { GameCommand, GameState, MachineUpgradeId, ProductId } from "../game/core/types";
+import type { GameCommand, GameState, MachineUpgradeId } from "../game/core/types";
 import { machineUpgradeList } from "../game/content/machineUpgrades";
 import { effectiveMachineSecurity, effectiveMachineVisibility, getMachineUpgradeEffects, machineHasUpgrade, priceDemandMultiplier } from "../game/core/machineStats";
-import { cargoSpaceRemaining, machineAtLocation } from "../game/core/selectors";
+import { cargoSpaceRemaining, carriedCrateUnits, garageStorageSpaceRemaining, garageStorageUnits, machineAtLocation, machineRoutePressure, machineStockUnits } from "../game/core/selectors";
 import { estimateMachineSalesPerHour } from "../game/systems/economy";
 import type { SceneTarget } from "../render/three/SceneTargets";
 import { getPrimaryInteraction } from "./interactionActions";
@@ -81,6 +81,10 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
   }
 
   if (target.type === "base") {
+    const crate = state.player.carriedCrate;
+    const storageUsed = garageStorageUnits(state);
+    const storageRemaining = garageStorageSpaceRemaining(state);
+
     return (
       <section className="interaction-panel">
         <h2>{target.label}</h2>
@@ -90,6 +94,53 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
             <span>{primaryInteraction.label}</span>
           </div>
         )}
+        <div className="machine-section">
+          <div className="section-title">
+            <PackagePlus size={16} aria-hidden="true" />
+            <span>Route loadout</span>
+            <em>
+              {storageUsed}/{state.player.garageCapacity}
+            </em>
+          </div>
+          {crate ? (
+            <article className="slot-row">
+              <div>
+                <h3>{state.products[crate.productId].name} crate</h3>
+                <p>
+                  {crate.quantity}/{crate.capacity} carried · {crate.source === "supplier" ? "fresh from supplier" : "from garage storage"}
+                </p>
+              </div>
+              <ActionButton icon={<PackagePlus size={17} aria-hidden="true" />} onClick={() => onCommand({ type: "deposit_crate", actorId: state.playerFactionId })}>
+                Store
+              </ActionButton>
+            </article>
+          ) : (
+            <p className="empty-note">Hands free. Load one garage crate before running a route.</p>
+          )}
+          <div className="storage-list">
+            {Object.values(state.products).map((product) => {
+              const quantity = state.player.garageStorage[product.id] ?? 0;
+              const crateQuantity = Math.min(quantity, Math.floor(state.player.cargoCapacity / product.size));
+              return (
+                <article className="inventory-row" key={product.id}>
+                  <div>
+                    <h3>{product.name}</h3>
+                    <p>
+                      {quantity} stored · {storageRemaining} free capacity
+                    </p>
+                  </div>
+                  <ActionButton
+                    disabled={Boolean(crate) || crateQuantity <= 0}
+                    icon={<PackagePlus size={17} aria-hidden="true" />}
+                    onClick={() => onCommand({ type: "load_crate", actorId: state.playerFactionId, productId: product.id, quantity: crateQuantity })}
+                  >
+                    Carry {crateQuantity || 0}
+                  </ActionButton>
+                </article>
+              );
+            })}
+          </div>
+        </div>
         <div className="action-grid">
           <ActionButton icon={<Save size={17} aria-hidden="true" />} onClick={onSave}>
             Save
@@ -106,6 +157,8 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
   }
 
   if (target.type === "supplier") {
+    const carrying = Boolean(state.player.carriedCrate) || carriedCrateUnits(state) > 0;
+
     return (
       <section className="interaction-panel">
         <h2>{target.label}</h2>
@@ -117,9 +170,9 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
         )}
         <div className="action-grid">
           {Object.values(state.products).map((product) => {
-            const quantity = product.id === "mystery_capsules" ? 3 : 5;
+            const quantity = product.id === "mystery_capsules" ? 3 : Math.min(10, Math.floor(state.player.cargoCapacity / product.size));
             const cost = product.cost * quantity;
-            const disabled = player.money < cost || cargoSpaceRemaining(state) < product.size * quantity;
+            const disabled = carrying || player.money < cost || cargoSpaceRemaining(state) < product.size * quantity;
             return (
               <ActionButton
                 disabled={disabled}
@@ -127,11 +180,12 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
                 key={product.id}
                 onClick={() => onCommand({ type: "buy_product", actorId: state.playerFactionId, productId: product.id, quantity })}
               >
-                {product.name} ${cost}
+                {product.name} crate ${cost}
               </ActionButton>
             );
           })}
         </div>
+        {carrying && <p className="empty-note">Hands full. Store your current crate at the garage before buying more stock.</p>}
       </section>
     );
   }
@@ -176,6 +230,10 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
   const visibility = effectiveMachineVisibility(machine);
   const slotRates = estimateMachineSalesPerHour(state, machine);
   const installedUpgrades = machine.upgrades ?? [];
+  const stock = machineStockUnits(machine);
+  const pressure = machineRoutePressure(state, machine);
+  const carriedCrate = state.player.carriedCrate;
+  const carriedProduct = carriedCrate ? state.products[carriedCrate.productId] : null;
 
   return (
     <section className="interaction-panel">
@@ -197,9 +255,10 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
       <div className="machine-readout">
         <span>${Math.round(machine.revenueStored)}</span>
         <span>{Math.round(machine.damage)}% damage</span>
-        <span>{machine.slots.reduce((sum, slot) => sum + slot.quantity, 0)} stock</span>
+        <span>{stock} stock</span>
         <span>{formatPercent(security)} security</span>
         <span>{formatPercent(visibility)} visibility</span>
+        <span className={`route-tone ${pressure.tone}`}>{pressure.reasons[0] ?? "stable"}</span>
         <span>{installedUpgrades.length}/{machineUpgradeList.length} upgrades</span>
       </div>
 
@@ -220,30 +279,32 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
             >
               Repair
             </ActionButton>
-            {Object.entries(state.player.cargo).map(([productId, quantity]) => {
-              const product = state.products[productId as ProductId];
-              if (!product || quantity <= 0) {
-                return null;
-              }
-              return (
-                <ActionButton
-                  icon={<PackagePlus size={17} aria-hidden="true" />}
-                  key={product.id}
-                  onClick={() =>
-                    onCommand({
-                      type: "stock_machine",
-                      actorId: state.playerFactionId,
-                      machineId: machine.id,
-                      productId: product.id,
-                      quantity: Math.min(6, quantity)
-                    })
-                  }
-                >
-                  {product.name} x{Math.min(6, quantity)}
-                </ActionButton>
-              );
-            })}
+            {carriedCrate && carriedProduct ? (
+              <ActionButton
+                icon={<PackagePlus size={17} aria-hidden="true" />}
+                onClick={() =>
+                  onCommand({
+                    type: "stock_machine",
+                    actorId: state.playerFactionId,
+                    machineId: machine.id,
+                    productId: carriedProduct.id,
+                    quantity: Math.min(6, carriedCrate.quantity)
+                  })
+                }
+              >
+                {carriedProduct.name} x{Math.min(6, carriedCrate.quantity)}
+              </ActionButton>
+            ) : (
+              <span className="action-note">No crate carried</span>
+            )}
           </div>
+
+          {pressure.reasons.length > 0 && (
+            <div className={`route-pressure ${pressure.tone}`}>
+              <strong>Route pressure</strong>
+              <span>{pressure.reasons.join(" · ")}</span>
+            </div>
+          )}
 
           <div className="machine-section">
             <div className="section-title">

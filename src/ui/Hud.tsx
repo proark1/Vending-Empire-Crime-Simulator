@@ -1,6 +1,6 @@
 import { Flame, HandCoins, Package, Trophy } from "lucide-react";
 import type { GameState } from "../game/core/types";
-import { formatClock, inventoryUnits, missionProgress } from "../game/core/selectors";
+import { carriedCrateUnits, formatClock, missionProgress } from "../game/core/selectors";
 
 interface HudProps {
   state: GameState;
@@ -8,7 +8,8 @@ interface HudProps {
 
 export function Hud({ state }: HudProps) {
   const player = state.factions[state.playerFactionId];
-  const cargoUnits = inventoryUnits(state.player.cargo, state);
+  const cargoUnits = carriedCrateUnits(state);
+  const crate = state.player.carriedCrate;
   const progress = missionProgress(state);
 
   return (
@@ -29,7 +30,7 @@ export function Hud({ state }: HudProps) {
         <div className="stat-pill">
           <Package size={17} aria-hidden="true" />
           <span>
-            {cargoUnits}/{state.player.cargoCapacity}
+            {crate ? `${state.products[crate.productId].name} ${crate.quantity}` : `${cargoUnits}/${state.player.cargoCapacity}`}
           </span>
         </div>
         <div className="stat-pill mission-pill">

@@ -178,7 +178,10 @@ export function createInitialState(): GameState {
     player: {
       factionId: "player",
       cargo: {},
-      cargoCapacity: 40
+      cargoCapacity: 12,
+      carriedCrate: null,
+      garageStorage: {},
+      garageCapacity: 180
     },
     factions,
     products,

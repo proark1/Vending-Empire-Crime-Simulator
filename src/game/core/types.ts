@@ -14,6 +14,13 @@ export interface Inventory {
   [productId: string]: number;
 }
 
+export interface StockCrate {
+  productId: ProductId;
+  quantity: number;
+  capacity: number;
+  source: "supplier" | "garage";
+}
+
 export interface Product {
   id: ProductId;
   name: string;
@@ -106,8 +113,15 @@ export interface District {
 
 export interface PlayerState {
   factionId: FactionId;
+  /**
+   * Legacy free-form cargo bucket. New logistics uses carriedCrate and garageStorage,
+   * but this remains for save migration and defensive compatibility.
+   */
   cargo: Inventory;
   cargoCapacity: number;
+  carriedCrate: StockCrate | null;
+  garageStorage: Inventory;
+  garageCapacity: number;
 }
 
 export interface NpcController {
@@ -152,6 +166,8 @@ export interface GameState {
 export type GameCommand =
   | { type: "advance_time"; actorId: FactionId; hours: number }
   | { type: "buy_product"; actorId: FactionId; productId: ProductId; quantity: number }
+  | { type: "deposit_crate"; actorId: FactionId }
+  | { type: "load_crate"; actorId: FactionId; productId: ProductId; quantity: number }
   | { type: "stock_machine"; actorId: FactionId; machineId: MachineId; productId: ProductId; quantity: number }
   | { type: "collect_revenue"; actorId: FactionId; machineId: MachineId }
   | { type: "repair_machine"; actorId: FactionId; machineId: MachineId }

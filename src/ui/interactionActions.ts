@@ -1,5 +1,5 @@
 import type { GameCommand, GameState, ProductId } from "../game/core/types";
-import { cargoSpaceRemaining, machineAtLocation } from "../game/core/selectors";
+import { cargoSpaceRemaining, firstGarageStorageProduct, inventoryUnits, machineAtLocation } from "../game/core/selectors";
 import type { SceneTarget } from "../render/three/SceneTargets";
 
 export type PrimaryInteraction =
@@ -17,14 +17,15 @@ export type PrimaryInteraction =
 
 const productPriority: ProductId[] = ["soda", "chips", "energy", "mystery_capsules"];
 
-function firstCargoProduct(state: GameState, machineId: string): { productId: ProductId; quantity: number } | undefined {
+function firstCarriedProduct(state: GameState, machineId: string): { productId: ProductId; quantity: number } | undefined {
   const machine = state.machines[machineId];
   if (!machine) {
     return undefined;
   }
 
   for (const productId of productPriority) {
-    const available = state.player.cargo[productId] ?? 0;
+    const crate = state.player.carriedCrate;
+    const available = crate?.productId === productId ? crate.quantity : state.player.cargo[productId] ?? 0;
     if (available <= 0) {
       continue;
     }
@@ -42,6 +43,10 @@ function firstCargoProduct(state: GameState, machineId: string): { productId: Pr
 }
 
 function recommendedSupplierBuy(state: GameState): { productId: ProductId; quantity: number } | undefined {
+  if (state.player.carriedCrate || inventoryUnits(state.player.cargo, state) > 0) {
+    return undefined;
+  }
+
   const player = state.factions[state.playerFactionId];
   const remaining = cargoSpaceRemaining(state);
   const recommendations: Array<{ productId: ProductId; quantity: number }> = [
@@ -66,13 +71,32 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
   const player = state.factions[actorId];
 
   if (target.type === "base") {
+    if (state.player.carriedCrate) {
+      return { kind: "command", label: "Store crate", command: { type: "deposit_crate", actorId } };
+    }
+
+    const stored = firstGarageStorageProduct(state);
+    if (stored) {
+      const product = state.products[stored.productId];
+      return {
+        kind: "command",
+        label: `Carry ${product.name}`,
+        command: {
+          type: "load_crate",
+          actorId,
+          productId: product.id,
+          quantity: Math.min(stored.quantity, Math.floor(state.player.cargoCapacity / product.size))
+        }
+      };
+    }
+
     return { kind: "save", label: "Save game" };
   }
 
   if (target.type === "supplier") {
     const recommendation = recommendedSupplierBuy(state);
     if (!recommendation) {
-      return { kind: "command", label: "Buy stock", disabled: true, command: { type: "buy_product", actorId, productId: "soda", quantity: 1 } };
+      return { kind: "command", label: state.player.carriedCrate ? "Hands full" : "Buy stock", disabled: true, command: { type: "buy_product", actorId, productId: "soda", quantity: 1 } };
     }
 
     const product = state.products[recommendation.productId];
@@ -118,9 +142,9 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     };
   }
 
-  const cargoProduct = firstCargoProduct(state, machine.id);
-  if (cargoProduct) {
-    const product = state.products[cargoProduct.productId];
+  const carriedProduct = firstCarriedProduct(state, machine.id);
+  if (carriedProduct) {
+    const product = state.products[carriedProduct.productId];
     return {
       kind: "command",
       label: `Stock ${product.name}`,
@@ -128,8 +152,8 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
         type: "stock_machine",
         actorId,
         machineId: machine.id,
-        productId: cargoProduct.productId,
-        quantity: cargoProduct.quantity
+        productId: carriedProduct.productId,
+        quantity: carriedProduct.quantity
       }
     };
   }

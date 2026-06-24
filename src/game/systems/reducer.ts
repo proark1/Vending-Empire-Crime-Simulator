@@ -1,5 +1,5 @@
 import type { CommandResult, FactionId, GameCommand, GameEvent, GameEventTone, GameState, MachineSlot, ProductId, VendingMachine } from "../core/types";
-import { cargoSpaceRemaining, machineAtLocation, missionProgress, ownedMachines } from "../core/selectors";
+import { cargoSpaceRemaining, garageStorageSpaceRemaining, inventoryUnits, machineAtLocation, missionProgress, ownedMachines } from "../core/selectors";
 import { machineUpgrades } from "../content/machineUpgrades";
 import { machineHasUpgrade, sabotageDamage } from "../core/machineStats";
 import { runMachineSales } from "./economy";
@@ -27,15 +27,28 @@ function getFactionOrThrow(state: GameState, factionId: FactionId) {
   return faction;
 }
 
-function addCargo(state: GameState, productId: ProductId, quantity: number): void {
-  state.player.cargo[productId] = (state.player.cargo[productId] ?? 0) + quantity;
+function addInventory(inventory: Record<string, number>, productId: ProductId, quantity: number): void {
+  inventory[productId] = (inventory[productId] ?? 0) + quantity;
 }
 
-function removeCargo(state: GameState, productId: ProductId, quantity: number): void {
-  state.player.cargo[productId] = Math.max(0, (state.player.cargo[productId] ?? 0) - quantity);
-  if (state.player.cargo[productId] === 0) {
-    delete state.player.cargo[productId];
+function removeInventory(inventory: Record<string, number>, productId: ProductId, quantity: number): void {
+  inventory[productId] = Math.max(0, (inventory[productId] ?? 0) - quantity);
+  if (inventory[productId] === 0) {
+    delete inventory[productId];
   }
+}
+
+function removeCarriedProduct(state: GameState, productId: ProductId, quantity: number): void {
+  const crate = state.player.carriedCrate;
+  if (crate?.productId === productId) {
+    crate.quantity = Math.max(0, crate.quantity - quantity);
+    if (crate.quantity === 0) {
+      state.player.carriedCrate = null;
+    }
+    return;
+  }
+
+  removeInventory(state.player.cargo, productId, quantity);
 }
 
 function getOrCreateSlot(machine: VendingMachine, productId: ProductId, basePrice: number): MachineSlot | undefined {
@@ -140,18 +153,88 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       }
 
       const product = state.products[command.productId];
+      if (state.player.carriedCrate || inventoryUnits(state.player.cargo, state) > 0) {
+        log(state, events, "Hands are full. Drop the current crate at the garage or load a machine first.", "warning");
+        break;
+      }
+
       const affordable = Math.floor(actor.money / product.cost);
       const capacityLimited = Math.floor(cargoSpaceRemaining(state) / product.size);
       const quantity = Math.max(0, Math.min(command.quantity, affordable, capacityLimited));
 
       if (quantity <= 0) {
-        log(state, events, "No room or cash for that stock run.", "warning");
+        log(state, events, "No room or cash for that crate.", "warning");
         break;
       }
 
       actor.money -= quantity * product.cost;
-      addCargo(state, product.id, quantity);
-      log(state, events, `Bought ${quantity}x ${product.name} for $${quantity * product.cost}.`, "good");
+      state.player.carriedCrate = {
+        productId: product.id,
+        quantity,
+        capacity: Math.floor(state.player.cargoCapacity / product.size),
+        source: "supplier"
+      };
+      log(state, events, `Picked up a ${quantity}x ${product.name} crate for $${quantity * product.cost}.`, "good");
+      break;
+    }
+
+    case "deposit_crate": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      const crate = state.player.carriedCrate;
+      if (!crate) {
+        log(state, events, "No crate in hand to store.", "warning");
+        break;
+      }
+
+      const product = state.products[crate.productId];
+      const spaceLimited = Math.floor(garageStorageSpaceRemaining(state) / product.size);
+      const quantity = Math.max(0, Math.min(crate.quantity, spaceLimited));
+      if (quantity <= 0) {
+        log(state, events, "Garage storage is full.", "warning");
+        break;
+      }
+
+      state.player.garageStorage ??= {};
+      addInventory(state.player.garageStorage, crate.productId, quantity);
+      crate.quantity -= quantity;
+      if (crate.quantity <= 0) {
+        state.player.carriedCrate = null;
+      }
+      log(state, events, `Stored ${quantity}x ${product.name} at the garage.`, "good");
+      break;
+    }
+
+    case "load_crate": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      if (state.player.carriedCrate) {
+        log(state, events, "Already carrying a crate.", "warning");
+        break;
+      }
+
+      const product = state.products[command.productId];
+      const available = state.player.garageStorage?.[product.id] ?? 0;
+      const capacityLimited = Math.floor(cargoSpaceRemaining(state) / product.size);
+      const quantity = Math.max(0, Math.min(command.quantity, available, capacityLimited));
+
+      if (quantity <= 0) {
+        log(state, events, `No ${product.name} crates ready in the garage.`, "warning");
+        break;
+      }
+
+      removeInventory(state.player.garageStorage, product.id, quantity);
+      state.player.carriedCrate = {
+        productId: product.id,
+        quantity,
+        capacity: Math.floor(state.player.cargoCapacity / product.size),
+        source: "garage"
+      };
+      log(state, events, `Loaded ${quantity}x ${product.name} from garage storage.`, "good");
       break;
     }
 
@@ -166,7 +249,7 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       }
 
       const product = state.products[command.productId];
-      const available = state.player.cargo[product.id] ?? 0;
+      const available = state.player.carriedCrate?.productId === product.id ? state.player.carriedCrate.quantity : state.player.cargo[product.id] ?? 0;
       const slot = getOrCreateSlot(machine, product.id, product.basePrice);
 
       if (!slot) {
@@ -181,7 +264,7 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       }
 
       slot.quantity += quantity;
-      removeCargo(state, product.id, quantity);
+      removeCarriedProduct(state, product.id, quantity);
       machine.lastServicedHour = state.worldTimeHours;
       log(state, events, `Loaded ${quantity}x ${product.name} into ${machine.name}.`, "good");
       break;

@@ -23,6 +23,31 @@ describe("primary interactions", () => {
     }
   });
 
+  it("stores carried crates at the garage as the base primary action", () => {
+    const state = reduceGameState(createInitialState(), { type: "buy_product", actorId: "player", productId: "soda", quantity: 5 }).state;
+    const action = getPrimaryInteraction(state, { type: "base", id: "garage", label: "Storage Garage" });
+
+    expect(action?.kind).toBe("command");
+    expect(action?.label).toBe("Store crate");
+    if (action?.kind === "command") {
+      expect(action.command.type).toBe("deposit_crate");
+    }
+  });
+
+  it("loads stored garage crates when hands are free", () => {
+    const state = reduceCommands(createInitialState(), [
+      { type: "buy_product", actorId: "player", productId: "soda", quantity: 5 },
+      { type: "deposit_crate", actorId: "player" }
+    ]).state;
+    const action = getPrimaryInteraction(state, { type: "base", id: "garage", label: "Storage Garage" });
+
+    expect(action?.kind).toBe("command");
+    expect(action?.label).toBe("Carry Corner Soda");
+    if (action?.kind === "command") {
+      expect(action.command.type).toBe("load_crate");
+    }
+  });
+
   it("uses sabotage as the rival machine primary action", () => {
     const state = createInitialState();
     const action = getPrimaryInteraction(state, { type: "machine", id: "machine_rival_1", label: "Redline Basic" });
