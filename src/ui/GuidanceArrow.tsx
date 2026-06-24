@@ -1,11 +1,11 @@
 import { Navigation } from "lucide-react";
-import type { GameState, Vec2 } from "../game/core/types";
-import type { MissionStep } from "../game/core/mission";
+import type { GameState, LocationId, Vec2 } from "../game/core/types";
 
 interface GuidanceArrowProps {
+  label?: string;
   state: GameState;
+  targetLocationId?: LocationId;
   playerPosition: Vec2;
-  step: MissionStep;
 }
 
 function bearingDegrees(from: Vec2, to: Vec2): number {
@@ -16,12 +16,12 @@ function distance(from: Vec2, to: Vec2): number {
   return Math.hypot(to.x - from.x, to.z - from.z);
 }
 
-export function GuidanceArrow({ state, playerPosition, step }: GuidanceArrowProps) {
-  if (!step.targetLocationId) {
+export function GuidanceArrow({ label, state, targetLocationId, playerPosition }: GuidanceArrowProps) {
+  if (!targetLocationId) {
     return null;
   }
 
-  const location = state.locations[step.targetLocationId];
+  const location = state.locations[targetLocationId];
   if (!location) {
     return null;
   }
@@ -35,7 +35,7 @@ export function GuidanceArrow({ state, playerPosition, step }: GuidanceArrowProp
         <Navigation size={24} aria-hidden="true" />
       </div>
       <div>
-        <strong>{location.name}</strong>
+        <strong>{label ?? location.name}</strong>
         <span>{meters}m</span>
       </div>
     </aside>

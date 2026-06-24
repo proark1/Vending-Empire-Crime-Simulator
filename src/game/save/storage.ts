@@ -28,6 +28,7 @@ function migrateGameState(parsed: GameState): GameState {
     player: {
       ...baseline.player,
       ...parsedPlayer,
+      activeVehicleId: parsedPlayer.activeVehicleId ?? baseline.player.activeVehicleId,
       cargo: isLegacyLogistics ? {} : parsedPlayer.cargo ?? {},
       cargoCapacity: isLegacyLogistics ? baseline.player.cargoCapacity : parsedPlayer.cargoCapacity ?? baseline.player.cargoCapacity,
       carriedCrate: parsedPlayer.carriedCrate ?? null,
@@ -62,7 +63,23 @@ function migrateGameState(parsed: GameState): GameState {
           upgrades: Array.isArray(machine.upgrades) ? machine.upgrades : []
         }
       ])
-    )
+    ),
+    vehicles: Object.fromEntries(
+      Object.entries({
+        ...baseline.vehicles,
+        ...(parsed.vehicles ?? {})
+      }).map(([vehicleId, vehicle]) => [
+        vehicleId,
+        {
+          ...vehicle,
+          inventory: vehicle.inventory ?? {}
+        }
+      ])
+    ),
+    routePlan: {
+      ...baseline.routePlan,
+      ...(parsed.routePlan ?? {})
+    }
   };
 }
 

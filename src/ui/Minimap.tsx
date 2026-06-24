@@ -1,5 +1,5 @@
 import type { GameState, Vec2 } from "../game/core/types";
-import { machineAtLocation } from "../game/core/selectors";
+import { activeVehicle, machineAtLocation } from "../game/core/selectors";
 import type { SceneTarget } from "../render/three/SceneTargets";
 
 interface MinimapProps {
@@ -29,6 +29,9 @@ function toMapPoint(position: Vec2): { x: number; y: number } {
 export function Minimap({ state, playerPosition, guidanceLocationId, target }: MinimapProps) {
   const targetLocationId = target?.type === "placement" ? target.id : target?.type === "machine" ? state.machines[target.id]?.locationId : target?.id;
   const player = toMapPoint(playerPosition);
+  const vehicle = activeVehicle(state);
+  const vehicleLocation = vehicle ? state.locations[vehicle.locationId] : undefined;
+  const vehiclePoint = vehicleLocation ? toMapPoint(vehicleLocation.position) : undefined;
 
   return (
     <aside className="minimap" aria-label="District map">
@@ -49,6 +52,11 @@ export function Minimap({ state, playerPosition, guidanceLocationId, target }: M
             </g>
           );
         })}
+        {vehiclePoint && (
+          <g className="map-vehicle">
+            <rect x={vehiclePoint.x - 3.6} y={vehiclePoint.y - 2.8} width="7.2" height="5.6" rx="1.2" />
+          </g>
+        )}
         <circle className="map-player" cx={player.x} cy={player.y} r="3.6" />
       </svg>
     </aside>

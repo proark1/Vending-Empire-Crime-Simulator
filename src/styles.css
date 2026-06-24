@@ -449,7 +449,7 @@ kbd {
   top: 0;
   z-index: 1;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 4px;
   padding: 6px;
   background: rgba(15, 23, 42, 0.96);
@@ -490,6 +490,8 @@ kbd {
 }
 
 .machine-card,
+.route-task,
+.vehicle-card,
 .inventory-row,
 .event-row,
 .cargo-summary {
@@ -501,6 +503,104 @@ kbd {
   border: 1px solid rgba(226, 232, 240, 0.12);
   border-radius: 8px;
   background: rgba(30, 41, 59, 0.76);
+}
+
+.vehicle-card {
+  display: grid;
+  gap: 8px;
+}
+
+.vehicle-heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.vehicle-heading h3,
+.route-task h3 {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.vehicle-heading p,
+.route-task p,
+.vehicle-note {
+  margin: 3px 0 0;
+  color: #cbd5e1;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.vehicle-meter {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.2);
+}
+
+.vehicle-meter span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #d9f99d, #2dd4bf);
+}
+
+.route-task {
+  align-items: center;
+}
+
+.route-task.warning {
+  border-color: rgba(251, 191, 36, 0.28);
+}
+
+.route-task.danger {
+  border-color: rgba(251, 113, 133, 0.34);
+}
+
+.route-task.selected {
+  border-color: rgba(45, 212, 191, 0.55);
+  background: rgba(20, 184, 166, 0.16);
+}
+
+.route-task strong {
+  color: #99f6e4;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.route-actions,
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.mini-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 6px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.78);
+  color: #f8fafc;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.mini-button:hover:not(:disabled) {
+  border-color: rgba(45, 212, 191, 0.55);
+  background: rgba(20, 184, 166, 0.18);
+}
+
+.mini-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
 }
 
 .machine-card h3,
@@ -1043,6 +1143,12 @@ kbd {
   stroke-width: 1.6;
 }
 
+.map-vehicle rect {
+  fill: #d9f99d;
+  stroke: #0f172a;
+  stroke-width: 1.4;
+}
+
 @keyframes map-pulse {
   0%,
   100% {
@@ -1122,8 +1228,14 @@ kbd {
   }
 
   .slot-row,
-  .upgrade-row {
+  .upgrade-row,
+  .route-task {
     grid-template-columns: 1fr;
+  }
+
+  .route-actions,
+  .row-actions {
+    justify-content: flex-start;
   }
 
   .price-stepper {

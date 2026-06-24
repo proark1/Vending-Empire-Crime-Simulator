@@ -2,6 +2,7 @@ export type FactionId = "player" | "rival_redline" | string;
 export type ProductId = "soda" | "chips" | "energy" | "mystery_capsules";
 export type MachineUpgradeId = "reinforced_glass" | "smart_lock" | "security_camera" | "cashless_terminal" | "neon_sign" | "remote_monitor";
 export type MachineId = string;
+export type VehicleId = string;
 export type LocationId = string;
 export type DistrictId = string;
 
@@ -18,7 +19,7 @@ export interface StockCrate {
   productId: ProductId;
   quantity: number;
   capacity: number;
-  source: "supplier" | "garage";
+  source: "supplier" | "garage" | "vehicle";
 }
 
 export interface Product {
@@ -113,6 +114,7 @@ export interface District {
 
 export interface PlayerState {
   factionId: FactionId;
+  activeVehicleId: VehicleId;
   /**
    * Legacy free-form cargo bucket. New logistics uses carriedCrate and garageStorage,
    * but this remains for save migration and defensive compatibility.
@@ -122,6 +124,20 @@ export interface PlayerState {
   carriedCrate: StockCrate | null;
   garageStorage: Inventory;
   garageCapacity: number;
+}
+
+export interface RouteVehicle {
+  id: VehicleId;
+  name: string;
+  locationId: LocationId;
+  inventory: Inventory;
+  capacity: number;
+  security: number;
+  speed: number;
+}
+
+export interface RoutePlanState {
+  selectedTaskId: string | null;
 }
 
 export interface NpcController {
@@ -158,9 +174,11 @@ export interface GameState {
   districts: Record<DistrictId, District>;
   locations: Record<LocationId, Location>;
   machines: Record<MachineId, VendingMachine>;
+  vehicles: Record<VehicleId, RouteVehicle>;
   npcControllers: Record<FactionId, NpcController>;
   eventLog: GameEvent[];
   mission: MissionState;
+  routePlan: RoutePlanState;
 }
 
 export type GameCommand =
@@ -168,6 +186,11 @@ export type GameCommand =
   | { type: "buy_product"; actorId: FactionId; productId: ProductId; quantity: number }
   | { type: "deposit_crate"; actorId: FactionId }
   | { type: "load_crate"; actorId: FactionId; productId: ProductId; quantity: number }
+  | { type: "load_vehicle"; actorId: FactionId; vehicleId: VehicleId; productId: ProductId; quantity: number }
+  | { type: "unload_vehicle"; actorId: FactionId; vehicleId: VehicleId; productId: ProductId; quantity: number }
+  | { type: "take_vehicle_crate"; actorId: FactionId; vehicleId: VehicleId; productId: ProductId; quantity: number }
+  | { type: "dispatch_vehicle"; actorId: FactionId; vehicleId: VehicleId; locationId: LocationId }
+  | { type: "select_route_task"; actorId: FactionId; taskId: string | null }
   | { type: "stock_machine"; actorId: FactionId; machineId: MachineId; productId: ProductId; quantity: number }
   | { type: "collect_revenue"; actorId: FactionId; machineId: MachineId }
   | { type: "repair_machine"; actorId: FactionId; machineId: MachineId }

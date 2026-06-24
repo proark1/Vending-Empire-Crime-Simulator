@@ -1,5 +1,5 @@
 import type { CommandResult, FactionId, GameCommand, GameEvent, GameEventTone, GameState, MachineSlot, ProductId, VendingMachine } from "../core/types";
-import { cargoSpaceRemaining, garageStorageSpaceRemaining, inventoryUnits, machineAtLocation, missionProgress, ownedMachines } from "../core/selectors";
+import { cargoSpaceRemaining, garageStorageSpaceRemaining, inventoryUnits, machineAtLocation, missionProgress, ownedMachines, vehicleSpaceRemaining } from "../core/selectors";
 import { machineUpgrades } from "../content/machineUpgrades";
 import { machineHasUpgrade, sabotageDamage } from "../core/machineStats";
 import { runMachineSales } from "./economy";
@@ -96,6 +96,16 @@ function createMachine(state: GameState, ownerFactionId: FactionId, locationId: 
 
 function clampSlotPrice(price: number): number {
   return Math.max(1, Math.min(99, Math.round(price)));
+}
+
+function travelHoursBetweenLocations(state: GameState, fromLocationId: string, toLocationId: string, speed: number): number {
+  const from = state.locations[fromLocationId];
+  const to = state.locations[toLocationId];
+  if (!from || !to) {
+    return 0;
+  }
+
+  return Math.max(0.08, Math.hypot(from.position.x - to.position.x, from.position.z - to.position.z) * 0.018 / Math.max(0.4, speed));
 }
 
 function maybeCompleteMission(state: GameState, events: GameEvent[]): void {
@@ -235,6 +245,136 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
         source: "garage"
       };
       log(state, events, `Loaded ${quantity}x ${product.name} from garage storage.`, "good");
+      break;
+    }
+
+    case "load_vehicle": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      const vehicle = state.vehicles[command.vehicleId];
+      const product = state.products[command.productId];
+      if (!vehicle || !product) {
+        break;
+      }
+
+      if (vehicle.locationId !== "garage") {
+        log(state, events, `${vehicle.name} needs to be at the garage to load stock.`, "warning");
+        break;
+      }
+
+      const available = state.player.garageStorage?.[product.id] ?? 0;
+      const capacityLimited = Math.floor(vehicleSpaceRemaining(state, vehicle) / product.size);
+      const quantity = Math.max(0, Math.min(command.quantity, available, capacityLimited));
+      if (quantity <= 0) {
+        log(state, events, `No room or ${product.name} stock for ${vehicle.name}.`, "warning");
+        break;
+      }
+
+      removeInventory(state.player.garageStorage, product.id, quantity);
+      addInventory(vehicle.inventory, product.id, quantity);
+      log(state, events, `Loaded ${quantity}x ${product.name} into ${vehicle.name}.`, "good");
+      break;
+    }
+
+    case "unload_vehicle": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      const vehicle = state.vehicles[command.vehicleId];
+      const product = state.products[command.productId];
+      if (!vehicle || !product) {
+        break;
+      }
+
+      if (vehicle.locationId !== "garage") {
+        log(state, events, `${vehicle.name} needs to be at the garage to unload stock.`, "warning");
+        break;
+      }
+
+      const available = vehicle.inventory[product.id] ?? 0;
+      const capacityLimited = Math.floor(garageStorageSpaceRemaining(state) / product.size);
+      const quantity = Math.max(0, Math.min(command.quantity, available, capacityLimited));
+      if (quantity <= 0) {
+        log(state, events, `No ${product.name} stock to unload or garage storage is full.`, "warning");
+        break;
+      }
+
+      removeInventory(vehicle.inventory, product.id, quantity);
+      addInventory(state.player.garageStorage, product.id, quantity);
+      log(state, events, `Unloaded ${quantity}x ${product.name} from ${vehicle.name}.`, "good");
+      break;
+    }
+
+    case "take_vehicle_crate": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      if (state.player.carriedCrate) {
+        log(state, events, "Hands are full. Load the current crate first.", "warning");
+        break;
+      }
+
+      const vehicle = state.vehicles[command.vehicleId];
+      const product = state.products[command.productId];
+      if (!vehicle || !product) {
+        break;
+      }
+
+      const available = vehicle.inventory[product.id] ?? 0;
+      const capacityLimited = Math.floor(cargoSpaceRemaining(state) / product.size);
+      const quantity = Math.max(0, Math.min(command.quantity, available, capacityLimited));
+      if (quantity <= 0) {
+        log(state, events, `${vehicle.name} has no ${product.name} crate ready.`, "warning");
+        break;
+      }
+
+      removeInventory(vehicle.inventory, product.id, quantity);
+      state.player.carriedCrate = {
+        productId: product.id,
+        quantity,
+        capacity: Math.floor(state.player.cargoCapacity / product.size),
+        source: "vehicle"
+      };
+      log(state, events, `Pulled ${quantity}x ${product.name} from ${vehicle.name}.`, "good");
+      break;
+    }
+
+    case "dispatch_vehicle": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      const vehicle = state.vehicles[command.vehicleId];
+      const location = state.locations[command.locationId];
+      if (!vehicle || !location) {
+        break;
+      }
+
+      if (vehicle.locationId === location.id) {
+        log(state, events, `${vehicle.name} is already at ${location.name}.`, "neutral");
+        break;
+      }
+
+      const travelHours = travelHoursBetweenLocations(state, vehicle.locationId, location.id, vehicle.speed);
+      applyAdvanceTime(state, events, travelHours);
+      vehicle.locationId = location.id;
+      log(state, events, `${vehicle.name} moved to ${location.name}.`, "good");
+      break;
+    }
+
+    case "select_route_task": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      state.routePlan.selectedTaskId = command.taskId;
+      if (command.taskId) {
+        log(state, events, "Route stop selected.", "neutral");
+      }
       break;
     }
 

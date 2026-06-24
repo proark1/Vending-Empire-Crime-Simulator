@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import type { GameState, Location, MachineUpgradeId, ProductId, StockCrate } from "../../game/core/types";
-import { garageStorageUnits, machineAtLocation, machineRoutePressure } from "../../game/core/selectors";
+import { activeVehicle, garageStorageUnits, machineAtLocation, machineRoutePressure } from "../../game/core/selectors";
 import type { SceneTarget } from "./SceneTargets";
 import { createAsphaltMaterial, createAtmosphere, createBuilding, createRoadMaterial, createSidewalkMaterial, createSkyDome, createStreetProps } from "./proceduralArt";
 
@@ -305,6 +305,52 @@ function createRoutePressureRing(tone: "good" | "warning" | "danger"): THREE.Gro
   return group;
 }
 
+function createVehicleMesh(): THREE.Group {
+  const group = new THREE.Group();
+  const bodyMaterial = new THREE.MeshStandardMaterial({ color: "#d9f99d", roughness: 0.48, metalness: 0.08 });
+  const trimMaterial = new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.42, metalness: 0.12 });
+  const glassMaterial = new THREE.MeshPhysicalMaterial({ color: "#bae6fd", roughness: 0.08, transparent: true, opacity: 0.72 });
+
+  const body = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.58, 0.78), bodyMaterial);
+  body.position.y = 0.48;
+  body.castShadow = true;
+  body.receiveShadow = true;
+  group.add(body);
+
+  const cab = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.48, 0.72), bodyMaterial);
+  cab.position.set(-0.45, 0.92, 0);
+  cab.castShadow = true;
+  cab.receiveShadow = true;
+  group.add(cab);
+
+  const windshield = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.28, 0.54), glassMaterial);
+  windshield.position.set(-0.76, 0.96, 0);
+  group.add(windshield);
+
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(1.18, 0.08, 0.03), new THREE.MeshBasicMaterial({ color: "#2dd4bf" }));
+  stripe.position.set(0.05, 0.57, -0.405);
+  group.add(stripe);
+
+  for (const x of [-0.46, 0.48]) {
+    for (const z of [-0.43, 0.43]) {
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.09, 20), trimMaterial);
+      wheel.position.set(x, 0.2, z);
+      wheel.rotation.x = Math.PI / 2;
+      wheel.castShadow = true;
+      group.add(wheel);
+    }
+  }
+
+  const headlightMaterial = new THREE.MeshBasicMaterial({ color: "#fde68a" });
+  for (const z of [-0.24, 0.24]) {
+    const light = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.08, 0.13), headlightMaterial);
+    light.position.set(-1.14, 0.52, z);
+    group.add(light);
+  }
+
+  return group;
+}
+
 function addMarker(color: string): THREE.Mesh {
   const marker = new THREE.Mesh(
     new THREE.CylinderGeometry(0.5, 0.5, 0.06, 28),
@@ -515,6 +561,29 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       addGuidanceBeacon("#a3e635", machinePlacement.position);
       interactables.push({ target: { type: "placement", id: location.id, label: location.name }, position: machinePlacement.position });
     }
+  }
+
+  const vehicle = activeVehicle(currentState);
+  const vehicleLocation = vehicle ? currentState.locations[vehicle.locationId] : undefined;
+  if (vehicle && vehicleLocation) {
+    const vehiclePosition = new THREE.Vector3(vehicleLocation.position.x + 1.15, 0, vehicleLocation.position.z + 0.88);
+    const vehicleGroup = createVehicleMesh();
+    vehicleGroup.position.copy(vehiclePosition);
+    vehicleGroup.rotation.y = vehicleLocation.id === "garage" || vehicleLocation.position.z > 0 ? -Math.PI / 2 : Math.PI / 2;
+    group.add(vehicleGroup);
+
+    const loadedProductIds = Object.entries(vehicle.inventory)
+      .filter(([, quantity]) => quantity > 0)
+      .map(([productId]) => productId as ProductId);
+    if (loadedProductIds.length > 0) {
+      const trunkStack = createCrateStack(loadedProductIds);
+      trunkStack.position.set(vehiclePosition.x + 0.15, 0.58, vehiclePosition.z);
+      trunkStack.scale.setScalar(0.58);
+      trunkStack.rotation.y = vehicleGroup.rotation.y;
+      group.add(trunkStack);
+    }
+
+    addLabel(group, vehicle.name, "#d9f99d", vehiclePosition, 1.65);
   }
 
   return interactables;

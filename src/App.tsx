@@ -8,6 +8,7 @@ import { Minimap } from "./ui/Minimap";
 import { MissionTracker } from "./ui/MissionTracker";
 import { GuidanceArrow } from "./ui/GuidanceArrow";
 import { getStarterMissionStep } from "./game/core/mission";
+import { selectedRouteTask } from "./game/core/selectors";
 import { executePrimaryInteraction, getPrimaryInteraction } from "./ui/interactionActions";
 import { useGame } from "./hooks/useGame";
 import { ToastStack, type ToastMessage } from "./ui/ToastStack";
@@ -24,6 +25,8 @@ export function App() {
   const activeTarget = entered ? target : null;
   const primaryInteraction = useMemo(() => getPrimaryInteraction(state, activeTarget), [activeTarget, state]);
   const missionStep = useMemo(() => getStarterMissionStep(state, playerPosition), [playerPosition, state]);
+  const routeTask = useMemo(() => selectedRouteTask(state), [state]);
+  const guidanceLocationId = routeTask?.locationId ?? missionStep.targetLocationId;
 
   const addToast = useCallback((toast: Omit<ToastMessage, "id">) => {
     const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -106,12 +109,12 @@ export function App() {
 
   return (
     <main className="game-shell">
-      <ThreeScene guidanceLocationId={missionStep.targetLocationId} state={state} onPlayerPositionChange={setPlayerPosition} onTargetChange={setTarget} />
+      <ThreeScene guidanceLocationId={guidanceLocationId} state={state} onPlayerPositionChange={setPlayerPosition} onTargetChange={setTarget} />
       <div className="world-vignette" aria-hidden="true" />
       <Hud state={state} />
       <MissionTracker state={state} playerPosition={playerPosition} />
       <div className="crosshair" aria-hidden="true" />
-      {entered && <GuidanceArrow state={state} playerPosition={playerPosition} step={missionStep} />}
+      {entered && <GuidanceArrow label={routeTask?.title} state={state} targetLocationId={guidanceLocationId} playerPosition={playerPosition} />}
       {entered && activeTarget && primaryInteraction && (
         <div className={`target-prompt ${primaryInteraction.disabled ? "disabled" : ""}`}>
           <span className="target-name">{activeTarget.label}</span>
@@ -128,8 +131,8 @@ export function App() {
           </button>
         </div>
       )}
-      <Dashboard state={state} />
-      <Minimap state={state} playerPosition={playerPosition} guidanceLocationId={missionStep.targetLocationId} target={activeTarget} />
+      <Dashboard state={state} onCommand={sendCommand} />
+      <Minimap state={state} playerPosition={playerPosition} guidanceLocationId={guidanceLocationId} target={activeTarget} />
       <InteractionPanel state={state} target={activeTarget} onCommand={sendCommand} onSave={save} onReload={reload} onRestart={handleRestart} />
       <ToastStack messages={toasts} />
     </main>

@@ -1,8 +1,19 @@
-import { Camera, CreditCard, HandCoins, Lightbulb, Lock, Minus, PackagePlus, Plus, RadioTower, RotateCcw, Save, Shield, ShoppingCart, Sparkles, Wrench, Zap } from "lucide-react";
+import { Camera, CreditCard, HandCoins, Lightbulb, Lock, Minus, PackagePlus, Plus, RadioTower, RotateCcw, Save, Shield, ShoppingCart, Sparkles, Truck, Wrench, Zap } from "lucide-react";
 import type { GameCommand, GameState, MachineUpgradeId } from "../game/core/types";
 import { machineUpgradeList } from "../game/content/machineUpgrades";
 import { effectiveMachineSecurity, effectiveMachineVisibility, getMachineUpgradeEffects, machineHasUpgrade, priceDemandMultiplier } from "../game/core/machineStats";
-import { cargoSpaceRemaining, carriedCrateUnits, garageStorageSpaceRemaining, garageStorageUnits, machineAtLocation, machineRoutePressure, machineStockUnits } from "../game/core/selectors";
+import {
+  activeVehicle,
+  cargoSpaceRemaining,
+  carriedCrateUnits,
+  garageStorageSpaceRemaining,
+  garageStorageUnits,
+  machineAtLocation,
+  machineRoutePressure,
+  machineStockUnits,
+  vehicleInventoryUnits,
+  vehicleSpaceRemaining
+} from "../game/core/selectors";
 import { estimateMachineSalesPerHour } from "../game/systems/economy";
 import type { SceneTarget } from "../render/three/SceneTargets";
 import { getPrimaryInteraction } from "./interactionActions";
@@ -84,6 +95,7 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
     const crate = state.player.carriedCrate;
     const storageUsed = garageStorageUnits(state);
     const storageRemaining = garageStorageSpaceRemaining(state);
+    const vehicle = activeVehicle(state);
 
     return (
       <section className="interaction-panel">
@@ -141,6 +153,69 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
             })}
           </div>
         </div>
+        {vehicle && (
+          <div className="machine-section">
+            <div className="section-title">
+              <Truck size={16} aria-hidden="true" />
+              <span>{vehicle.name}</span>
+              <em>
+                {vehicleInventoryUnits(state, vehicle)}/{vehicle.capacity}
+              </em>
+            </div>
+            <p className="empty-note">
+              Parked at {state.locations[vehicle.locationId]?.name ?? "unknown stop"} · {vehicleSpaceRemaining(state, vehicle)} trunk space open
+            </p>
+            <div className="storage-list">
+              {Object.values(state.products).map((product) => {
+                const stored = state.player.garageStorage[product.id] ?? 0;
+                const inVehicle = vehicle.inventory[product.id] ?? 0;
+                const loadQuantity = Math.min(stored, Math.floor(vehicleSpaceRemaining(state, vehicle) / product.size), 12);
+                return (
+                  <article className="inventory-row" key={product.id}>
+                    <div>
+                      <h3>{product.name}</h3>
+                      <p>
+                        Garage {stored} · Van {inVehicle}
+                      </p>
+                    </div>
+                    <div className="row-actions">
+                      <ActionButton
+                        disabled={vehicle.locationId !== "garage" || loadQuantity <= 0}
+                        icon={<PackagePlus size={17} aria-hidden="true" />}
+                        onClick={() =>
+                          onCommand({
+                            type: "load_vehicle",
+                            actorId: state.playerFactionId,
+                            vehicleId: vehicle.id,
+                            productId: product.id,
+                            quantity: loadQuantity
+                          })
+                        }
+                      >
+                        Load {loadQuantity || 0}
+                      </ActionButton>
+                      <ActionButton
+                        disabled={vehicle.locationId !== "garage" || inVehicle <= 0}
+                        icon={<PackagePlus size={17} aria-hidden="true" />}
+                        onClick={() =>
+                          onCommand({
+                            type: "unload_vehicle",
+                            actorId: state.playerFactionId,
+                            vehicleId: vehicle.id,
+                            productId: product.id,
+                            quantity: inVehicle
+                          })
+                        }
+                      >
+                        Unload
+                      </ActionButton>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </div>
+        )}
         <div className="action-grid">
           <ActionButton icon={<Save size={17} aria-hidden="true" />} onClick={onSave}>
             Save
@@ -234,6 +309,8 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
   const pressure = machineRoutePressure(state, machine);
   const carriedCrate = state.player.carriedCrate;
   const carriedProduct = carriedCrate ? state.products[carriedCrate.productId] : null;
+  const vehicle = activeVehicle(state);
+  const vehicleAtMachine = vehicle?.locationId === machine.locationId;
 
   return (
     <section className="interaction-panel">
@@ -298,6 +375,44 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
               <span className="action-note">No crate carried</span>
             )}
           </div>
+
+          {!carriedCrate && vehicle && (
+            <div className="machine-section">
+              <div className="section-title">
+                <Truck size={16} aria-hidden="true" />
+                <span>{vehicle.name}</span>
+                <em>{vehicleAtMachine ? "At stop" : "Away"}</em>
+              </div>
+              {vehicleAtMachine ? (
+                <div className="action-grid">
+                  {Object.values(state.products).map((product) => {
+                    const available = vehicle.inventory[product.id] ?? 0;
+                    const quantity = Math.min(available, Math.floor(state.player.cargoCapacity / product.size));
+                    return (
+                      <ActionButton
+                        disabled={quantity <= 0}
+                        icon={<PackagePlus size={17} aria-hidden="true" />}
+                        key={product.id}
+                        onClick={() =>
+                          onCommand({
+                            type: "take_vehicle_crate",
+                            actorId: state.playerFactionId,
+                            vehicleId: vehicle.id,
+                            productId: product.id,
+                            quantity
+                          })
+                        }
+                      >
+                        Carry {product.name} {quantity || 0}
+                      </ActionButton>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="empty-note">Van parked at {state.locations[vehicle.locationId]?.name ?? "another stop"}.</p>
+              )}
+            </div>
+          )}
 
           {pressure.reasons.length > 0 && (
             <div className={`route-pressure ${pressure.tone}`}>

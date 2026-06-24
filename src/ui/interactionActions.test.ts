@@ -48,6 +48,22 @@ describe("primary interactions", () => {
     }
   });
 
+  it("uses nearby van stock as a machine primary action when hands are free", () => {
+    const state = reduceCommands(createInitialState(), [
+      { type: "buy_product", actorId: "player", productId: "soda", quantity: 10 },
+      { type: "deposit_crate", actorId: "player" },
+      { type: "load_vehicle", actorId: "player", vehicleId: "vehicle_starter_van", productId: "soda", quantity: 10 },
+      { type: "dispatch_vehicle", actorId: "player", vehicleId: "vehicle_starter_van", locationId: "laundromat" }
+    ]).state;
+    const action = getPrimaryInteraction(state, { type: "machine", id: "machine_player_1", label: "Rusty Starter" });
+
+    expect(action?.kind).toBe("command");
+    expect(action?.label).toBe("Carry Corner Soda from van");
+    if (action?.kind === "command") {
+      expect(action.command.type).toBe("take_vehicle_crate");
+    }
+  });
+
   it("uses sabotage as the rival machine primary action", () => {
     const state = createInitialState();
     const action = getPrimaryInteraction(state, { type: "machine", id: "machine_rival_1", label: "Redline Basic" });

@@ -1,20 +1,45 @@
-import { AlertTriangle, Boxes, ClipboardList, Map, Package, ShieldAlert } from "lucide-react";
+import { AlertTriangle, Boxes, ClipboardList, Map, Navigation, Package, Route, ShieldAlert, Truck } from "lucide-react";
 import { useMemo, useState } from "react";
-import type { GameState } from "../game/core/types";
+import type { GameCommand, GameState } from "../game/core/types";
 import { getMachineUpgradeEffects } from "../game/core/machineStats";
-import { carriedCrateUnits, formatClock, garageStorageUnits, getMachineLocation, machineRoutePressure, machineStockUnits, ownedMachines } from "../game/core/selectors";
+import {
+  activeVehicle,
+  carriedCrateUnits,
+  formatClock,
+  garageStorageUnits,
+  getMachineLocation,
+  machineRoutePressure,
+  machineStockUnits,
+  ownedMachines,
+  routeTasks,
+  selectedRouteTask,
+  vehicleInventoryUnits,
+  vehicleSpaceRemaining
+} from "../game/core/selectors";
 import { estimateMachineSalesPerHour } from "../game/systems/economy";
 
-type DashboardTab = "machines" | "logistics" | "rival" | "log";
+type DashboardTab = "machines" | "route" | "logistics" | "rival" | "log";
 
 interface DashboardProps {
   state: GameState;
+  onCommand: (command: GameCommand) => void;
 }
 
-export function Dashboard({ state }: DashboardProps) {
+function MiniButton({ children, disabled, onClick }: { children: React.ReactNode; disabled?: boolean; onClick: () => void }) {
+  return (
+    <button className="mini-button" disabled={disabled} onClick={onClick} type="button">
+      {children}
+    </button>
+  );
+}
+
+export function Dashboard({ state, onCommand }: DashboardProps) {
   const [tab, setTab] = useState<DashboardTab>("machines");
   const playerMachines = useMemo(() => ownedMachines(state, state.playerFactionId), [state]);
   const rival = state.factions.rival_redline;
+  const vehicle = activeVehicle(state);
+  const tasks = useMemo(() => routeTasks(state), [state]);
+  const selectedTask = selectedRouteTask(state);
 
   return (
     <aside className="dashboard">
@@ -22,6 +47,10 @@ export function Dashboard({ state }: DashboardProps) {
         <button className={tab === "machines" ? "tab active" : "tab"} onClick={() => setTab("machines")} type="button">
           <Map size={16} aria-hidden="true" />
           Machines
+        </button>
+        <button className={tab === "route" ? "tab active" : "tab"} onClick={() => setTab("route")} type="button">
+          <Route size={16} aria-hidden="true" />
+          Route
         </button>
         <button className={tab === "logistics" ? "tab active" : "tab"} onClick={() => setTab("logistics")} type="button">
           <Boxes size={16} aria-hidden="true" />
@@ -63,6 +92,79 @@ export function Dashboard({ state }: DashboardProps) {
               </article>
             );
           })}
+        </div>
+      )}
+
+      {tab === "route" && (
+        <div className="panel-list">
+          {vehicle && (
+            <article className="vehicle-card">
+              <div className="vehicle-heading">
+                <Truck size={18} aria-hidden="true" />
+                <div>
+                  <h3>{vehicle.name}</h3>
+                  <p>
+                    Parked at {state.locations[vehicle.locationId]?.name ?? "unknown stop"} · {vehicleInventoryUnits(state, vehicle)}/{vehicle.capacity} trunk
+                  </p>
+                </div>
+              </div>
+              <div className="vehicle-meter">
+                <span style={{ width: `${Math.min(100, (vehicleInventoryUnits(state, vehicle) / vehicle.capacity) * 100)}%` }} />
+              </div>
+              <p className="vehicle-note">{vehicleSpaceRemaining(state, vehicle)} trunk space open</p>
+            </article>
+          )}
+
+          {selectedTask && (
+            <article className={`route-task selected ${selectedTask.tone}`}>
+              <div>
+                <h3>{selectedTask.title}</h3>
+                <p>{selectedTask.detail}</p>
+              </div>
+              <strong>Guiding</strong>
+            </article>
+          )}
+
+          {tasks.length === 0 ? (
+            <article className="inventory-row">
+              <div>
+                <h3>Route clear</h3>
+                <p>No urgent stops need planning right now.</p>
+              </div>
+              <strong>0</strong>
+            </article>
+          ) : (
+            tasks.map((task) => {
+              const location = state.locations[task.locationId];
+              const isSelected = state.routePlan.selectedTaskId === task.id;
+              const vehicleAtStop = vehicle?.locationId === task.locationId;
+              return (
+                <article className={`route-task ${task.tone} ${isSelected ? "selected" : ""}`} key={task.id}>
+                  <div>
+                    <h3>{task.title}</h3>
+                    <p>
+                      {location?.name ?? "Unknown stop"} · {task.detail}
+                    </p>
+                  </div>
+                  <div className="route-actions">
+                    <MiniButton onClick={() => onCommand({ type: "select_route_task", actorId: state.playerFactionId, taskId: isSelected ? null : task.id })}>
+                      <Navigation size={13} aria-hidden="true" />
+                      {isSelected ? "Clear" : "Guide"}
+                    </MiniButton>
+                    {vehicle && (
+                      <MiniButton
+                        disabled={vehicleAtStop}
+                        onClick={() => onCommand({ type: "dispatch_vehicle", actorId: state.playerFactionId, vehicleId: vehicle.id, locationId: task.locationId })}
+                      >
+                        <Truck size={13} aria-hidden="true" />
+                        {vehicleAtStop ? "Here" : "Drive"}
+                      </MiniButton>
+                    )}
+                  </div>
+                </article>
+              );
+            })
+          )}
         </div>
       )}
 

@@ -1,5 +1,5 @@
 import type { GameCommand, GameState, ProductId } from "../game/core/types";
-import { cargoSpaceRemaining, firstGarageStorageProduct, inventoryUnits, machineAtLocation } from "../game/core/selectors";
+import { activeVehicle, cargoSpaceRemaining, firstGarageStorageProduct, firstVehicleProduct, inventoryUnits, machineAtLocation } from "../game/core/selectors";
 import type { SceneTarget } from "../render/three/SceneTargets";
 
 export type PrimaryInteraction =
@@ -154,6 +154,23 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
         machineId: machine.id,
         productId: carriedProduct.productId,
         quantity: carriedProduct.quantity
+      }
+    };
+  }
+
+  const vehicle = activeVehicle(state);
+  const vehicleProduct = vehicle?.locationId === machine.locationId ? firstVehicleProduct(state, vehicle) : undefined;
+  if (vehicleProduct) {
+    const product = state.products[vehicleProduct.productId];
+    return {
+      kind: "command",
+      label: `Carry ${product.name} from van`,
+      command: {
+        type: "take_vehicle_crate",
+        actorId,
+        vehicleId: vehicle!.id,
+        productId: product.id,
+        quantity: Math.min(vehicleProduct.quantity, Math.floor(state.player.cargoCapacity / product.size))
       }
     };
   }

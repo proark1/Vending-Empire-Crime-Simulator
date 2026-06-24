@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createInitialState } from "../content/initialState";
+import { routeTasks, selectedRouteTask } from "../core/selectors";
 import { reduceCommands, reduceGameState } from "./reducer";
 
 describe("game reducer", () => {
@@ -34,6 +35,41 @@ describe("game reducer", () => {
 
     expect(state.player.garageStorage.soda).toBe(4);
     expect(state.player.carriedCrate).toMatchObject({ productId: "soda", quantity: 6, source: "garage" });
+  });
+
+  it("loads garage stock into the starter vehicle", () => {
+    const state = reduceCommands(createInitialState(), [
+      { type: "buy_product", actorId: "player", productId: "soda", quantity: 10 },
+      { type: "deposit_crate", actorId: "player" },
+      { type: "load_vehicle", actorId: "player", vehicleId: "vehicle_starter_van", productId: "soda", quantity: 8 }
+    ]).state;
+
+    expect(state.player.garageStorage.soda).toBe(2);
+    expect(state.vehicles.vehicle_starter_van.inventory.soda).toBe(8);
+  });
+
+  it("dispatches the vehicle and lets the player take a crate from the trunk", () => {
+    const state = reduceCommands(createInitialState(), [
+      { type: "buy_product", actorId: "player", productId: "soda", quantity: 10 },
+      { type: "deposit_crate", actorId: "player" },
+      { type: "load_vehicle", actorId: "player", vehicleId: "vehicle_starter_van", productId: "soda", quantity: 10 },
+      { type: "dispatch_vehicle", actorId: "player", vehicleId: "vehicle_starter_van", locationId: "laundromat" },
+      { type: "take_vehicle_crate", actorId: "player", vehicleId: "vehicle_starter_van", productId: "soda", quantity: 6 }
+    ]).state;
+
+    expect(state.vehicles.vehicle_starter_van.locationId).toBe("laundromat");
+    expect(state.vehicles.vehicle_starter_van.inventory.soda).toBe(4);
+    expect(state.player.carriedCrate).toMatchObject({ productId: "soda", quantity: 6, source: "vehicle" });
+    expect(state.worldTimeHours).toBeGreaterThan(8);
+  });
+
+  it("selects a derived route task for guidance", () => {
+    const initial = createInitialState();
+    const stockTask = routeTasks(initial).find((task) => task.id === "machine:machine_player_1:stock");
+    expect(stockTask).toBeDefined();
+
+    const state = reduceGameState(initial, { type: "select_route_task", actorId: "player", taskId: stockTask!.id }).state;
+    expect(selectedRouteTask(state)?.id).toBe(stockTask!.id);
   });
 
   it("stores revenue over time and lets the player collect it", () => {

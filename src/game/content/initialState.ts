@@ -1,4 +1,4 @@
-import type { District, Faction, GameState, Location, VendingMachine } from "../core/types";
+import type { District, Faction, GameState, Location, RouteVehicle, VendingMachine } from "../core/types";
 import { products } from "./products";
 
 const starterDistrict: District = {
@@ -168,6 +168,16 @@ const rivalMachine: VendingMachine = {
   upgrades: ["smart_lock"]
 };
 
+const starterVehicle: RouteVehicle = {
+  id: "vehicle_starter_van",
+  name: "Primer Van",
+  locationId: "garage",
+  inventory: {},
+  capacity: 36,
+  security: 0.15,
+  speed: 1
+};
+
 export function createInitialState(): GameState {
   return {
     version: 1,
@@ -177,6 +187,7 @@ export function createInitialState(): GameState {
     playerFactionId: "player",
     player: {
       factionId: "player",
+      activeVehicleId: starterVehicle.id,
       cargo: {},
       cargoCapacity: 12,
       carriedCrate: null,
@@ -192,6 +203,9 @@ export function createInitialState(): GameState {
     machines: {
       [playerMachine.id]: playerMachine,
       [rivalMachine.id]: rivalMachine
+    },
+    vehicles: {
+      [starterVehicle.id]: starterVehicle
     },
     npcControllers: {
       rival_redline: {
@@ -213,6 +227,9 @@ export function createInitialState(): GameState {
       id: "starter_takeover",
       title: "Control three profitable machines in Cinderblock Row",
       completed: false
+    },
+    routePlan: {
+      selectedTaskId: null
     }
   };
 }
