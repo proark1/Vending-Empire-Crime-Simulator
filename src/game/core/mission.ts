@@ -1,6 +1,7 @@
 import type { GameState, LocationId, Vec2 } from "./types";
 import {
   carriedCrateUnits,
+  districtUnlockInfo,
   garageStorageUnits,
   installableLocation,
   isDistrictUnlockedForPlacement,
@@ -20,6 +21,10 @@ export type MissionStepId =
   | "collect_cash"
   | "install_second"
   | "install_third"
+  | "scout_industrial"
+  | "open_industrial"
+  | "earn_expansion_cash"
+  | "install_industrial"
   | "stabilize"
   | "completed";
 
@@ -70,6 +75,16 @@ function hasAffordableOpenPlacement(state: GameState): boolean {
     .some((location) => placementCostForLocation(state, location) <= playerMoney);
 }
 
+function playerOwnsMachineInDistrict(state: GameState, districtId: string): boolean {
+  return ownedMachines(state, state.playerFactionId).some((machine) => state.locations[machine.locationId]?.districtId === districtId);
+}
+
+function highestStoredRevenueLocation(state: GameState): LocationId | undefined {
+  return ownedMachines(state, state.playerFactionId)
+    .slice()
+    .sort((a, b) => b.revenueStored - a.revenueStored)[0]?.locationId;
+}
+
 export function getStarterMissionStep(state: GameState, playerPosition: Vec2): MissionStep {
   const firstMachine = state.machines.machine_player_1;
   const playerMachines = ownedMachines(state, state.playerFactionId);
@@ -79,14 +94,91 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
   const starterStock = firstMachine.slots.reduce((sum, slot) => sum + slot.quantity, 0);
   const starterHasEverBeenStocked = firstMachine.slots.length > 0;
   const progress = missionProgress(state);
+  const industrialInfo = districtUnlockInfo(state, "industrial_yards");
+  const freightDepot = state.locations.freight_depot;
+  const freightCost = freightDepot ? placementCostForLocation(state, freightDepot) : 0;
+  const playerMoney = state.factions[state.playerFactionId].money;
+
+  if (state.mission.completed && industrialInfo.progress.access === "locked") {
+    return {
+      id: "scout_industrial",
+      title: "Scout Iron Yard",
+      objective: "Map Iron Yard and prepare the first expansion route.",
+      guidance: "Follow the orange ping to Freight Depot and press E to scout the district.",
+      targetLocationId: "freight_depot",
+      progressLabel: "Expansion step 1 / 3",
+      progressRatio: 0.82
+    };
+  }
+
+  if (state.mission.completed && industrialInfo.progress.access === "scouted" && industrialInfo.unmetRequirements.length > 0) {
+    return {
+      id: "open_industrial",
+      title: "Build leverage",
+      objective: `Finish Iron Yard requirements: ${industrialInfo.unmetRequirements.join(", ")}.`,
+      guidance: "Complete route promises and keep starter machines running until Iron Yard is ready.",
+      targetLocationId: highestStoredRevenueLocation(state) ?? firstMachine.locationId,
+      progressLabel: "Expansion requirements",
+      progressRatio: 0.86
+    };
+  }
+
+  if (state.mission.completed && industrialInfo.progress.access === "scouted") {
+    const district = state.districts.industrial_yards;
+    if (district && playerMoney < district.unlockCost) {
+      return {
+        id: "earn_expansion_cash",
+        title: "Raise opening cash",
+        objective: `Save $${district.unlockCost} to open Iron Yard.`,
+        guidance: "Collect stored cash, complete active jobs, then return to Freight Depot.",
+        targetLocationId: highestStoredRevenueLocation(state) ?? firstMachine.locationId,
+        progressLabel: `$${Math.round(playerMoney)} / $${district.unlockCost}`,
+        progressRatio: Math.min(0.9, 0.86 + playerMoney / Math.max(1, district.unlockCost) * 0.04)
+      };
+    }
+
+    return {
+      id: "open_industrial",
+      title: "Open Iron Yard",
+      objective: "Pay the local setup cost and unlock Iron Yard pads.",
+      guidance: "Face the Freight Depot pad and press E to open the district.",
+      targetLocationId: "freight_depot",
+      progressLabel: "Expansion step 2 / 3",
+      progressRatio: 0.9
+    };
+  }
+
+  if (state.mission.completed && !playerOwnsMachineInDistrict(state, "industrial_yards")) {
+    if (freightDepot && playerMoney < freightCost) {
+      return {
+        id: "earn_expansion_cash",
+        title: "Fund the first yard unit",
+        objective: `Save $${freightCost} to place the first Iron Yard machine.`,
+        guidance: "Collect from starter machines, then return to the Freight Depot pad.",
+        targetLocationId: highestStoredRevenueLocation(state) ?? firstMachine.locationId,
+        progressLabel: `$${Math.round(playerMoney)} / $${freightCost}`,
+        progressRatio: Math.min(0.95, 0.9 + playerMoney / Math.max(1, freightCost) * 0.05)
+      };
+    }
+
+    return {
+      id: "install_industrial",
+      title: "Plant the first yard unit",
+      objective: "Install a machine in Iron Yard.",
+      guidance: "Use the Freight Depot placement pad to establish the new route.",
+      targetLocationId: "freight_depot",
+      progressLabel: "Expansion step 3 / 3",
+      progressRatio: 0.95
+    };
+  }
 
   if (state.mission.completed) {
     return {
       id: "completed",
-      title: "District claimed",
-      objective: "Cinderblock Row is yours.",
-      guidance: "Keep machines stocked and watch for Redline retaliation.",
-      progressLabel: "Starter district complete",
+      title: "Iron Yard foothold",
+      objective: "The first expansion route is active.",
+      guidance: "Keep machines stocked and watch for Redline retaliation across both districts.",
+      progressLabel: "Expansion route online",
       progressRatio: 1
     };
   }

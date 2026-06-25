@@ -2,6 +2,7 @@ import type { GameCommand, GameState, ProductId } from "../game/core/types";
 import {
   activeVehicle,
   cargoSpaceRemaining,
+  districtUnlockInfo,
   firstGarageStorageProduct,
   firstVehicleProduct,
   inventoryUnits,
@@ -119,12 +120,32 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
   if (target.type === "placement") {
     const location = state.locations[target.id];
     const occupied = Boolean(machineAtLocation(state, target.id));
+    const district = state.districts[location.districtId];
+    const districtInfo = districtUnlockInfo(state, location.districtId);
     const unlocked = isDistrictUnlockedForPlacement(state, location.districtId);
     const placementCost = placementCostForLocation(state, location);
+    if (!unlocked) {
+      if (districtInfo.progress.access === "locked") {
+        return {
+          kind: "command",
+          label: district ? `Scout ${district.name}` : "Scout district",
+          disabled: !districtInfo.canScout,
+          command: { type: "scout_district", actorId, districtId: location.districtId }
+        };
+      }
+
+      return {
+        kind: "command",
+        label: districtInfo.canUnlock && district ? `Open ${district.name}` : "Requirements unmet",
+        disabled: !districtInfo.canUnlock,
+        command: { type: "unlock_district", actorId, districtId: location.districtId }
+      };
+    }
+
     return {
       kind: "command",
-      label: unlocked ? "Install machine" : "District locked",
-      disabled: !unlocked || occupied || player.money < placementCost,
+      label: "Install machine",
+      disabled: occupied || player.money < placementCost,
       command: { type: "place_machine", actorId, locationId: location.id }
     };
   }

@@ -28,8 +28,8 @@ function migrateGameState(parsed: GameState): GameState {
     }).map(([districtId, district]) => [
       districtId,
       {
-        ...(baseline.districts[districtId] ?? {}),
-        ...district
+        ...district,
+        ...(baseline.districts[districtId] ?? {})
       }
     ])
   );
@@ -68,10 +68,19 @@ function migrateGameState(parsed: GameState): GameState {
     },
     districts,
     districtProgress,
-    locations: {
-      ...baseline.locations,
-      ...parsed.locations
-    },
+    locations: Object.fromEntries(
+      Object.entries({
+        ...baseline.locations,
+        ...(parsed.locations ?? {})
+      }).map(([locationId, location]) => [
+        locationId,
+        {
+          ...location,
+          ...(baseline.locations[locationId] ?? {}),
+          rivalPressure: location.rivalPressure ?? baseline.locations[locationId]?.rivalPressure ?? 0
+        }
+      ])
+    ),
     factions: {
       ...baseline.factions,
       ...parsed.factions

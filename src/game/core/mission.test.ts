@@ -85,4 +85,55 @@ describe("starter mission flow", () => {
     expect(step.targetLocationId).toBe("gym");
     expect(state.factions.player.money).toBeGreaterThanOrEqual(state.locations.gym.placementCost);
   });
+
+  it("guides a claimed starter route toward scouting Iron Yard", () => {
+    const state = createInitialState();
+    state.mission.completed = true;
+
+    const step = getStarterMissionStep(state, startPosition);
+
+    expect(step.id).toBe("scout_industrial");
+    expect(step.targetLocationId).toBe("freight_depot");
+  });
+
+  it("guides scouted Iron Yard toward opening the district", () => {
+    const state = createInitialState();
+    state.mission.completed = true;
+    state.factions.player.money = 120;
+    state.progression.contractsCompletedTotal = 1;
+    state.factions.player.streetReputation = 1;
+    state.machines.machine_player_2 = {
+      ...state.machines.machine_player_1,
+      id: "machine_player_2",
+      name: "Second Starter",
+      locationId: "gym"
+    };
+    state.districtProgress.industrial_yards = {
+      access: "scouted",
+      districtId: "industrial_yards",
+      scoutedHour: state.worldTimeHours
+    };
+
+    const step = getStarterMissionStep(state, startPosition);
+
+    expect(step.id).toBe("open_industrial");
+    expect(step.targetLocationId).toBe("freight_depot");
+  });
+
+  it("guides unlocked Iron Yard toward the first district machine", () => {
+    const state = createInitialState();
+    state.mission.completed = true;
+    state.factions.player.money = 250;
+    state.districtProgress.industrial_yards = {
+      access: "unlocked",
+      districtId: "industrial_yards",
+      scoutedHour: state.worldTimeHours,
+      unlockedHour: state.worldTimeHours
+    };
+
+    const step = getStarterMissionStep(state, startPosition);
+
+    expect(step.id).toBe("install_industrial");
+    expect(step.targetLocationId).toBe("freight_depot");
+  });
 });

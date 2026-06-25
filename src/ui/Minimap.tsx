@@ -1,5 +1,5 @@
 import type { GameState, Vec2 } from "../game/core/types";
-import { activeVehicle, machineAtLocation } from "../game/core/selectors";
+import { activeVehicle, districtProgress, machineAtLocation } from "../game/core/selectors";
 import { worldBounds, worldRoads } from "../game/content/world";
 import type { SceneTarget } from "../render/three/SceneTargets";
 
@@ -33,6 +33,17 @@ function toMapRect(rect: { depth: number; width: number; x: number; z: number })
   };
 }
 
+function toDistrictRect(bounds: { maxX: number; maxZ: number; minX: number; minZ: number }): { height: number; width: number; x: number; y: number } {
+  const topLeft = toMapPoint({ x: bounds.minX, z: bounds.minZ });
+  const bottomRight = toMapPoint({ x: bounds.maxX, z: bounds.maxZ });
+  return {
+    x: topLeft.x,
+    y: topLeft.y,
+    width: Math.max(1, bottomRight.x - topLeft.x),
+    height: Math.max(1, bottomRight.y - topLeft.y)
+  };
+}
+
 export function Minimap({ state, playerPosition, guidanceLocationId, target }: MinimapProps) {
   const targetLocationId = target?.type === "placement" ? target.id : target?.type === "machine" ? state.machines[target.id]?.locationId : target?.id;
   const player = toMapPoint(playerPosition);
@@ -44,6 +55,11 @@ export function Minimap({ state, playerPosition, guidanceLocationId, target }: M
     <aside className="minimap" aria-label="District map">
       <svg viewBox="0 0 100 100" role="img" aria-label="District map">
         <rect className="map-ground" x="2" y="2" width="96" height="96" rx="5" />
+        {Object.values(state.districts).map((district) => {
+          const rect = toDistrictRect(district.bounds);
+          const access = districtProgress(state, district.id).access;
+          return <rect className={`map-district ${access}`} key={district.id} x={rect.x} y={rect.y} width={rect.width} height={rect.height} rx="2" />;
+        })}
         {worldRoads.map((road) => {
           const rect = toMapRect(road);
           return <rect className="map-road-area" key={road.id} x={rect.x} y={rect.y} width={rect.width} height={rect.height} rx="1.2" />;

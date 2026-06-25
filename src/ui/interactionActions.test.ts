@@ -89,15 +89,16 @@ describe("primary interactions", () => {
     }
   });
 
-  it("disables placement prompts in locked districts", () => {
+  it("offers scouting at locked district placement pads", () => {
     const state = createInitialState();
     state.factions.player.money = 1000;
     const action = getPrimaryInteraction(state, { type: "placement", id: "freight_depot", label: "Freight Depot Breakroom" });
 
     expect(action?.kind).toBe("command");
-    expect(action?.label).toBe("District locked");
+    expect(action?.label).toBe("Scout Iron Yard");
     if (action?.kind === "command") {
-      expect(action.disabled).toBe(true);
+      expect(action.disabled).toBe(false);
+      expect(action.command.type).toBe("scout_district");
     }
   });
 

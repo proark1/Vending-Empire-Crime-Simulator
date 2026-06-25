@@ -63,13 +63,13 @@ export const districts: Record<string, District> = {
     description: "Warehouse routes with safer cash flow, longer drives, and steady worker traffic.",
     bounds: { minX: -40, maxX: -18, minZ: -6, maxZ: 24 },
     heatTolerance: 48,
-    rentMultiplier: 1.18,
+    rentMultiplier: 1.12,
     requiredContractsCompleted: 1,
     requiredOwnedMachines: 2,
     requiredStreetReputation: 1,
-    scoutCost: 25,
+    scoutCost: 20,
     dominantTags: ["commuter", "gym", "utility"],
-    unlockCost: 90,
+    unlockCost: 70,
     visualTheme: "freight depots, loading bays, and sodium lamps"
   },
   downtown_loop: {
@@ -213,7 +213,7 @@ export const locations: Record<string, Location> = {
     safety: 0.62,
     policePresence: 0.2,
     rentCost: 24,
-    placementCost: 155,
+    placementCost: 135,
     rivalPressure: 0.28,
     demandTags: ["commuter", "utility"]
   },
@@ -227,7 +227,7 @@ export const locations: Record<string, Location> = {
     safety: 0.42,
     policePresence: 0.1,
     rentCost: 34,
-    placementCost: 185,
+    placementCost: 160,
     rivalPressure: 0.42,
     demandTags: ["gym", "night", "utility"]
   },
@@ -241,7 +241,7 @@ export const locations: Record<string, Location> = {
     safety: 0.5,
     policePresence: 0.16,
     rentCost: 26,
-    placementCost: 165,
+    placementCost: 145,
     rivalPressure: 0.34,
     demandTags: ["laundry", "commuter"]
   },

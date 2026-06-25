@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
-import type { GameState, GameEventTone, Location, MachineUpgradeId, ProductId, StockCrate, StreetActivity } from "../../game/core/types";
-import { activeVehicle, garageStorageUnits, machineAtLocation, machineRoutePressure } from "../../game/core/selectors";
+import type { DistrictAccess, GameState, GameEventTone, Location, MachineUpgradeId, ProductId, StockCrate, StreetActivity } from "../../game/core/types";
+import { activeVehicle, districtProgress, garageStorageUnits, machineAtLocation, machineRoutePressure } from "../../game/core/selectors";
 import { districtLabels, machinePlacementAnchors, worldBounds, worldBuildings, worldRoads, type WorldRoad } from "../../game/content/world";
 import type { SceneFeedbackEvent, SceneTarget } from "./SceneTargets";
 import { createAsphaltMaterial, createAtmosphere, createBuilding, createNpcCharacter, createRoadMaterial, createSidewalkMaterial, createSkyDome, createStreetProps } from "./proceduralArt";
@@ -1351,9 +1351,52 @@ function populateDebugOverlay(group: THREE.Group, currentState: GameState, inter
   }
 }
 
+function districtAccessColor(access: DistrictAccess): string {
+  if (access === "unlocked") {
+    return "#2dd4bf";
+  }
+
+  if (access === "scouted") {
+    return "#f59e0b";
+  }
+
+  return "#64748b";
+}
+
+function addDistrictAccessOverlays(group: THREE.Group, currentState: GameState): void {
+  for (const district of Object.values(currentState.districts)) {
+    const access = districtProgress(currentState, district.id).access;
+    const color = districtAccessColor(access);
+    const y = 0.16;
+    const points = [
+      new THREE.Vector3(district.bounds.minX, y, district.bounds.minZ),
+      new THREE.Vector3(district.bounds.maxX, y, district.bounds.minZ),
+      new THREE.Vector3(district.bounds.maxX, y, district.bounds.maxZ),
+      new THREE.Vector3(district.bounds.minX, y, district.bounds.maxZ),
+      new THREE.Vector3(district.bounds.minX, y, district.bounds.minZ)
+    ];
+    const line = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(points),
+      new THREE.LineBasicMaterial({ color, transparent: true, opacity: access === "unlocked" ? 0.28 : 0.74 })
+    );
+    group.add(line);
+
+    if (access !== "unlocked") {
+      addLabel(
+        group,
+        access === "scouted" ? "SCOUTED" : "LOCKED",
+        color,
+        new THREE.Vector3((district.bounds.minX + district.bounds.maxX) / 2, 0, (district.bounds.minZ + district.bounds.maxZ) / 2),
+        1.15
+      );
+    }
+  }
+}
+
 function populateDynamicObjects(group: THREE.Group, currentState: GameState, guidanceLocationId?: string): Interactable[] {
   clearGroup(group);
   const interactables: Interactable[] = [];
+  addDistrictAccessOverlays(group, currentState);
 
   for (const location of Object.values(currentState.locations)) {
     const position = new THREE.Vector3(location.position.x, 0, location.position.z);
@@ -1421,11 +1464,13 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       addGuidanceBeacon(owner?.color ?? "#94a3b8", machinePlacement.position);
       interactables.push({ radius: 1.15, target: { type: "machine", id: machine.id, label: machine.name }, position: servicePoint });
     } else {
-      const marker = addMarker("#a3e635");
+      const access = districtProgress(currentState, location.districtId).access;
+      const markerColor = access === "unlocked" ? "#a3e635" : districtAccessColor(access);
+      const marker = addMarker(markerColor);
       marker.position.copy(machinePlacement.position);
       group.add(marker);
-      addLabel(group, location.name, "#a3e635", machinePlacement.position, 1.1);
-      addGuidanceBeacon("#a3e635", machinePlacement.position);
+      addLabel(group, location.name, markerColor, machinePlacement.position, 1.1);
+      addGuidanceBeacon(markerColor, machinePlacement.position);
       interactables.push({ radius: 1.2, target: { type: "placement", id: location.id, label: location.name }, position: machinePlacement.position });
     }
   }

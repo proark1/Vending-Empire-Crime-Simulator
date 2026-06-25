@@ -283,6 +283,7 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
     const district = state.districts[location.districtId];
     const unlockInfo = districtUnlockInfo(state, location.districtId);
     const placementCost = placementCostForLocation(state, location);
+    const unmetRequirements = unlockInfo.unmetRequirements.join(" · ");
     return (
       <section className="interaction-panel">
         <h2>{location.name}</h2>
@@ -299,15 +300,35 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
           {district?.name ?? "Unknown district"} · {unlockInfo.progress.access}
         </p>
         <div className="action-grid">
-          <ActionButton
-            disabled={!unlocked || occupied || player.money < placementCost}
-            icon={unlocked ? <PackagePlus size={17} aria-hidden="true" /> : <Lock size={17} aria-hidden="true" />}
-            onClick={() => onCommand({ type: "place_machine", actorId: state.playerFactionId, locationId: location.id })}
-          >
-            {unlocked ? `Install $${placementCost}` : "District locked"}
-          </ActionButton>
+          {unlockInfo.progress.access === "locked" && (
+            <ActionButton
+              disabled={!unlockInfo.canScout}
+              icon={<Lock size={17} aria-hidden="true" />}
+              onClick={() => onCommand({ type: "scout_district", actorId: state.playerFactionId, districtId: location.districtId })}
+            >
+              Scout ${district?.scoutCost ?? 0}
+            </ActionButton>
+          )}
+          {unlockInfo.progress.access === "scouted" && !unlocked && (
+            <ActionButton
+              disabled={!unlockInfo.canUnlock}
+              icon={<Lock size={17} aria-hidden="true" />}
+              onClick={() => onCommand({ type: "unlock_district", actorId: state.playerFactionId, districtId: location.districtId })}
+            >
+              Open ${district?.unlockCost ?? 0}
+            </ActionButton>
+          )}
+          {unlocked && (
+            <ActionButton
+              disabled={occupied || player.money < placementCost}
+              icon={<PackagePlus size={17} aria-hidden="true" />}
+              onClick={() => onCommand({ type: "place_machine", actorId: state.playerFactionId, locationId: location.id })}
+            >
+              Install ${placementCost}
+            </ActionButton>
+          )}
         </div>
-        {!unlocked && <p className="empty-note">Use the Districts tab to scout and open this area.</p>}
+        {!unlocked && <p className="empty-note">{unmetRequirements ? `Needs ${unmetRequirements}.` : "Scout and open this area before installing machines."}</p>}
       </section>
     );
   }
