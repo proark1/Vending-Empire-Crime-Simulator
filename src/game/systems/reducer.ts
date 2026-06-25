@@ -9,13 +9,16 @@ import type {
   GameState,
   Location,
   MachineSlot,
+  MachineAlarmKind,
   ProductId,
   ServiceContract,
   StreetActivity,
+  StreetActivityKind,
   VendingMachine
 } from "../core/types";
 import {
   activeContracts,
+  activeAlarmForMachine,
   cargoSpaceRemaining,
   contractRemainingQuantity,
   districtUnlockInfo,
@@ -33,6 +36,8 @@ import { machineUpgrades } from "../content/machineUpgrades";
 import { employeeRoles } from "../content/employees";
 import { machineHasUpgrade, sabotageDamage } from "../core/machineStats";
 import { runMachineSales } from "./economy";
+
+const MACHINE_ALARM_RESPONSE_HOURS = 0.85;
 
 function cloneState(state: GameState): GameState {
   return structuredClone(state) as GameState;
@@ -150,6 +155,19 @@ function createMachine(state: GameState, ownerFactionId: FactionId, locationId: 
   return machine;
 }
 
+function ensurePlayerMachineAt(state: GameState, locationId: string): VendingMachine | undefined {
+  const existing = machineAtLocation(state, locationId);
+  if (existing?.ownerFactionId === state.playerFactionId) {
+    return existing;
+  }
+
+  if (existing) {
+    return undefined;
+  }
+
+  return createMachine(state, state.playerFactionId, locationId);
+}
+
 const employeeNames: Record<EmployeeRole, string[]> = {
   restocker: ["Mara", "Niko", "Sol"],
   collector: ["Jules", "Vera", "Rafi"],
@@ -219,6 +237,89 @@ function requirePlayerAtMachine(
   }
 
   return requirePlayerAtLocation(state, events, machine.locationId, actionLabel);
+}
+
+function alarmActionLabel(kind: MachineAlarmKind): string {
+  if (kind === "sabotage") {
+    return "sabotaging";
+  }
+
+  if (kind === "undercut") {
+    return "rigging price stickers around";
+  }
+
+  return "tampering with";
+}
+
+function createMachineAlarm(state: GameState, events: GameEvent[], machine: VendingMachine, intruderFactionId: FactionId, kind: MachineAlarmKind, intensity: number): void {
+  state.machineAlarms ??= {};
+  const existing = activeAlarmForMachine(state, machine.id);
+  const location = state.locations[machine.locationId];
+  const intruder = state.factions[intruderFactionId];
+  const expiresHour = state.worldTimeHours + MACHINE_ALARM_RESPONSE_HOURS;
+
+  if (existing) {
+    existing.expiresHour = Math.max(existing.expiresHour, expiresHour);
+    existing.intensity = Math.max(existing.intensity, intensity);
+    log(state, events, `ALARM still active: ${intruder?.name ?? "Someone"} is at ${machine.name}.`, "danger");
+    return;
+  }
+
+  const alarm = {
+    id: `alarm_${state.eventSequence}`,
+    kind,
+    machineId: machine.id,
+    locationId: machine.locationId,
+    intruderFactionId,
+    startedHour: state.worldTimeHours,
+    expiresHour,
+    intensity,
+    resolved: false
+  };
+  state.machineAlarms[alarm.id] = alarm;
+  log(
+    state,
+    events,
+    `ALARM: ${intruder?.name ?? "Someone"} is ${alarmActionLabel(kind)} ${machine.name} at ${location?.name ?? "the stop"}. Get there and confront them.`,
+    "danger"
+  );
+}
+
+function expireMachineAlarm(state: GameState, events: GameEvent[], alarmId: string): void {
+  const alarm = state.machineAlarms?.[alarmId];
+  if (!alarm || alarm.resolved) {
+    return;
+  }
+
+  const machine = state.machines[alarm.machineId];
+  if (!machine) {
+    alarm.resolved = true;
+    alarm.resolvedHour = state.worldTimeHours;
+    alarm.outcome = "missed";
+    return;
+  }
+
+  const location = state.locations[alarm.locationId];
+  const intruder = state.factions[alarm.intruderFactionId];
+  const baseDamage = alarm.kind === "undercut" ? Math.max(6, Math.round(alarm.intensity * 0.45)) : alarm.intensity;
+  machine.damage = Math.min(100, machine.damage + sabotageDamage(baseDamage, machine));
+
+  if (location) {
+    location.rivalPressure = Math.min(1, location.rivalPressure + (alarm.kind === "undercut" ? 0.22 : 0.15));
+  }
+
+  alarm.resolved = true;
+  alarm.resolvedHour = state.worldTimeHours;
+  alarm.outcome = "missed";
+  log(state, events, `Alarm missed: ${intruder?.name ?? "The intruder"} finished the job on ${machine.name}.`, "danger");
+}
+
+function resolveExpiredMachineAlarms(state: GameState, events: GameEvent[]): void {
+  for (const alarm of Object.values(state.machineAlarms ?? {})) {
+    if (!alarm.resolved && alarm.expiresHour <= state.worldTimeHours) {
+      expireMachineAlarm(state, events, alarm.id);
+    }
+  }
 }
 
 function travelHoursBetweenLocations(state: GameState, fromLocationId: string, toLocationId: string, speed: number): number {
@@ -399,6 +500,22 @@ function workerSupply(state: GameState, events: GameEvent[]): boolean {
     tone: "neutral"
   });
   return true;
+}
+
+function spawnDebugStreetActivity(state: GameState, events: GameEvent[], activity: StreetActivityKind): boolean {
+  if (activity === "customer_purchase") {
+    return customerPurchase(state, events);
+  }
+
+  if (activity === "customer_complaint") {
+    return customerComplaint(state, events);
+  }
+
+  if (activity === "rival_scout") {
+    return rivalScout(state, events);
+  }
+
+  return workerSupply(state, events);
 }
 
 function applyStreetActivity(state: GameState, events: GameEvent[]): void {
@@ -800,6 +917,7 @@ function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number):
   const previousHour = state.worldTimeHours;
   ensureStreetLifeState(state);
   state.worldTimeHours += hours;
+  resolveExpiredMachineAlarms(state, events);
 
   let playerEarned = 0;
   for (const machine of Object.values(state.machines)) {
@@ -1134,6 +1252,7 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
         scoutedHour: state.worldTimeHours
       };
       log(state, events, `${district.name} scouted. Requirements and machine pads are now visible.`, "good");
+      log(state, events, `Map intel updated: ${district.name} is marked in amber until the setup fee is paid.`, "neutral");
       break;
     }
 
@@ -1176,6 +1295,77 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
         unlockedHour: state.worldTimeHours
       };
       log(state, events, `${district.name} unlocked. New placement pads are active.`, "good");
+      log(state, events, `Crews spread the word: ${district.name} is open for vending territory.`, "good");
+      break;
+    }
+
+    case "debug_grant_cash": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      const amount = Math.max(0, Math.round(command.amount));
+      actor.money += amount;
+      log(state, events, `Debug cash injected: +$${amount}.`, "neutral");
+      break;
+    }
+
+    case "debug_complete_requirements": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      actor.money = Math.max(actor.money, 500);
+      actor.streetReputation = Math.max(actor.streetReputation, 1);
+      state.progression.contractsCompletedTotal = Math.max(state.progression.contractsCompletedTotal ?? 0, 1);
+      ensurePlayerMachineAt(state, "gym");
+      log(state, events, "Debug setup complete: starter expansion requirements are satisfied.", "good");
+      break;
+    }
+
+    case "debug_set_district_access": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      const district = state.districts[command.districtId];
+      if (!district) {
+        break;
+      }
+
+      state.districtProgress[district.id] = {
+        access: command.access,
+        districtId: district.id,
+        ...(command.access === "scouted" || command.access === "unlocked" ? { scoutedHour: state.worldTimeHours } : {}),
+        ...(command.access === "unlocked" ? { unlockedHour: state.worldTimeHours } : {})
+      };
+      log(state, events, `Debug district state: ${district.name} is now ${command.access}.`, command.access === "unlocked" ? "good" : "neutral");
+      break;
+    }
+
+    case "debug_set_rival_pressure": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      const location = state.locations[command.locationId];
+      if (!location) {
+        break;
+      }
+
+      location.rivalPressure = Math.max(0, Math.min(1, command.amount));
+      log(state, events, `Debug pressure set at ${location.name}: ${Math.round(location.rivalPressure * 100)}%.`, location.rivalPressure >= 0.5 ? "warning" : "neutral");
+      break;
+    }
+
+    case "debug_spawn_activity": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      if (!spawnDebugStreetActivity(state, events, command.activity)) {
+        log(state, events, `Debug activity could not spawn: ${command.activity}.`, "warning");
+      }
       break;
     }
 
@@ -1413,6 +1603,11 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
         break;
       }
 
+      if (actor.id !== state.playerFactionId && machine.ownerFactionId === state.playerFactionId) {
+        createMachineAlarm(state, events, machine, actor.id, "sabotage", 28);
+        break;
+      }
+
       if (actor.id === state.playerFactionId && !requirePlayerAtMachine(state, events, machine, "sabotage this machine")) {
         break;
       }
@@ -1424,6 +1619,45 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       const location = state.locations[machine.locationId];
       location.rivalPressure = Math.max(0, location.rivalPressure - 0.15);
       log(state, events, `${machine.name}'s display is jammed. Heat rises.`, "danger");
+      break;
+    }
+
+    case "confront_alarm": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      const alarm = state.machineAlarms?.[command.alarmId];
+      const machine = alarm ? state.machines[alarm.machineId] : undefined;
+      if (!alarm || !machine || alarm.resolved || machine.ownerFactionId !== state.playerFactionId) {
+        break;
+      }
+
+      if (alarm.expiresHour <= state.worldTimeHours) {
+        expireMachineAlarm(state, events, alarm.id);
+        break;
+      }
+
+      if (!requirePlayerAtMachine(state, events, machine, "confront the intruder")) {
+        break;
+      }
+
+      const intruder = state.factions[alarm.intruderFactionId];
+      const location = state.locations[alarm.locationId];
+      alarm.resolved = true;
+      alarm.resolvedHour = state.worldTimeHours;
+      alarm.outcome = "confronted";
+      machine.damage = Math.min(100, machine.damage + sabotageDamage(4, machine));
+      machine.lastServicedHour = state.worldTimeHours;
+      actor.streetReputation += 1;
+      actor.heat += 1;
+      if (intruder) {
+        intruder.heat += 2;
+      }
+      if (location) {
+        location.rivalPressure = Math.max(0, location.rivalPressure - 0.06);
+      }
+      log(state, events, `You confronted ${intruder?.name ?? "the intruder"} at ${machine.name}. They ran before finishing the job.`, "good");
       break;
     }
 
@@ -1440,6 +1674,11 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
         const target = state.machines[command.targetMachineId];
         if (target && target.ownerFactionId !== actor.id) {
           const baseDamage = 18 + Math.round((controller?.aggression ?? 0) * 8);
+          if (target.ownerFactionId === state.playerFactionId) {
+            createMachineAlarm(state, events, target, actor.id, "sabotage", baseDamage);
+            break;
+          }
+
           target.damage = Math.min(100, target.damage + sabotageDamage(baseDamage, target));
           state.locations[target.locationId].rivalPressure = Math.min(1, state.locations[target.locationId].rivalPressure + 0.15);
           log(state, events, `${actor.name} roughed up ${target.name}.`, "danger");

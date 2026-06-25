@@ -57,8 +57,9 @@ export function Minimap({ state, playerPosition, guidanceLocationId, target }: M
         <rect className="map-ground" x="2" y="2" width="96" height="96" rx="5" />
         {Object.values(state.districts).map((district) => {
           const rect = toDistrictRect(district.bounds);
-          const access = districtProgress(state, district.id).access;
-          return <rect className={`map-district ${access}`} key={district.id} x={rect.x} y={rect.y} width={rect.width} height={rect.height} rx="2" />;
+          const progress = districtProgress(state, district.id);
+          const isRecent = district.id !== "starter_suburb" && state.worldTimeHours - (progress.unlockedHour ?? progress.scoutedHour ?? -100) <= 2;
+          return <rect className={`map-district ${progress.access} ${isRecent ? "recent" : ""}`} key={district.id} x={rect.x} y={rect.y} width={rect.width} height={rect.height} rx="2" />;
         })}
         {worldRoads.map((road) => {
           const rect = toMapRect(road);

@@ -757,6 +757,10 @@ kbd {
   border-color: rgba(251, 113, 133, 0.34);
 }
 
+.route-task.danger h3 {
+  color: #fecdd3;
+}
+
 .route-task.selected {
   border-color: rgba(45, 212, 191, 0.55);
   background: rgba(20, 184, 166, 0.16);
@@ -1227,6 +1231,21 @@ kbd {
   border-color: rgba(251, 113, 133, 0.34);
 }
 
+.machine-alarm {
+  border-color: rgba(251, 113, 133, 0.38);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(127, 29, 29, 0.22);
+}
+
+.machine-alarm .section-title {
+  color: #fecdd3;
+}
+
+.machine-alarm .section-title em {
+  color: #fecdd3;
+}
+
 .action-note {
   display: inline-flex;
   align-items: center;
@@ -1325,6 +1344,10 @@ kbd {
   stroke: rgba(45, 212, 191, 0.32);
 }
 
+.map-district.recent {
+  animation: map-district-pulse 1.15s ease-in-out infinite;
+}
+
 .map-road {
   stroke: rgba(148, 163, 184, 0.32);
   stroke-width: 5;
@@ -1387,6 +1410,17 @@ kbd {
   0%,
   100% {
     opacity: 0.72;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes map-district-pulse {
+  0%,
+  100% {
+    opacity: 0.6;
   }
 
   50% {

@@ -275,6 +275,33 @@ describe("game reducer", () => {
     expect(machineAtLocation(result.state, "freight_depot")).toBeUndefined();
   });
 
+  it("supports debug setup for balance playtests", () => {
+    const result = reduceCommands(createInitialState(), [
+      { type: "debug_grant_cash", actorId: "player", amount: 250 },
+      { type: "debug_complete_requirements", actorId: "player" },
+      { type: "debug_set_district_access", actorId: "player", districtId: "industrial_yards", access: "unlocked" },
+      { type: "debug_set_rival_pressure", actorId: "player", locationId: "laundromat", amount: 0.7 }
+    ]);
+
+    expect(result.state.factions.player.money).toBeGreaterThanOrEqual(500);
+    expect(result.state.progression.contractsCompletedTotal).toBeGreaterThanOrEqual(1);
+    expect(machineAtLocation(result.state, "gym")?.ownerFactionId).toBe("player");
+    expect(result.state.districtProgress.industrial_yards.access).toBe("unlocked");
+    expect(result.state.locations.laundromat.rivalPressure).toBe(0.7);
+  });
+
+  it("spawns visible street activity from debug controls", () => {
+    const initial = createInitialState();
+    initial.machines.machine_player_1.slots = [{ productId: "soda", quantity: 4, capacity: 24, price: 5, salesAccumulator: 0 }];
+
+    const result = reduceGameState(initial, { type: "debug_spawn_activity", actorId: "player", activity: "customer_purchase" });
+
+    expect(result.state.streetLife.recentActivities[0]).toMatchObject({
+      kind: "customer_purchase",
+      machineId: "machine_player_1"
+    });
+  });
+
   it("fails expired service contracts and files a day report", () => {
     const state = reduceGameState(createInitialState(), { type: "advance_time", actorId: "player", hours: 17 }).state;
 
@@ -357,6 +384,77 @@ describe("game reducer", () => {
     expect(result.state.npcControllers.rival_redline.lastActedHour).toBe(result.state.worldTimeHours);
   });
 
+  it("turns NPC sabotage into an active machine alarm route task", () => {
+    const state = createInitialState();
+    const damageBefore = state.machines.machine_player_1.damage;
+
+    const result = reduceGameState(state, {
+      type: "rival_action",
+      actorId: "rival_redline",
+      action: "sabotage",
+      targetMachineId: "machine_player_1"
+    });
+    const alarm = Object.values(result.state.machineAlarms)[0];
+    const alarmTask = routeTasks(result.state).find((task) => task.type === "alarm");
+
+    expect(result.state.machines.machine_player_1.damage).toBe(damageBefore);
+    expect(alarm).toMatchObject({
+      machineId: "machine_player_1",
+      intruderFactionId: "rival_redline",
+      resolved: false
+    });
+    expect(alarmTask).toMatchObject({
+      machineId: "machine_player_1",
+      alarmId: alarm.id,
+      tone: "danger"
+    });
+    expect(result.events[0]?.message).toContain("ALARM");
+  });
+
+  it("requires the player to reach the alarmed machine before fighting the intruder", () => {
+    const alarmed = reduceGameState(createInitialState(), {
+      type: "sabotage_machine",
+      actorId: "rival_redline",
+      machineId: "machine_player_1"
+    }).state;
+    const alarm = Object.values(alarmed.machineAlarms)[0]!;
+
+    const blocked = reduceGameState(alarmed, { type: "confront_alarm", actorId: "player", alarmId: alarm.id });
+    expect(blocked.state.machineAlarms[alarm.id].resolved).toBe(false);
+    expect(blocked.events[0]?.message).toContain("Foam & Fold Laundromat");
+
+    const confronted = reduceCommands(alarmed, [
+      visit("laundromat"),
+      { type: "confront_alarm", actorId: "player", alarmId: alarm.id }
+    ]);
+
+    expect(confronted.state.machineAlarms[alarm.id]).toMatchObject({
+      resolved: true,
+      outcome: "confronted"
+    });
+    expect(confronted.state.factions.player.streetReputation).toBe(1);
+    expect(confronted.events.some((event) => event.message.includes("confronted"))).toBe(true);
+  });
+
+  it("applies sabotage damage when an alarm is missed", () => {
+    const alarmed = reduceGameState(createInitialState(), {
+      type: "sabotage_machine",
+      actorId: "rival_redline",
+      machineId: "machine_player_1"
+    }).state;
+    const alarm = Object.values(alarmed.machineAlarms)[0]!;
+    const damageBefore = alarmed.machines.machine_player_1.damage;
+
+    const missed = reduceGameState(alarmed, { type: "advance_time", actorId: "player", hours: 1 });
+
+    expect(missed.state.machineAlarms[alarm.id]).toMatchObject({
+      resolved: true,
+      outcome: "missed"
+    });
+    expect(missed.state.machines.machine_player_1.damage).toBeGreaterThan(damageBefore);
+    expect(missed.events.some((event) => event.message.includes("Alarm missed"))).toBe(true);
+  });
+
   it("updates product slot prices on owned machines", () => {
     const state = reduceCommands(createInitialState(), [
       visit("supplier"),
@@ -385,17 +483,19 @@ describe("game reducer", () => {
   });
 
   it("reduces sabotage damage with machine protection", () => {
-    const baseline = reduceGameState(createInitialState(), {
+    const baselineAlarmed = reduceGameState(createInitialState(), {
       type: "sabotage_machine",
       actorId: "rival_redline",
       machineId: "machine_player_1"
     }).state;
-    const upgraded = reduceCommands(createInitialState(), [
+    const baseline = reduceGameState(baselineAlarmed, { type: "advance_time", actorId: "player", hours: 1 }).state;
+    const upgradedAlarmed = reduceCommands(createInitialState(), [
       visit("laundromat"),
       { type: "install_upgrade", actorId: "player", machineId: "machine_player_1", upgradeId: "reinforced_glass" },
       { type: "install_upgrade", actorId: "player", machineId: "machine_player_1", upgradeId: "smart_lock" },
       { type: "sabotage_machine", actorId: "rival_redline", machineId: "machine_player_1" }
     ]).state;
+    const upgraded = reduceGameState(upgradedAlarmed, { type: "advance_time", actorId: "player", hours: 1 }).state;
 
     expect(upgraded.machines.machine_player_1.damage).toBeLessThan(baseline.machines.machine_player_1.damage);
   });

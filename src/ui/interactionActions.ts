@@ -1,5 +1,6 @@
 import type { GameCommand, GameState, ProductId } from "../game/core/types";
 import {
+  activeAlarmForMachine,
   activeVehicle,
   cargoSpaceRemaining,
   districtUnlockInfo,
@@ -161,6 +162,15 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
       kind: "command",
       label: "Jam rival display",
       command: { type: "sabotage_machine", actorId, machineId: machine.id }
+    };
+  }
+
+  const activeAlarm = activeAlarmForMachine(state, machine.id);
+  if (activeAlarm) {
+    return {
+      kind: "command",
+      label: "Fight intruder",
+      command: { type: "confront_alarm", actorId, alarmId: activeAlarm.id }
     };
   }
 

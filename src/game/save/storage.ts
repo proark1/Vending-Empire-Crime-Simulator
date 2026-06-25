@@ -89,6 +89,7 @@ function migrateGameState(parsed: GameState): GameState {
       ...baseline.npcControllers,
       ...parsed.npcControllers
     },
+    machineAlarms: parsed.machineAlarms ?? baseline.machineAlarms,
     streetLife: {
       ...baseline.streetLife,
       ...(parsed.streetLife ?? {}),

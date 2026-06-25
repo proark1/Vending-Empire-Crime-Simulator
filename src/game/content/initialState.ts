@@ -146,6 +146,7 @@ export function createInitialState(): GameState {
         cooldownHours: 2.25
       }
     },
+    machineAlarms: {},
     eventLog: [
       {
         id: "intro_1",

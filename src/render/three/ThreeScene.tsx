@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
-import type { DistrictAccess, GameState, GameEventTone, Location, MachineUpgradeId, ProductId, StockCrate, StreetActivity } from "../../game/core/types";
-import { activeVehicle, districtProgress, garageStorageUnits, machineAtLocation, machineRoutePressure } from "../../game/core/selectors";
+import type { DistrictAccess, GameState, GameEventTone, Location, MachineUpgradeId, ProductId, StockCrate, StreetActivity, VendingMachine } from "../../game/core/types";
+import { activeMachineAlarms, activeVehicle, districtProgress, garageStorageUnits, machineAtLocation, machineRoutePressure } from "../../game/core/selectors";
 import { districtLabels, machinePlacementAnchors, worldBounds, worldBuildings, worldRoads, type WorldRoad } from "../../game/content/world";
 import type { SceneFeedbackEvent, SceneTarget } from "./SceneTargets";
 import { createAsphaltMaterial, createAtmosphere, createBuilding, createNpcCharacter, createRoadMaterial, createSidewalkMaterial, createSkyDome, createStreetProps } from "./proceduralArt";
@@ -935,6 +935,59 @@ function createActivityActor(activity: StreetActivity, placement: { position: TH
   return character;
 }
 
+function createAmbientMachineActor(machine: VendingMachine, location: Location, index: number, currentWorldTime: number): THREE.Group {
+  const variant = machine.ownerFactionId === "player" ? "customer" : "rival";
+  const character = createNpcCharacter(variant);
+  const placement = machinePlacementForLocation(location);
+  const servicePoint = machineInteractionPoint(placement);
+  const front = machineFrontVector(placement.rotationY).normalize();
+  const side = new THREE.Vector3(-front.z, 0, front.x);
+  const sideDirection = index % 2 === 0 ? 1 : -1;
+  const trafficOffset = Math.max(0.7, location.footTraffic) * 0.24;
+  const start = servicePoint.clone().add(front.clone().multiplyScalar(1.1 + trafficOffset)).add(side.clone().multiplyScalar((1.35 + index * 0.08) * sideDirection));
+  const linger = servicePoint.clone().add(front.clone().multiplyScalar(0.55 + trafficOffset * 0.25));
+  const exit = servicePoint.clone().add(front.clone().multiplyScalar(1.32 + trafficOffset)).add(side.clone().multiplyScalar((-1.45 - index * 0.06) * sideDirection));
+
+  character.position.copy(start);
+  character.scale.setScalar(machine.ownerFactionId === "player" ? 0.92 : 0.98);
+  character.userData.action = index % 3 === 0 ? "pace" : "walk";
+  character.userData.baseY = 0;
+  character.userData.dynamicNpc = true;
+  character.userData.floatAmount = 0.004;
+  character.userData.floatSpeed = 0.9;
+  character.userData.pathOffset = currentWorldTime * 0.13 + index * 0.27 + machine.id.length * 0.05;
+  character.userData.phase = index * 0.8 + machine.lastServicedHour * 0.13;
+  character.userData.walkPath = [start, linger, linger.clone().add(side.clone().multiplyScalar(0.25 * sideDirection)), exit];
+  character.userData.walkSpeed = 0.11 + Math.min(0.12, location.footTraffic * 0.035);
+  return character;
+}
+
+function createAlarmIntruderActor(placement: { position: THREE.Vector3; rotationY: number }, currentWorldTime: number, startedHour: number): THREE.Group {
+  const character = createNpcCharacter("rival");
+  const servicePoint = machineInteractionPoint(placement);
+  const front = machineFrontVector(placement.rotationY).normalize();
+  const side = new THREE.Vector3(-front.z, 0, front.x);
+  const left = servicePoint.clone().add(front.clone().multiplyScalar(0.38)).add(side.clone().multiplyScalar(0.42));
+  const right = servicePoint.clone().add(front.clone().multiplyScalar(0.46)).add(side.clone().multiplyScalar(-0.38));
+
+  character.position.copy(left);
+  character.scale.setScalar(1.04);
+  character.userData.action = "scan";
+  character.userData.baseY = 0;
+  character.userData.dynamicNpc = true;
+  character.userData.floatAmount = 0.006;
+  character.userData.floatSpeed = 1.4;
+  character.userData.pathOffset = Math.max(0, currentWorldTime - startedHour) * 3.2;
+  character.userData.phase = startedHour * 0.9;
+  character.userData.walkPath = [left, servicePoint.clone().add(front.clone().multiplyScalar(0.3)), right, left.clone().add(front.clone().multiplyScalar(0.18))];
+  character.userData.walkSpeed = 0.18;
+
+  const warning = new THREE.Mesh(new THREE.SphereGeometry(0.065, 12, 8), new THREE.MeshBasicMaterial({ color: "#fb7185" }));
+  warning.position.set(0, 1.62, 0);
+  character.add(warning);
+  return character;
+}
+
 function sceneFeedbackText(event: SceneFeedbackEvent): string {
   if (event.kind === "pickup") {
     return event.amount ? `+${event.amount}` : "PICKUP";
@@ -966,6 +1019,18 @@ function sceneFeedbackText(event: SceneFeedbackEvent): string {
 
   if (event.kind === "sabotage") {
     return "JAMMED";
+  }
+
+  if (event.kind === "fight") {
+    return "CLEARED";
+  }
+
+  if (event.kind === "scout") {
+    return "SCOUTED";
+  }
+
+  if (event.kind === "district") {
+    return "DISTRICT OPEN";
   }
 
   return "LOADED";
@@ -1033,7 +1098,7 @@ function createSceneFeedbackEffect(event: SceneFeedbackEvent, currentState: Game
   group.userData.feedbackRuntime = {
     baseScale: 1,
     createdAt: performance.now(),
-    duration: event.kind === "install" ? 1900 : 1450,
+    duration: event.kind === "district" ? 2400 : event.kind === "install" || event.kind === "scout" ? 1900 : 1450,
     kind: event.kind,
     startY: position.y
   } satisfies FeedbackRuntime;
@@ -1083,12 +1148,22 @@ function createSceneFeedbackEffect(event: SceneFeedbackEvent, currentState: Game
     }
   }
 
-  if (event.kind === "repair" || event.kind === "upgrade" || event.kind === "sabotage") {
-    const sparkColor = event.kind === "sabotage" ? "#fb7185" : event.kind === "upgrade" ? "#38bdf8" : "#facc15";
-    for (let index = 0; index < 9; index += 1) {
+  if (event.kind === "scout" || event.kind === "district") {
+    const beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(event.kind === "district" ? 0.22 : 0.16, event.kind === "district" ? 0.62 : 0.42, 3.2, 24, 1, true),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: event.kind === "district" ? 0.24 : 0.17, depthWrite: false })
+    );
+    beam.position.y = 1.7;
+    group.add(beam);
+  }
+
+  if (event.kind === "repair" || event.kind === "upgrade" || event.kind === "sabotage" || event.kind === "fight" || event.kind === "district" || event.kind === "scout") {
+    const sparkColor = event.kind === "sabotage" ? "#fb7185" : event.kind === "fight" ? "#86efac" : event.kind === "upgrade" || event.kind === "district" ? "#38bdf8" : event.kind === "scout" ? "#f59e0b" : "#facc15";
+    const sparkCount = event.kind === "district" || event.kind === "fight" ? 14 : 9;
+    for (let index = 0; index < sparkCount; index += 1) {
       const spark = createSpark(sparkColor);
-      const angle = (Math.PI * 2 * index) / 9;
-      spark.position.set(Math.cos(angle) * 0.18, 0.74 + (index % 3) * 0.16, Math.sin(angle) * 0.18);
+      const angle = (Math.PI * 2 * index) / sparkCount;
+      spark.position.set(Math.cos(angle) * (event.kind === "district" ? 0.34 : 0.18), 0.74 + (index % 3) * 0.16, Math.sin(angle) * (event.kind === "district" ? 0.34 : 0.18));
       spark.rotation.z = angle;
       spark.userData.feedbackSpark = true;
       spark.userData.phase = angle;
@@ -1097,7 +1172,7 @@ function createSceneFeedbackEffect(event: SceneFeedbackEvent, currentState: Game
   }
 
   const label = createLabelSprite(sceneFeedbackText(event), color);
-  label.position.y = event.kind === "install" ? 2.35 : 1.35;
+  label.position.y = event.kind === "district" || event.kind === "install" ? 2.35 : event.kind === "scout" ? 1.85 : 1.35;
   label.scale.set(0.82, 0.22, 1);
   label.userData.feedbackLabel = true;
   group.add(label);
@@ -1397,6 +1472,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
   clearGroup(group);
   const interactables: Interactable[] = [];
   addDistrictAccessOverlays(group, currentState);
+  const activeAlarmByMachine = new Map(activeMachineAlarms(currentState).map((alarm) => [alarm.machineId, alarm]));
 
   for (const location of Object.values(currentState.locations)) {
     const position = new THREE.Vector3(location.position.x, 0, location.position.z);
@@ -1455,10 +1531,18 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       group.add(machineGroup);
       const servicePoint = machineInteractionPoint(machinePlacement);
       const pressure = machine.ownerFactionId === currentState.playerFactionId ? machineRoutePressure(currentState, machine) : undefined;
+      const activeAlarm = activeAlarmByMachine.get(machine.id);
       if (pressure && pressure.score >= 2) {
         const pressureRing = createRoutePressureRing(pressure.tone);
         pressureRing.position.set(machinePlacement.position.x, 2.02, machinePlacement.position.z);
         group.add(pressureRing);
+      }
+      if (activeAlarm) {
+        const alarmRing = createRoutePressureRing("danger");
+        alarmRing.position.set(machinePlacement.position.x, 2.36, machinePlacement.position.z);
+        group.add(alarmRing);
+        addLabel(group, "ALARM", "#fb7185", machinePlacement.position, 3.08);
+        group.add(createAlarmIntruderActor(machinePlacement, currentState.worldTimeHours, activeAlarm.startedHour));
       }
       addLabel(group, machine.name, owner?.color ?? "#94a3b8", machinePlacement.position, 2.2);
       addGuidanceBeacon(owner?.color ?? "#94a3b8", machinePlacement.position);
@@ -1475,10 +1559,28 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
     }
   }
 
+  Object.values(currentState.machines)
+    .filter((machine) => machine.damage < 96)
+    .filter((machine) => !activeAlarmByMachine.has(machine.id))
+    .sort((a, b) => {
+      const aLocation = currentState.locations[a.locationId];
+      const bLocation = currentState.locations[b.locationId];
+      return (bLocation?.footTraffic ?? 0) + b.revenueStored * 0.004 - ((aLocation?.footTraffic ?? 0) + a.revenueStored * 0.004);
+    })
+    .slice(0, 7)
+    .forEach((machine, index) => {
+      const location = currentState.locations[machine.locationId];
+      if (!location) {
+        return;
+      }
+
+      group.add(createAmbientMachineActor(machine, location, index, currentState.worldTimeHours));
+    });
+
   const recentActivities = currentState.streetLife?.recentActivities ?? [];
   recentActivities
-    .filter((activity) => currentState.worldTimeHours - activity.hour <= 0.55)
-    .slice(0, 4)
+    .filter((activity) => currentState.worldTimeHours - activity.hour <= 1.25)
+    .slice(0, 8)
     .forEach((activity, index) => {
       const machine = activity.machineId ? currentState.machines[activity.machineId] : undefined;
       const location = machine ? currentState.locations[machine.locationId] : currentState.locations[activity.locationId];

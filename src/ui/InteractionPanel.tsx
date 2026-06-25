@@ -1,8 +1,9 @@
-import { Camera, CreditCard, HandCoins, Lightbulb, Lock, Minus, PackagePlus, Plus, RadioTower, RotateCcw, Save, Shield, ShoppingCart, Sparkles, Truck, Wrench, Zap } from "lucide-react";
+import { Camera, CreditCard, HandCoins, Lightbulb, Lock, Minus, PackagePlus, Plus, RadioTower, RotateCcw, Save, Shield, ShieldAlert, ShoppingCart, Sparkles, Truck, Wrench, Zap } from "lucide-react";
 import type { GameCommand, GameState, MachineUpgradeId } from "../game/core/types";
 import { machineUpgradeList } from "../game/content/machineUpgrades";
 import { effectiveMachineSecurity, effectiveMachineVisibility, getMachineUpgradeEffects, machineHasUpgrade, priceDemandMultiplier } from "../game/core/machineStats";
 import {
+  activeAlarmForMachine,
   activeContractsAtLocation,
   activeVehicle,
   cargoSpaceRemaining,
@@ -352,6 +353,9 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
   const vehicle = activeVehicle(state);
   const vehicleAtMachine = vehicle?.locationId === machine.locationId;
   const stopContracts = activeContractsAtLocation(state, machine.locationId);
+  const activeAlarm = isPlayerMachine ? activeAlarmForMachine(state, machine.id) : undefined;
+  const alarmIntruder = activeAlarm ? state.factions[activeAlarm.intruderFactionId] : undefined;
+  const alarmMinutesLeft = activeAlarm ? Math.max(1, Math.ceil((activeAlarm.expiresHour - state.worldTimeHours) * 60)) : 0;
 
   return (
     <section className="interaction-panel">
@@ -382,6 +386,22 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
 
       {isPlayerMachine ? (
         <>
+          {activeAlarm && (
+            <div className="machine-section machine-alarm">
+              <div className="section-title">
+                <ShieldAlert size={16} aria-hidden="true" />
+                <span>Machine alarm</span>
+                <em>{alarmMinutesLeft}m</em>
+              </div>
+              <p>{alarmIntruder?.name ?? "An intruder"} is at this machine.</p>
+              <div className="action-grid">
+                <ActionButton icon={<Zap size={17} aria-hidden="true" />} onClick={() => onCommand({ type: "confront_alarm", actorId: state.playerFactionId, alarmId: activeAlarm.id })}>
+                  Fight Intruder
+                </ActionButton>
+              </div>
+            </div>
+          )}
+
           {stopContracts.length > 0 && (
             <div className="machine-section">
               <div className="section-title">

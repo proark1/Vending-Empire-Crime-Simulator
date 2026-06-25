@@ -9,6 +9,7 @@ import type {
   Inventory,
   Location,
   LocationId,
+  MachineAlarm,
   MachineId,
   ProductId,
   RouteVehicle,
@@ -16,7 +17,7 @@ import type {
   VendingMachine
 } from "./types";
 
-export type RouteTaskType = "supplier" | "garage" | "stock" | "collect" | "repair" | "pressure" | "contract";
+export type RouteTaskType = "supplier" | "garage" | "stock" | "collect" | "repair" | "pressure" | "contract" | "alarm";
 
 export interface RouteTask {
   id: string;
@@ -27,6 +28,7 @@ export interface RouteTask {
   machineId?: MachineId;
   contractId?: string;
   productId?: ProductId;
+  alarmId?: string;
   priority: number;
   tone: "good" | "warning" | "danger";
 }
@@ -252,6 +254,16 @@ export function activeContracts(state: GameState): ServiceContract[] {
   return Object.values(state.contracts).filter((contract) => contract.status === "active");
 }
 
+export function activeMachineAlarms(state: GameState): MachineAlarm[] {
+  return Object.values(state.machineAlarms ?? {})
+    .filter((alarm) => !alarm.resolved && alarm.expiresHour > state.worldTimeHours && Boolean(state.machines[alarm.machineId]))
+    .sort((a, b) => a.expiresHour - b.expiresHour);
+}
+
+export function activeAlarmForMachine(state: GameState, machineId: MachineId): MachineAlarm | undefined {
+  return activeMachineAlarms(state).find((alarm) => alarm.machineId === machineId);
+}
+
 export function activeContractsAtLocation(state: GameState, locationId: LocationId): ServiceContract[] {
   return activeContracts(state)
     .filter((contract) => contract.locationId === locationId)
@@ -362,6 +374,23 @@ export function routeTasks(state: GameState): RouteTask[] {
   const vehicle = activeVehicle(state);
   const player = state.factions[state.playerFactionId];
 
+  for (const alarm of activeMachineAlarms(state)) {
+    const machine = state.machines[alarm.machineId];
+    const intruder = state.factions[alarm.intruderFactionId];
+    const minutesLeft = Math.max(1, Math.ceil((alarm.expiresHour - state.worldTimeHours) * 60));
+    tasks.push({
+      id: `alarm:${alarm.id}`,
+      type: "alarm",
+      title: `Alarm at ${machine.name}`,
+      detail: `${intruder?.name ?? "Intruder"} is at the machine · ${minutesLeft}m to interrupt`,
+      locationId: alarm.locationId,
+      machineId: alarm.machineId,
+      alarmId: alarm.id,
+      priority: 30,
+      tone: "danger"
+    });
+  }
+
   if (!vehicle) {
     return tasks;
   }
@@ -374,6 +403,7 @@ export function routeTasks(state: GameState): RouteTask[] {
     .filter(([, quantity]) => (quantity ?? 0) > 0)
     .map(([productId, quantity]) => `${quantity} ${state.products[productId as ProductId]?.name ?? "stock"}`)
     .join(" · ");
+
   if (garageUnits > 0 && vehicleFree > 0) {
     tasks.push({
       id: "garage:load_vehicle",

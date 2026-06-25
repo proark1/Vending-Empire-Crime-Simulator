@@ -33,7 +33,7 @@ import {
 } from "../game/core/selectors";
 import { estimateMachineSalesPerHour } from "../game/systems/economy";
 
-type DashboardTab = "machines" | "districts" | "jobs" | "route" | "logistics" | "crew" | "rival" | "log";
+type DashboardTab = "machines" | "districts" | "jobs" | "route" | "logistics" | "crew" | "rival" | "debug" | "log";
 
 interface DashboardProps {
   state: GameState;
@@ -131,6 +131,10 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
         <button className={tab === "rival" ? "tab active" : "tab"} onClick={() => setTab("rival")} type="button">
           <ShieldAlert size={16} aria-hidden="true" />
           Rival
+        </button>
+        <button className={tab === "debug" ? "tab active" : "tab"} onClick={() => setTab("debug")} type="button">
+          <Wrench size={16} aria-hidden="true" />
+          Debug
         </button>
         <button className={tab === "log" ? "tab active" : "tab"} onClick={() => setTab("log")} type="button">
           <ClipboardList size={16} aria-hidden="true" />
@@ -505,6 +509,74 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
             <span>Machines</span>
             <strong>{ownedMachines(state, rival.id).length}</strong>
           </div>
+        </div>
+      )}
+
+      {tab === "debug" && (
+        <div className="panel-list">
+          <article className="cargo-summary">
+            <Wrench size={18} aria-hidden="true" />
+            <span>Playtest tools for balance, unlocks, pressure, and street feedback</span>
+          </article>
+
+          <article className="vehicle-card">
+            <div className="vehicle-heading">
+              <HandCoins size={18} aria-hidden="true" />
+              <div>
+                <h3>Economy</h3>
+                <p>${Math.round(state.factions[state.playerFactionId].money)} cash · {state.progression.contractsCompletedTotal} contracts complete</p>
+              </div>
+            </div>
+            <div className="row-actions">
+              <MiniButton onClick={() => onCommand({ type: "debug_grant_cash", actorId: state.playerFactionId, amount: 250 })}>+$250</MiniButton>
+              <MiniButton onClick={() => onCommand({ type: "debug_complete_requirements", actorId: state.playerFactionId })}>Ready Iron Yard</MiniButton>
+            </div>
+          </article>
+
+          <article className="vehicle-card">
+            <div className="vehicle-heading">
+              <Building2 size={18} aria-hidden="true" />
+              <div>
+                <h3>District states</h3>
+                <p>Fast-forward scout/open checks without grinding.</p>
+              </div>
+            </div>
+            <div className="row-actions">
+              <MiniButton onClick={() => onCommand({ type: "debug_set_district_access", actorId: state.playerFactionId, districtId: "industrial_yards", access: "locked" })}>Lock Iron Yard</MiniButton>
+              <MiniButton onClick={() => onCommand({ type: "debug_set_district_access", actorId: state.playerFactionId, districtId: "industrial_yards", access: "scouted" })}>Scout Iron Yard</MiniButton>
+              <MiniButton onClick={() => onCommand({ type: "debug_set_district_access", actorId: state.playerFactionId, districtId: "industrial_yards", access: "unlocked" })}>Open Iron Yard</MiniButton>
+            </div>
+          </article>
+
+          <article className="vehicle-card">
+            <div className="vehicle-heading">
+              <ShieldAlert size={18} aria-hidden="true" />
+              <div>
+                <h3>Rival pressure</h3>
+                <p>Foam & Fold pressure {Math.round((state.locations.laundromat?.rivalPressure ?? 0) * 100)}%</p>
+              </div>
+            </div>
+            <div className="row-actions">
+              <MiniButton onClick={() => onCommand({ type: "debug_set_rival_pressure", actorId: state.playerFactionId, locationId: "laundromat", amount: 0.7 })}>Pressure 70%</MiniButton>
+              <MiniButton onClick={() => onCommand({ type: "debug_set_rival_pressure", actorId: state.playerFactionId, locationId: "laundromat", amount: 0.05 })}>Calm block</MiniButton>
+            </div>
+          </article>
+
+          <article className="vehicle-card">
+            <div className="vehicle-heading">
+              <Users size={18} aria-hidden="true" />
+              <div>
+                <h3>Street activity</h3>
+                <p>Spawn visible customer, complaint, scout, or worker moments.</p>
+              </div>
+            </div>
+            <div className="row-actions">
+              <MiniButton onClick={() => onCommand({ type: "debug_spawn_activity", actorId: state.playerFactionId, activity: "customer_purchase" })}>Sale</MiniButton>
+              <MiniButton onClick={() => onCommand({ type: "debug_spawn_activity", actorId: state.playerFactionId, activity: "customer_complaint" })}>Complaint</MiniButton>
+              <MiniButton onClick={() => onCommand({ type: "debug_spawn_activity", actorId: state.playerFactionId, activity: "rival_scout" })}>Rival scout</MiniButton>
+              <MiniButton onClick={() => onCommand({ type: "debug_spawn_activity", actorId: state.playerFactionId, activity: "worker_supply" })}>Worker restock</MiniButton>
+            </div>
+          </article>
         </div>
       )}
 

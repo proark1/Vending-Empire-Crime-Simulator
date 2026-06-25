@@ -8,7 +8,7 @@ import { Minimap } from "./ui/Minimap";
 import { MissionTracker } from "./ui/MissionTracker";
 import { GuidanceArrow } from "./ui/GuidanceArrow";
 import { getStarterMissionStep } from "./game/core/mission";
-import { latestDayReport, selectedRouteTask } from "./game/core/selectors";
+import { activeMachineAlarms, latestDayReport, selectedRouteTask } from "./game/core/selectors";
 import { executePrimaryInteraction, getPrimaryInteraction } from "./ui/interactionActions";
 import { useGame } from "./hooks/useGame";
 import { ToastStack, type ToastMessage } from "./ui/ToastStack";
@@ -64,6 +64,30 @@ function createSceneFeedback(command: GameCommand, target: SceneTarget | null, s
       return { kind: "upgrade", machineId: command.machineId, tone: "good" };
     case "sabotage_machine":
       return { kind: "sabotage", machineId: command.machineId, tone: "danger" };
+    case "confront_alarm": {
+      const alarm = state.machineAlarms[command.alarmId];
+      return alarm ? { kind: "fight", machineId: alarm.machineId, tone: "good" } : null;
+    }
+    case "scout_district": {
+      const locationId = targetLocationId(target, state) ?? Object.values(state.locations).find((location) => location.districtId === command.districtId)?.id ?? undefined;
+      return { kind: "scout", locationId, tone: "neutral" };
+    }
+    case "unlock_district": {
+      const locationId = targetLocationId(target, state) ?? Object.values(state.locations).find((location) => location.districtId === command.districtId)?.id ?? undefined;
+      return { kind: "district", locationId, tone: "good" };
+    }
+    case "debug_set_district_access": {
+      const locationId = Object.values(state.locations).find((location) => location.districtId === command.districtId)?.id;
+      return { kind: command.access === "unlocked" ? "district" : "scout", locationId, tone: command.access === "unlocked" ? "good" : "neutral" };
+    }
+    case "debug_grant_cash":
+      return { kind: "cash", locationId: state.player.currentLocationId ?? "garage", amount: command.amount, tone: "good" };
+    case "debug_complete_requirements":
+      return { kind: "upgrade", locationId: "garage", tone: "good" };
+    case "debug_set_rival_pressure":
+      return { kind: "sabotage", locationId: command.locationId, tone: command.amount >= 0.5 ? "warning" : "neutral" };
+    case "debug_spawn_activity":
+      return { kind: "scout", locationId: state.player.currentLocationId ?? "laundromat", tone: "neutral" };
     default:
       return null;
   }
@@ -124,7 +148,9 @@ export function App() {
   const primaryInteraction = useMemo(() => getPrimaryInteraction(state, activeTarget), [activeTarget, state]);
   const missionStep = useMemo(() => getStarterMissionStep(state, playerPosition), [playerPosition, state]);
   const routeTask = useMemo(() => selectedRouteTask(state), [state]);
-  const guidanceLocationId = routeTask?.locationId ?? missionStep.targetLocationId;
+  const activeAlarm = useMemo(() => activeMachineAlarms(state)[0], [state]);
+  const guidanceLocationId = activeAlarm?.locationId ?? routeTask?.locationId ?? missionStep.targetLocationId;
+  const guidanceLabel = activeAlarm ? "Machine alarm" : routeTask?.title;
   const report = latestDayReport(state);
 
   const addToast = useCallback((toast: Omit<ToastMessage, "id">) => {
@@ -151,7 +177,7 @@ export function App() {
 
     lastEventIdRef.current = newestEvent.id;
     addToast({
-      title: "Street update",
+      title: newestEvent.message.startsWith("ALARM") ? "Machine alarm" : newestEvent.message.startsWith("Alarm missed") ? "Alarm missed" : "Street update",
       message: newestEvent.message,
       tone: newestEvent.tone
     });
@@ -264,7 +290,7 @@ export function App() {
       <Hud state={state} />
       <MissionTracker state={state} playerPosition={playerPosition} />
       <div className="crosshair" aria-hidden="true" />
-      {entered && <GuidanceArrow label={routeTask?.title} state={state} targetLocationId={guidanceLocationId} playerHeadingDegrees={playerHeadingDegrees} playerPosition={playerPosition} />}
+      {entered && <GuidanceArrow label={guidanceLabel} state={state} targetLocationId={guidanceLocationId} playerHeadingDegrees={playerHeadingDegrees} playerPosition={playerPosition} />}
       {entered && activeTarget && primaryInteraction && (
         <div className={`target-prompt ${primaryInteraction.disabled ? "disabled" : ""}`}>
           <span className="target-name">{activeTarget.label}</span>

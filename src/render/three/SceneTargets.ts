@@ -6,7 +6,7 @@ export type SceneTarget =
   | { type: "machine"; id: MachineId; label: string }
   | { type: "placement"; id: LocationId; label: string };
 
-export type SceneFeedbackKind = "pickup" | "store" | "stock" | "install" | "cash" | "repair" | "upgrade" | "sabotage" | "vehicle";
+export type SceneFeedbackKind = "pickup" | "store" | "stock" | "install" | "cash" | "repair" | "upgrade" | "sabotage" | "fight" | "vehicle" | "scout" | "district";
 
 export interface SceneFeedbackEvent {
   amount?: number;

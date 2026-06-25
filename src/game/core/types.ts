@@ -225,6 +225,23 @@ export interface NpcController {
   cooldownHours: number;
 }
 
+export type MachineAlarmKind = "sabotage" | "undercut" | "tamper";
+export type MachineAlarmOutcome = "confronted" | "missed";
+
+export interface MachineAlarm {
+  id: string;
+  kind: MachineAlarmKind;
+  machineId: MachineId;
+  locationId: LocationId;
+  intruderFactionId: FactionId;
+  startedHour: number;
+  expiresHour: number;
+  intensity: number;
+  resolved: boolean;
+  resolvedHour?: number;
+  outcome?: MachineAlarmOutcome;
+}
+
 export type EmployeeRole = "restocker" | "collector" | "technician";
 export type EmployeeStatus = "idle" | "working" | "blocked";
 
@@ -301,6 +318,7 @@ export interface GameState {
   employees: Record<EmployeeId, Employee>;
   contracts: Record<ContractId, ServiceContract>;
   npcControllers: Record<FactionId, NpcController>;
+  machineAlarms: Record<string, MachineAlarm>;
   eventLog: GameEvent[];
   streetLife: StreetLifeState;
   mission: MissionState;
@@ -331,6 +349,12 @@ export type GameCommand =
   | { type: "set_slot_price"; actorId: FactionId; machineId: MachineId; productId: ProductId; price: number }
   | { type: "install_upgrade"; actorId: FactionId; machineId: MachineId; upgradeId: MachineUpgradeId }
   | { type: "sabotage_machine"; actorId: FactionId; machineId: MachineId }
+  | { type: "confront_alarm"; actorId: FactionId; alarmId: string }
+  | { type: "debug_grant_cash"; actorId: FactionId; amount: number }
+  | { type: "debug_complete_requirements"; actorId: FactionId }
+  | { type: "debug_set_district_access"; actorId: FactionId; districtId: DistrictId; access: DistrictAccess }
+  | { type: "debug_set_rival_pressure"; actorId: FactionId; locationId: LocationId; amount: number }
+  | { type: "debug_spawn_activity"; actorId: FactionId; activity: StreetActivityKind }
   | { type: "rival_action"; actorId: FactionId; action: "undercut" | "sabotage" | "expand"; targetMachineId?: MachineId; locationId?: LocationId };
 
 export interface CommandResult {
