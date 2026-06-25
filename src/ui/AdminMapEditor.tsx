@@ -3,6 +3,14 @@ import { useMemo, useRef, useState } from "react";
 import type { FormEvent, PointerEvent, ReactNode } from "react";
 import { worldBounds, type BuildingVisualStyle, type WorldDecorationKind, type WorldMapLayout } from "../game/content/world";
 import { createDefaultWorldMapLayout, validateWorldMapLayout } from "../game/world/mapLayoutStorage";
+import {
+  clearStoredAdminSession,
+  loadStoredAdminSession,
+  loginAdmin,
+  resetRemoteMapLayout,
+  saveRemoteMapLayout,
+  type AdminSession
+} from "../game/save/api";
 
 type EditableLayer = "roads" | "buildings" | "backdropBuildings" | "decorations" | "patrolZones";
 
@@ -92,9 +100,10 @@ function layerClass(layer: EditableLayer): string {
 }
 
 export function AdminMapEditor({ initialLayout, onReset, onSave }: AdminMapEditorProps) {
-  const [authenticated, setAuthenticated] = useState(() => window.sessionStorage.getItem("vendetta.admin") === "true");
+  const [adminSession, setAdminSession] = useState<AdminSession | null>(() => loadStoredAdminSession());
   const [credentials, setCredentials] = useState({ username: "", password: "" });
   const [loginError, setLoginError] = useState("");
+  const [saving, setSaving] = useState(false);
   const [layout, setLayout] = useState<WorldMapLayout>(() => cloneLayout(initialLayout));
   const [activeLayer, setActiveLayer] = useState<EditableLayer>("buildings");
   const [selection, setSelection] = useState<Selection>({ layer: "buildings", index: 0 });
@@ -138,14 +147,14 @@ export function AdminMapEditor({ initialLayout, onReset, onSave }: AdminMapEdito
 
   const handleLogin = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (credentials.username === "admin" && credentials.password === "admin") {
-      window.sessionStorage.setItem("vendetta.admin", "true");
-      setAuthenticated(true);
-      setLoginError("");
-      return;
-    }
-
-    setLoginError("Invalid credentials.");
+    setLoginError("");
+    loginAdmin(credentials.username, credentials.password)
+      .then((session) => {
+        setAdminSession(session);
+      })
+      .catch((error) => {
+        setLoginError(error instanceof Error ? error.message : "Admin sign in failed.");
+      });
   };
 
   const startDrag = (event: PointerEvent<SVGElement>, target: Selection, currentX: number, currentZ: number) => {
@@ -187,8 +196,23 @@ export function AdminMapEditor({ initialLayout, onReset, onSave }: AdminMapEdito
       return;
     }
 
-    onSave(layout);
-    setStatus("Map layout saved.");
+    if (!adminSession) {
+      setStatus("Admin session expired. Sign in again.");
+      return;
+    }
+
+    setSaving(true);
+    saveRemoteMapLayout(adminSession, layout)
+      .then(() => {
+        onSave(layout);
+        setStatus("Map layout saved.");
+      })
+      .catch((error) => {
+        setStatus(error instanceof Error ? error.message : "Map save failed.");
+        clearStoredAdminSession();
+        setAdminSession(null);
+      })
+      .finally(() => setSaving(false));
   };
 
   const handleReset = () => {
@@ -196,15 +220,30 @@ export function AdminMapEditor({ initialLayout, onReset, onSave }: AdminMapEdito
       return;
     }
 
-    const nextLayout = createDefaultWorldMapLayout();
-    setLayout(nextLayout);
-    setSelection({ layer: "buildings", index: 0 });
-    setActiveLayer("buildings");
-    onReset();
-    setStatus("Default map restored.");
+    if (!adminSession) {
+      setStatus("Admin session expired. Sign in again.");
+      return;
+    }
+
+    setSaving(true);
+    resetRemoteMapLayout(adminSession)
+      .then(() => {
+        const nextLayout = createDefaultWorldMapLayout();
+        setLayout(nextLayout);
+        setSelection({ layer: "buildings", index: 0 });
+        setActiveLayer("buildings");
+        onReset();
+        setStatus("Default map restored.");
+      })
+      .catch((error) => {
+        setStatus(error instanceof Error ? error.message : "Map reset failed.");
+        clearStoredAdminSession();
+        setAdminSession(null);
+      })
+      .finally(() => setSaving(false));
   };
 
-  if (!authenticated) {
+  if (!adminSession) {
     return (
       <main className="admin-shell">
         <form className="admin-login" onSubmit={handleLogin}>
@@ -213,11 +252,11 @@ export function AdminMapEditor({ initialLayout, onReset, onSave }: AdminMapEdito
             <h1>Map Editor</h1>
           </div>
           <label>
-            Username
+            Admin name
             <input autoComplete="username" value={credentials.username} onChange={(event) => setCredentials((current) => ({ ...current, username: event.target.value }))} />
           </label>
           <label>
-            Password
+            Admin PIN
             <input autoComplete="current-password" type="password" value={credentials.password} onChange={(event) => setCredentials((current) => ({ ...current, password: event.target.value }))} />
           </label>
           {loginError && <p className="admin-login-error">{loginError}</p>}
@@ -245,13 +284,13 @@ export function AdminMapEditor({ initialLayout, onReset, onSave }: AdminMapEdito
             <Undo2 size={16} aria-hidden="true" />
             Game
           </button>
-          <button onClick={handleReset} type="button">
+          <button disabled={saving} onClick={handleReset} type="button">
             <RotateCcw size={16} aria-hidden="true" />
             Reset
           </button>
-          <button className="primary" disabled={blockingIssues.length > 0} onClick={handleSave} type="button">
+          <button className="primary" disabled={blockingIssues.length > 0 || saving} onClick={handleSave} type="button">
             <Save size={16} aria-hidden="true" />
-            Save
+            {saving ? "Saving" : "Save"}
           </button>
         </div>
       </header>

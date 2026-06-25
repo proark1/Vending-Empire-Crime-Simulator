@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { ThreeScene } from "./render/three/ThreeScene";
 import type { SceneFeedbackEvent, SceneTarget } from "./render/three/SceneTargets";
 import { Dashboard } from "./ui/Dashboard";
@@ -16,6 +16,8 @@ import { ToastStack, type ToastMessage } from "./ui/ToastStack";
 import type { DayReport, GameCommand, GameState, LocationId, Vec2 } from "./game/core/types";
 import type { WorldMapLayout } from "./game/content/world";
 import { clearWorldMapLayout, loadWorldMapLayout, saveWorldMapLayout } from "./game/world/mapLayoutStorage";
+import { clearStoredGameSession, loadRemoteGame, loadRemoteMapLayout, loadStoredGameSession, loginGame, type GameSession } from "./game/save/api";
+import { loadGame } from "./game/save/storage";
 
 function targetLocationId(target: SceneTarget | null, state: GameState): LocationId | null {
   if (!target) {
@@ -134,8 +136,14 @@ function DayReportModal({ report, onClose }: { report: DayReport; onClose: () =>
   );
 }
 
-function GameApp({ mapLayout }: { mapLayout: WorldMapLayout }) {
-  const { state, sendCommand, advanceWorld, save, reload, restart } = useGame();
+interface GameAppProps {
+  initialState: GameState;
+  mapLayout: WorldMapLayout;
+  session: GameSession;
+}
+
+function GameApp({ initialState, mapLayout, session }: GameAppProps) {
+  const { state, sendCommand, advanceWorld, save, reload, restart } = useGame({ initialState, session });
   const [target, setTarget] = useState<SceneTarget | null>(null);
   const [entered, setEntered] = useState(false);
   const [playerPosition, setPlayerPosition] = useState<Vec2>({ x: -9, z: 5.9 });
@@ -320,9 +328,130 @@ function GameApp({ mapLayout }: { mapLayout: WorldMapLayout }) {
   );
 }
 
+function GameAccessGate({ mapLayout }: { mapLayout: WorldMapLayout }) {
+  const [authState, setAuthState] = useState<
+    | { status: "loading" }
+    | { status: "login"; message?: string }
+    | { initialState: GameState; session: GameSession; status: "ready" }
+  >({ status: "loading" });
+  const [credentials, setCredentials] = useState({ name: "", pin: "" });
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    const session = loadStoredGameSession();
+    if (!session) {
+      setAuthState({ status: "login" });
+      return;
+    }
+
+    let cancelled = false;
+    loadRemoteGame(session)
+      .then((remote) => {
+        if (cancelled) {
+          return;
+        }
+
+        setAuthState({
+          status: "ready",
+          session,
+          initialState: remote.save?.state ?? loadGame()
+        });
+      })
+      .catch(() => {
+        clearStoredGameSession();
+        if (!cancelled) {
+          setAuthState({ status: "login", message: "Session expired. Enter your name and PIN." });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleLogin = useCallback(
+    (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      setSubmitting(true);
+      loginGame(credentials.name, credentials.pin)
+        .then((response) => {
+          setAuthState({
+            status: "ready",
+            session: { profile: response.profile, token: response.token },
+            initialState: response.save?.state ?? loadGame()
+          });
+        })
+        .catch((error) => {
+          setAuthState({ status: "login", message: error instanceof Error ? error.message : "Sign in failed." });
+        })
+        .finally(() => setSubmitting(false));
+    },
+    [credentials.name, credentials.pin]
+  );
+
+  if (authState.status === "ready") {
+    return <GameApp key={authState.session.profile.id} initialState={authState.initialState} mapLayout={mapLayout} session={authState.session} />;
+  }
+
+  return (
+    <main className="access-shell">
+      <form className="access-panel" onSubmit={handleLogin}>
+        <div>
+          <h1>Vendetta Vending</h1>
+          <span>{authState.status === "loading" ? "Loading protected save" : "Protected game save"}</span>
+        </div>
+        <label>
+          Player name
+          <input
+            autoComplete="username"
+            disabled={authState.status === "loading" || submitting}
+            maxLength={36}
+            value={credentials.name}
+            onChange={(event) => setCredentials((current) => ({ ...current, name: event.target.value }))}
+          />
+        </label>
+        <label>
+          PIN
+          <input
+            autoComplete="current-password"
+            disabled={authState.status === "loading" || submitting}
+            inputMode="numeric"
+            maxLength={12}
+            type="password"
+            value={credentials.pin}
+            onChange={(event) => setCredentials((current) => ({ ...current, pin: event.target.value }))}
+          />
+        </label>
+        {authState.status === "login" && authState.message && <p>{authState.message}</p>}
+        <button disabled={authState.status === "loading" || submitting} type="submit">
+          {submitting ? "Opening..." : "Open save"}
+        </button>
+      </form>
+    </main>
+  );
+}
+
 export function App() {
   const [mapLayout, setMapLayout] = useState<WorldMapLayout>(() => loadWorldMapLayout());
   const isAdminRoute = window.location.pathname === "/admin";
+
+  useEffect(() => {
+    let cancelled = false;
+    loadRemoteMapLayout()
+      .then((remote) => {
+        if (!cancelled && remote.layout) {
+          saveWorldMapLayout(remote.layout);
+          setMapLayout(remote.layout);
+        }
+      })
+      .catch(() => {
+        // Local authored layout remains available if the API is unreachable.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleSaveMapLayout = useCallback((layout: WorldMapLayout) => {
     saveWorldMapLayout(layout);
@@ -338,5 +467,5 @@ export function App() {
     return <AdminMapEditor initialLayout={mapLayout} onSave={handleSaveMapLayout} onReset={handleResetMapLayout} />;
   }
 
-  return <GameApp mapLayout={mapLayout} />;
+  return <GameAccessGate mapLayout={mapLayout} />;
 }

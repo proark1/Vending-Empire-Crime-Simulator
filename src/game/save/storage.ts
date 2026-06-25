@@ -3,7 +3,7 @@ import { createInitialState } from "../content/initialState";
 
 const SAVE_KEY = "vendetta-vending.save.v1";
 
-function migrateGameState(parsed: GameState): GameState {
+export function migrateGameState(parsed: GameState): GameState {
   const baseline = createInitialState();
   if (parsed.version !== baseline.version) {
     return baseline;
