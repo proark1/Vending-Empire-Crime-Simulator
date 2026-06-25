@@ -262,7 +262,7 @@ export function createInitialState(): GameState {
         id: "intro_1",
         hour: 8,
         tone: "neutral",
-        message: "Your first battered machine is in the garage. Repair it, then place it at Foam & Fold."
+        message: "Starter cash is ready. Repair Rusty Starter in the garage, place it at Foam & Fold, then run supplier stock."
       }
     ],
     streetLife: {

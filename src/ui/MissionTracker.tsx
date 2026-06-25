@@ -1,6 +1,6 @@
-import { CheckCircle2, ClipboardList } from "lucide-react";
+import { CheckCircle2, Circle, ClipboardList } from "lucide-react";
 import type { GameState, Vec2 } from "../game/core/types";
-import { getStarterMissionStep } from "../game/core/mission";
+import { getStarterMissionStep, getStarterTutorialSteps } from "../game/core/mission";
 
 interface MissionTrackerProps {
   state: GameState;
@@ -9,6 +9,8 @@ interface MissionTrackerProps {
 
 export function MissionTracker({ state, playerPosition }: MissionTrackerProps) {
   const step = getStarterMissionStep(state, playerPosition);
+  const tutorialSteps = getStarterTutorialSteps(state);
+  const showTutorial = !state.mission.completed && tutorialSteps.some((tutorialStep) => !tutorialStep.completed);
 
   return (
     <section className="mission-tracker" aria-label="Current mission">
@@ -22,6 +24,16 @@ export function MissionTracker({ state, playerPosition }: MissionTrackerProps) {
         <span style={{ width: `${step.progressRatio * 100}%` }} />
       </div>
       <span className="mission-progress-label">{step.progressLabel}</span>
+      {showTutorial && (
+        <ol className="tutorial-steps" aria-label="Starter tutorial">
+          {tutorialSteps.map((tutorialStep) => (
+            <li className={tutorialStep.active ? "active" : ""} data-complete={tutorialStep.completed} key={tutorialStep.id}>
+              {tutorialStep.completed ? <CheckCircle2 size={14} aria-hidden="true" /> : <Circle size={14} aria-hidden="true" />}
+              <span>{tutorialStep.label}</span>
+            </li>
+          ))}
+        </ol>
+      )}
     </section>
   );
 }

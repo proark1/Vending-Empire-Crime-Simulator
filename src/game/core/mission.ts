@@ -44,6 +44,13 @@ export interface MissionStep {
   progressRatio: number;
 }
 
+export interface TutorialStep {
+  id: string;
+  label: string;
+  completed: boolean;
+  active: boolean;
+}
+
 function distance(a: Vec2, b: Vec2): number {
   return Math.hypot(a.x - b.x, a.z - b.z);
 }
@@ -89,6 +96,62 @@ function highestStoredRevenueLocation(state: GameState): LocationId | undefined 
   return installedMachines(state, state.playerFactionId)
     .slice()
     .sort((a, b) => b.revenueStored - a.revenueStored)[0]?.locationId;
+}
+
+export function getStarterTutorialSteps(state: GameState): TutorialStep[] {
+  const firstMachine = state.machines.machine_player_1;
+  const starterInstalled = (firstMachine.placementStatus ?? "installed") === "installed";
+  const starterHasEverBeenStocked = firstMachine.slots.length > 0;
+  const carriedUnits = carriedCrateUnits(state);
+  const storageUnits = garageStorageUnits(state);
+  const stockUnits = totalOwnedStockUnits(state);
+  const playerMachines = installedMachines(state, state.playerFactionId);
+  const firstCashCollected = state.progression.revenueCollectedToday > 0 || playerMachines.length > 1 || state.mission.completed;
+  const carryingGarageCrate = carriedUnits > 0 && state.player.carriedCrate?.source === "garage";
+
+  const steps = [
+    {
+      id: "repair",
+      label: "Repair Rusty Starter in Storage Garage",
+      completed: starterInstalled || firstMachine.damage <= 0
+    },
+    {
+      id: "place",
+      label: "Install it at Foam & Fold",
+      completed: starterInstalled
+    },
+    {
+      id: "buy",
+      label: "Buy a stock crate from Backdoor Supplier",
+      completed: stockUnits > 0 || starterHasEverBeenStocked
+    },
+    {
+      id: "store",
+      label: "Store supplier stock at the garage",
+      completed: storageUnits > 0 || carryingGarageCrate || starterHasEverBeenStocked
+    },
+    {
+      id: "load",
+      label: "Carry a garage crate to the machine",
+      completed: carryingGarageCrate || starterHasEverBeenStocked
+    },
+    {
+      id: "stock",
+      label: "Stock Rusty Starter and wait for sales",
+      completed: starterHasEverBeenStocked
+    },
+    {
+      id: "collect",
+      label: "Collect first cash, then expand",
+      completed: firstCashCollected
+    }
+  ];
+  const activeIndex = Math.max(0, steps.findIndex((step) => !step.completed));
+
+  return steps.map((step, index) => ({
+    ...step,
+    active: index === activeIndex && !step.completed
+  }));
 }
 
 export function getStarterMissionStep(state: GameState, playerPosition: Vec2): MissionStep {
@@ -195,8 +258,8 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
     return {
       id: "repair_starter",
       title: "Repair Rusty Starter",
-      objective: "Fix the machine in your garage before placing it.",
-      guidance: "Face Storage Garage and press E to repair the starter machine.",
+      objective: "Use the starter cash to fix the machine in your garage.",
+      guidance: "Face Storage Garage and press E to repair Rusty Starter.",
       targetLocationId: "garage",
       progressLabel: "Step 1 / 10",
       progressRatio: 1 / 10
@@ -256,7 +319,7 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
       id: "buy_stock",
       title: "Get stock",
       objective: "Pick up a starter crate from Backdoor Supplier.",
-      guidance: "Follow the yellow ping to the supplier and press E to buy one crate.",
+      guidance: "Follow the yellow ping to the supplier and press E to buy an affordable starter crate.",
       targetLocationId: "supplier",
       progressLabel: "Step 3 / 10",
       progressRatio: 3 / 10

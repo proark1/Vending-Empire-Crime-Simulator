@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createInitialState } from "../content/initialState";
 import type { GameCommand, LocationId } from "./types";
 import { reduceCommands } from "../systems/reducer";
-import { getStarterMissionStep } from "./mission";
+import { getStarterMissionStep, getStarterTutorialSteps } from "./mission";
 
 const startPosition = { x: -8, z: 1.4 };
 
@@ -27,6 +27,17 @@ describe("starter mission flow", () => {
     expect(step.targetLocationId).toBe("garage");
   });
 
+  it("shows the starter tutorial checklist on a new save", () => {
+    const steps = getStarterTutorialSteps(createInitialState());
+
+    expect(steps[0]).toMatchObject({
+      id: "repair",
+      active: true,
+      completed: false
+    });
+    expect(steps.map((step) => step.id)).toEqual(["repair", "place", "buy", "store", "load", "stock", "collect"]);
+  });
+
   it("guides the repaired starter to Foam & Fold", () => {
     const state = reduceCommands(createInitialState(), [
       visit("garage"),
@@ -36,6 +47,10 @@ describe("starter mission flow", () => {
 
     expect(step.id).toBe("install_laundromat");
     expect(step.targetLocationId).toBe("laundromat");
+
+    const steps = getStarterTutorialSteps(state);
+    expect(steps[0]).toMatchObject({ completed: true, active: false });
+    expect(steps[1]).toMatchObject({ completed: false, active: true });
   });
 
   it("guides supplier crates to the garage first", () => {

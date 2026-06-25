@@ -522,6 +522,10 @@ function AdminThreeMapEditor({ activeLayer, layout, onEditStart, onMove, onSelec
   const keysRef = useRef<Set<string>>(new Set());
   const yawRef = useRef(0);
   const pitchRef = useRef(-0.42);
+  const movementKeyCodes = useMemo(
+    () => new Set(["KeyW", "KeyA", "KeyS", "KeyD", "KeyQ", "KeyE", "ShiftLeft", "ShiftRight", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]),
+    []
+  );
 
   useEffect(() => {
     propsRef.current = { activeLayer, layout, onEditStart, onMove, onSelect, selection, snapEnabled, snapStep };
@@ -612,25 +616,31 @@ function AdminThreeMapEditor({ activeLayer, layout, onEditStart, onMove, onSelec
 
     const onPointerDown = (event: globalThis.PointerEvent) => {
       mount.focus();
-      updatePointer(event);
-      const hit = raycaster.intersectObjects(pickablesRef.current, false).find((candidate) => !candidate.object.userData.ignorePick);
-      const hitSelection = hit?.object.userData.adminSelection as Selection | undefined;
 
-      if (hitSelection) {
-        const currentItem = layerItems(propsRef.current.layout, hitSelection.layer)[hitSelection.index];
-        const point = pointOnGround(event);
-        propsRef.current.onSelect(hitSelection);
-        if (currentItem && point) {
-          propsRef.current.onEditStart();
-          const currentPosition = itemPosition(currentItem);
-          dragRef.current = {
-            ...hitSelection,
-            offsetX: point.x - currentPosition.x,
-            offsetZ: point.z - currentPosition.z
-          };
-        }
-      } else {
+      if (event.button !== 0) {
+        dragRef.current = null;
         lookDragRef.current = { x: event.clientX, y: event.clientY };
+      } else {
+        updatePointer(event);
+        const hit = raycaster.intersectObjects(pickablesRef.current, false).find((candidate) => !candidate.object.userData.ignorePick);
+        const hitSelection = hit?.object.userData.adminSelection as Selection | undefined;
+
+        if (hitSelection) {
+          const currentItem = layerItems(propsRef.current.layout, hitSelection.layer)[hitSelection.index];
+          const point = pointOnGround(event);
+          propsRef.current.onSelect(hitSelection);
+          if (currentItem && point) {
+            propsRef.current.onEditStart();
+            const currentPosition = itemPosition(currentItem);
+            dragRef.current = {
+              ...hitSelection,
+              offsetX: point.x - currentPosition.x,
+              offsetZ: point.z - currentPosition.z
+            };
+          }
+        } else {
+          lookDragRef.current = { x: event.clientX, y: event.clientY };
+        }
       }
 
       mount.setPointerCapture(event.pointerId);
@@ -672,7 +682,7 @@ function AdminThreeMapEditor({ activeLayer, layout, onEditStart, onMove, onSelec
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (["KeyW", "KeyA", "KeyS", "KeyD", "KeyQ", "KeyE", "ShiftLeft", "ShiftRight"].includes(event.code)) {
+      if (movementKeyCodes.has(event.code)) {
         keysRef.current.add(event.code);
         event.preventDefault();
       }
@@ -682,12 +692,26 @@ function AdminThreeMapEditor({ activeLayer, layout, onEditStart, onMove, onSelec
       keysRef.current.delete(event.code);
     };
 
+    const clearInputState = () => {
+      keysRef.current.clear();
+      dragRef.current = null;
+      lookDragRef.current = null;
+    };
+
+    const onContextMenu = (event: MouseEvent) => {
+      event.preventDefault();
+    };
+
     mount.addEventListener("pointerdown", onPointerDown);
     mount.addEventListener("pointermove", onPointerMove);
     mount.addEventListener("pointerup", stopPointerAction);
     mount.addEventListener("pointercancel", stopPointerAction);
     mount.addEventListener("keydown", onKeyDown);
     mount.addEventListener("keyup", onKeyUp);
+    mount.addEventListener("blur", clearInputState);
+    mount.addEventListener("contextmenu", onContextMenu);
+    window.addEventListener("blur", clearInputState);
+    mount.focus({ preventScroll: true });
 
     const clock = new THREE.Clock();
     let animationId = 0;
@@ -696,6 +720,24 @@ function AdminThreeMapEditor({ activeLayer, layout, onEditStart, onMove, onSelec
       const delta = Math.min(0.05, clock.getDelta());
       const keys = keysRef.current;
       const speed = (keys.has("ShiftLeft") || keys.has("ShiftRight") ? 24 : 10) * delta;
+      const turnSpeed = (keys.has("ShiftLeft") || keys.has("ShiftRight") ? 1.9 : 1.15) * delta;
+
+      if (keys.has("ArrowLeft")) {
+        yawRef.current += turnSpeed;
+      }
+      if (keys.has("ArrowRight")) {
+        yawRef.current -= turnSpeed;
+      }
+      if (keys.has("ArrowUp")) {
+        pitchRef.current = clamp(pitchRef.current + turnSpeed, -1.25, 0.18);
+      }
+      if (keys.has("ArrowDown")) {
+        pitchRef.current = clamp(pitchRef.current - turnSpeed, -1.25, 0.18);
+      }
+      if (keys.has("ArrowLeft") || keys.has("ArrowRight") || keys.has("ArrowUp") || keys.has("ArrowDown")) {
+        updateCameraRotation();
+      }
+
       const forward = new THREE.Vector3();
       camera.getWorldDirection(forward);
       forward.y = 0;
@@ -740,6 +782,10 @@ function AdminThreeMapEditor({ activeLayer, layout, onEditStart, onMove, onSelec
       mount.removeEventListener("pointercancel", stopPointerAction);
       mount.removeEventListener("keydown", onKeyDown);
       mount.removeEventListener("keyup", onKeyUp);
+      mount.removeEventListener("blur", clearInputState);
+      mount.removeEventListener("contextmenu", onContextMenu);
+      window.removeEventListener("blur", clearInputState);
+      clearInputState();
       if (mapGroupRef.current) {
         scene.remove(mapGroupRef.current);
         disposeThreeObject(mapGroupRef.current);
@@ -753,7 +799,7 @@ function AdminThreeMapEditor({ activeLayer, layout, onEditStart, onMove, onSelec
       mapGroupRef.current = null;
       pickablesRef.current = [];
     };
-  }, []);
+  }, [movementKeyCodes]);
 
   useEffect(() => {
     const scene = sceneRef.current;
@@ -816,7 +862,7 @@ function AdminThreeMapEditor({ activeLayer, layout, onEditStart, onMove, onSelec
     <div className="admin-3d-stage" ref={mountRef} tabIndex={0}>
       <div className="admin-3d-help">
         <strong>3D edit</strong>
-        <span>Click an object to select. Drag it across the ground to move it. Hold and drag empty space to look around. WASD flies, Q/E changes height, Shift speeds up.</span>
+        <span>Click an object to select. Drag it across the ground to move it. WASD flies, Q/E changes height, arrow keys turn, Shift speeds up. Drag empty space or right-drag to look around.</span>
       </div>
     </div>
   );

@@ -3,6 +3,40 @@ import { createInitialState } from "../content/initialState";
 
 const SAVE_KEY = "vendetta-vending.save.v1";
 
+function isInstalledMachine(machine: { placementStatus?: string }): boolean {
+  return (machine.placementStatus ?? "installed") === "installed";
+}
+
+function ensureStarterBankroll(state: GameState, baseline: GameState): GameState {
+  const player = state.factions[state.playerFactionId];
+  const starter = state.machines.machine_player_1;
+  if (!player || !starter) {
+    return state;
+  }
+
+  const playerHasInstalledMachine = Object.values(state.machines).some((machine) => machine.ownerFactionId === state.playerFactionId && isInstalledMachine(machine));
+  const routeHasNotStarted = !playerHasInstalledMachine && !state.progression.starterMachinePlaced;
+  const starterStoredAndBroken = !isInstalledMachine(starter) && starter.damage > 0;
+  const starterCash = baseline.factions[baseline.playerFactionId].money;
+
+  if (routeHasNotStarted && starterStoredAndBroken && player.money < starterCash) {
+    player.money = starterCash;
+    if (!state.eventLog.some((event) => event.id === "tutorial_starter_float")) {
+      state.eventLog = [
+        {
+          id: "tutorial_starter_float",
+          hour: state.worldTimeHours,
+          tone: "good" as const,
+          message: `Starter tutorial float restored: $${starterCash} is available for the repair and first stock run.`
+        },
+        ...state.eventLog
+      ].slice(0, 80);
+    }
+  }
+
+  return state;
+}
+
 export function migrateGameState(parsed: GameState): GameState {
   const baseline = createInitialState();
   if (parsed.version !== baseline.version) {
@@ -49,7 +83,7 @@ export function migrateGameState(parsed: GameState): GameState {
     ])
   );
 
-  return {
+  const migrated: GameState = {
     ...baseline,
     ...parsed,
     nextEmployeeNumber: parsed.nextEmployeeNumber ?? baseline.nextEmployeeNumber,
@@ -210,6 +244,8 @@ export function migrateGameState(parsed: GameState): GameState {
       firstRetaliationTriggered: parsed.progression?.firstRetaliationTriggered ?? baseline.progression.firstRetaliationTriggered
     }
   };
+
+  return ensureStarterBankroll(migrated, baseline);
 }
 
 export function loadGame(): GameState {
