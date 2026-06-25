@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { machinePlacementAnchors, worldBuildings } from "./world";
+import { defaultWorldMapLayout, locations, machinePlacementAnchors, patrolZones, policePatrolPaths, trafficLoops, worldBuildings, worldDecorations, worldInteriors, worldRoads } from "./world";
 import { createInitialState } from "./initialState";
+import { pathOnRoads, pointOnRoad } from "../world/roadGraph";
+import { validateWorldMapLayout } from "../world/mapLayoutStorage";
 
 function boxFromBuilding(building: { depth: number; width: number; x: number; z: number }) {
   return {
@@ -52,6 +54,63 @@ describe("world content", () => {
 
       expect(buildingBoxes.some((box) => contains(box, center)), `${locationId} machine center overlaps a building`).toBe(false);
       expect(buildingBoxes.some((box) => contains(box, front)), `${locationId} machine front faces into a building`).toBe(false);
+    }
+  });
+
+  it("keeps every traffic loop on authored street rectangles", () => {
+    for (const loop of trafficLoops) {
+      for (const point of loop.path) {
+        expect(pointOnRoad(point, worldRoads), `${loop.id} has a path point off-road at ${point.x},${point.z}`).toBe(true);
+      }
+
+      expect(pathOnRoads(loop.path, worldRoads), `${loop.id} drives outside road geometry`).toBe(true);
+    }
+  });
+
+  it("keeps authored roads clear of building footprints", () => {
+    const blockingIssues = validateWorldMapLayout(defaultWorldMapLayout).filter((issue) => issue.severity === "error");
+
+    expect(blockingIssues).toEqual([]);
+  });
+
+  it("keeps police patrol cars and foot patrols inside police spaces", () => {
+    for (const loop of trafficLoops.filter((trafficLoop) => trafficLoop.kind === "police")) {
+      expect(pathOnRoads(loop.path, worldRoads), `${loop.id} police car leaves the road network`).toBe(true);
+    }
+
+    for (const patrol of policePatrolPaths) {
+      const zone = patrolZones.find((candidate) => candidate.id === patrol.zoneId);
+      expect(zone, `${patrol.id} references an unknown patrol zone`).toBeDefined();
+
+      if (!zone) {
+        continue;
+      }
+
+      for (const point of patrol.path) {
+        const distance = Math.hypot(point.x - zone.x, point.z - zone.z);
+        expect(distance, `${patrol.id} foot patrol leaves ${zone.id}`).toBeLessThanOrEqual(zone.radius + 0.1);
+      }
+    }
+  });
+
+  it("ties walkable interiors to real locations and cutaway buildings", () => {
+    for (const interior of worldInteriors) {
+      expect(locations[interior.locationId], `${interior.id} references an unknown location`).toBeDefined();
+      expect(
+        worldBuildings.some((building) => building.locationId === interior.locationId),
+        `${interior.id} has no matching cutaway building`
+      ).toBe(true);
+    }
+  });
+
+  it("defines editable decoration props with stable ids", () => {
+    const ids = new Set<string>();
+    for (const decoration of worldDecorations) {
+      expect(decoration.id).toBeTruthy();
+      expect(ids.has(decoration.id), `${decoration.id} is duplicated`).toBe(false);
+      ids.add(decoration.id);
+      expect(Number.isFinite(decoration.x), `${decoration.id} has invalid x`).toBe(true);
+      expect(Number.isFinite(decoration.z), `${decoration.id} has invalid z`).toBe(true);
     }
   });
 });

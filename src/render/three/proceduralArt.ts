@@ -245,6 +245,35 @@ function addWindows(group: THREE.Group, width: number, height: number, depth: nu
       group.add(sill);
     }
   }
+
+  const sideRows = Math.max(1, Math.floor(buildingHeight / 1.55));
+  const sideCols = Math.max(1, Math.floor(depth / 1.45));
+  for (let row = 0; row < sideRows; row += 1) {
+    const y = 1.05 + row * 0.92;
+    if (y > height - 0.45) {
+      continue;
+    }
+
+    for (let col = 0; col < sideCols; col += 1) {
+      if ((row + col) % 2 === 0 && style !== "arcade") {
+        continue;
+      }
+
+      const z = -depth / 2 + 0.65 + col * ((depth - 1.3) / Math.max(1, sideCols - 1));
+      for (const side of [-1, 1] as const) {
+        const x = side * (width / 2 + 0.012);
+        addPlane(group, 0.38, 0.34, frameMaterial, new THREE.Vector3(x, y, z), side > 0 ? Math.PI / 2 : -Math.PI / 2);
+        addPlane(group, 0.3, 0.26, windowMaterial, new THREE.Vector3(x + side * 0.002, y, z), side > 0 ? Math.PI / 2 : -Math.PI / 2);
+      }
+    }
+  }
+
+  const rearCols = Math.max(1, Math.floor(width / 1.9));
+  for (let col = 0; col < rearCols; col += 1) {
+    const x = -width / 2 + 0.7 + col * ((width - 1.4) / Math.max(1, rearCols - 1));
+    addPlane(group, 0.4, 0.34, frameMaterial, new THREE.Vector3(x, Math.min(height - 0.55, 1.3), depth / 2 + 0.012), Math.PI);
+    addPlane(group, 0.31, 0.25, windowMaterial, new THREE.Vector3(x, Math.min(height - 0.55, 1.3), depth / 2 + 0.014), Math.PI);
+  }
 }
 
 function addFacadeDetails(group: THREE.Group, width: number, depth: number, height: number, style: BuildingStyle, accent: string): void {
@@ -338,6 +367,17 @@ function addFacadeDetails(group: THREE.Group, width: number, depth: number, heig
   fan.position.set(hvac.position.x, hvac.position.y + 0.01, hvac.position.z - 0.3);
   fan.rotation.x = Math.PI / 2;
   group.add(fan);
+
+  const roofVentMaterial = new THREE.MeshStandardMaterial({ color: "#94a3b8", roughness: 0.46, metalness: 0.36 });
+  for (const x of [-width * 0.22, width * 0.18]) {
+    const ventPipe = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 0.34, 12), roofVentMaterial);
+    ventPipe.position.set(x, height + 0.34, depth * 0.2);
+    ventPipe.castShadow = true;
+    group.add(ventPipe);
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.1, 0.055, 12), roofVentMaterial);
+    cap.position.set(x, height + 0.54, depth * 0.2);
+    group.add(cap);
+  }
 }
 
 export function createBuilding(width: number, depth: number, height: number, style: BuildingStyle, signText: string): THREE.Group {

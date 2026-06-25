@@ -1474,6 +1474,313 @@ kbd {
   }
 }
 
+.admin-shell {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(2, 6, 23, 0.98)),
+    #0f172a;
+  color: #f8fafc;
+}
+
+.admin-login {
+  align-self: center;
+  justify-self: center;
+  display: grid;
+  gap: 12px;
+  width: min(360px, calc(100vw - 32px));
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  box-shadow: 0 24px 90px rgba(0, 0, 0, 0.42);
+}
+
+.admin-login > div:first-child,
+.admin-header > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.admin-login h1,
+.admin-header h1,
+.admin-inspector h2 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.admin-login label,
+.admin-field-grid label {
+  display: grid;
+  gap: 5px;
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.admin-login input,
+.admin-field-grid input,
+.admin-field-grid select {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid rgba(226, 232, 240, 0.18);
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.8);
+  color: #f8fafc;
+  padding: 7px 9px;
+  font: inherit;
+}
+
+.admin-login button,
+.admin-actions button,
+.admin-layer-tabs button,
+.admin-object-list button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+  border: 1px solid rgba(226, 232, 240, 0.16);
+  border-radius: 7px;
+  background: rgba(30, 41, 59, 0.78);
+  color: #f8fafc;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.admin-login button:hover,
+.admin-actions button:hover,
+.admin-layer-tabs button:hover,
+.admin-object-list button:hover {
+  border-color: rgba(45, 212, 191, 0.38);
+}
+
+.admin-login-error {
+  margin: 0;
+  color: #fecdd3;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.admin-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 62px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(15, 23, 42, 0.96);
+}
+
+.admin-header span {
+  display: block;
+  margin-top: 2px;
+  color: #93c5fd;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.admin-actions button.primary {
+  border-color: rgba(45, 212, 191, 0.55);
+  background: rgba(13, 148, 136, 0.85);
+}
+
+.admin-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.admin-editor {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr) 320px;
+  min-height: 0;
+}
+
+.admin-sidebar,
+.admin-inspector {
+  min-height: 0;
+  overflow: auto;
+  border-right: 1px solid var(--line);
+  background: rgba(15, 23, 42, 0.82);
+}
+
+.admin-inspector {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding: 12px;
+  border-right: 0;
+  border-left: 1px solid var(--line);
+}
+
+.admin-layer-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(15, 23, 42, 0.96);
+}
+
+.admin-layer-tabs button.active,
+.admin-object-list button.active {
+  border-color: rgba(45, 212, 191, 0.5);
+  background: rgba(45, 212, 191, 0.14);
+}
+
+.admin-object-list {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+}
+
+.admin-object-list button {
+  justify-content: space-between;
+  width: 100%;
+  text-align: left;
+}
+
+.admin-object-list span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-object-list small {
+  flex: 0 0 auto;
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.admin-map-panel {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 14px;
+  background: #020617;
+}
+
+.admin-map {
+  width: 100%;
+  height: 100%;
+  border: 1px solid rgba(226, 232, 240, 0.14);
+  border-radius: 8px;
+  background: #111827;
+  touch-action: none;
+}
+
+.admin-map-ground {
+  fill: #111827;
+}
+
+.admin-map-object {
+  cursor: grab;
+  vector-effect: non-scaling-stroke;
+}
+
+.admin-map-object.roads {
+  fill: #2f3847;
+  stroke: #64748b;
+  stroke-width: 0.16;
+}
+
+.admin-map-object.buildings {
+  fill: #0f766e;
+  stroke: #99f6e4;
+  stroke-width: 0.14;
+}
+
+.admin-map-object.backdropBuildings {
+  fill: #334155;
+  opacity: 0.72;
+  stroke: #94a3b8;
+  stroke-width: 0.12;
+}
+
+.admin-map-object.decorations {
+  fill: #f59e0b;
+  stroke: #fef3c7;
+  stroke-width: 0.14;
+}
+
+.admin-map-object.patrolZones {
+  fill: rgba(96, 165, 250, 0.1);
+  stroke: #93c5fd;
+  stroke-width: 0.22;
+}
+
+.admin-map-object[data-selected="true"] {
+  filter: drop-shadow(0 0 4px rgba(45, 212, 191, 0.95));
+  stroke: #f8fafc;
+  stroke-width: 0.36;
+}
+
+.admin-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.admin-field-grid .wide {
+  grid-column: 1 / -1;
+}
+
+.admin-validation {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.admin-validation h3 {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  color: #f8fafc;
+  font-size: 13px;
+}
+
+.admin-validation p,
+.admin-status {
+  margin: 0;
+  color: #cbd5e1;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.admin-validation p.error {
+  color: #fecdd3;
+}
+
+.admin-validation p.warning {
+  color: #fde68a;
+}
+
+.admin-status {
+  color: #99f6e4;
+  font-weight: 900;
+}
+
 @media (max-width: 820px) {
   .hud {
     top: 10px;
@@ -1578,5 +1885,25 @@ kbd {
   .tab svg {
     width: 18px;
     height: 18px;
+  }
+
+  .admin-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .admin-editor {
+    grid-template-columns: 1fr;
+    grid-template-rows: 180px minmax(280px, 1fr) 280px;
+  }
+
+  .admin-sidebar,
+  .admin-inspector {
+    border: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .admin-layer-tabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }

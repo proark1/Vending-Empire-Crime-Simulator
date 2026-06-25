@@ -7,12 +7,15 @@ import { InteractionPanel } from "./ui/InteractionPanel";
 import { Minimap } from "./ui/Minimap";
 import { MissionTracker } from "./ui/MissionTracker";
 import { GuidanceArrow } from "./ui/GuidanceArrow";
+import { AdminMapEditor } from "./ui/AdminMapEditor";
 import { getStarterMissionStep } from "./game/core/mission";
 import { activeMachineAlarms, latestDayReport, selectedRouteTask } from "./game/core/selectors";
 import { executePrimaryInteraction, getPrimaryInteraction } from "./ui/interactionActions";
 import { useGame } from "./hooks/useGame";
 import { ToastStack, type ToastMessage } from "./ui/ToastStack";
 import type { DayReport, GameCommand, GameState, LocationId, Vec2 } from "./game/core/types";
+import type { WorldMapLayout } from "./game/content/world";
+import { clearWorldMapLayout, loadWorldMapLayout, saveWorldMapLayout } from "./game/world/mapLayoutStorage";
 
 function targetLocationId(target: SceneTarget | null, state: GameState): LocationId | null {
   if (!target) {
@@ -131,7 +134,7 @@ function DayReportModal({ report, onClose }: { report: DayReport; onClose: () =>
   );
 }
 
-export function App() {
+function GameApp({ mapLayout }: { mapLayout: WorldMapLayout }) {
   const { state, sendCommand, advanceWorld, save, reload, restart } = useGame();
   const [target, setTarget] = useState<SceneTarget | null>(null);
   const [entered, setEntered] = useState(false);
@@ -280,6 +283,7 @@ export function App() {
     <main className="game-shell">
       <ThreeScene
         guidanceLocationId={guidanceLocationId}
+        mapLayout={mapLayout}
         state={state}
         feedbackEvent={sceneFeedback}
         onPlayerPositionChange={setPlayerPosition}
@@ -314,4 +318,25 @@ export function App() {
       <ToastStack messages={toasts} />
     </main>
   );
+}
+
+export function App() {
+  const [mapLayout, setMapLayout] = useState<WorldMapLayout>(() => loadWorldMapLayout());
+  const isAdminRoute = window.location.pathname === "/admin";
+
+  const handleSaveMapLayout = useCallback((layout: WorldMapLayout) => {
+    saveWorldMapLayout(layout);
+    setMapLayout(loadWorldMapLayout());
+  }, []);
+
+  const handleResetMapLayout = useCallback(() => {
+    clearWorldMapLayout();
+    setMapLayout(loadWorldMapLayout());
+  }, []);
+
+  if (isAdminRoute) {
+    return <AdminMapEditor initialLayout={mapLayout} onSave={handleSaveMapLayout} onReset={handleResetMapLayout} />;
+  }
+
+  return <GameApp mapLayout={mapLayout} />;
 }
