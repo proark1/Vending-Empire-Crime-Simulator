@@ -702,7 +702,7 @@ async function handleAudioConfigRead(response) {
   await ensureDatabase();
   const result = await getPool().query("SELECT config, updated_at, updated_by, revision FROM audio_configs WHERE id = 'default'");
   jsonResponse(response, 200, {
-    config: result.rows[0]?.config ?? null,
+    config: result.rows[0]?.config ? await enrichAudioConfigFileSizes(result.rows[0].config) : null,
     updatedAt: result.rows[0]?.updated_at ?? null,
     updatedBy: result.rows[0]?.updated_by ?? null,
     revision: result.rows[0]?.revision ?? null
@@ -931,8 +931,8 @@ function normalizeAudioProviderSettings(candidate, existing = null, options = {}
   };
 }
 
-function redactAudioProviderSettings(settings) {
-  const normalized = normalizeAudioProviderSettings(settings);
+async function redactAudioProviderSettings(settings) {
+  const normalized = await enrichProviderFileSizes(settings);
   return {
     ...normalized,
     apiKey: "",
@@ -944,7 +944,7 @@ async function handleAudioProviderSettingsRead(request, response) {
   await requireAdmin(request);
   const result = await getPool().query("SELECT settings, updated_at, updated_by, revision FROM audio_provider_settings WHERE id = 'default'");
   jsonResponse(response, 200, {
-    settings: redactAudioProviderSettings(result.rows[0]?.settings ?? null),
+    settings: await redactAudioProviderSettings(result.rows[0]?.settings ?? null),
     updatedAt: result.rows[0]?.updated_at ?? null,
     updatedBy: result.rows[0]?.updated_by ?? null,
     revision: result.rows[0]?.revision ?? null
@@ -977,7 +977,7 @@ async function handleAudioProviderSettingsSave(request, response, body) {
   recordEvent("info", "audio_provider_saved", "Audio provider settings saved.", { revision: row.revision, updatedBy: admin.name });
   jsonResponse(response, 200, {
     ok: true,
-    settings: redactAudioProviderSettings(row.settings),
+    settings: await redactAudioProviderSettings(row.settings),
     updatedAt: row.updated_at,
     updatedBy: row.updated_by,
     revision: row.revision
@@ -994,6 +994,70 @@ function safeFileSegment(value) {
 
 function generatedAudioUrl(filename) {
   return `/generated-audio/${encodeURIComponent(filename)}`;
+}
+
+function generatedAudioFilePathFromUrl(urlValue) {
+  const urlString = normalizeAudioProviderString(urlValue);
+  if (!urlString.startsWith("/generated-audio/")) {
+    return null;
+  }
+
+  let safeName = "";
+  try {
+    safeName = path.basename(decodeURIComponent(urlString.slice("/generated-audio/".length)));
+  } catch {
+    return null;
+  }
+
+  if (!safeName) {
+    return null;
+  }
+
+  const filePath = path.normalize(path.join(generatedAudioDir, safeName));
+  return filePath.startsWith(generatedAudioDir) ? filePath : null;
+}
+
+async function generatedAudioSizeFromUrl(urlValue) {
+  const filePath = generatedAudioFilePathFromUrl(urlValue);
+  if (!filePath) {
+    return null;
+  }
+
+  try {
+    const fileStat = await stat(filePath);
+    return fileStat.isFile() ? fileStat.size : null;
+  } catch {
+    return null;
+  }
+}
+
+async function enrichAudioConfigFileSizes(config) {
+  if (!config || typeof config !== "object" || !Array.isArray(config.assets)) {
+    return config;
+  }
+
+  const assets = await Promise.all(config.assets.map(async (asset) => {
+    if (!asset || typeof asset !== "object" || asset.sizeBytes) {
+      return asset;
+    }
+
+    const sizeBytes = await generatedAudioSizeFromUrl(asset.url);
+    return sizeBytes ? { ...asset, sizeBytes } : asset;
+  }));
+  return { ...config, assets };
+}
+
+async function enrichProviderFileSizes(settings) {
+  const normalized = normalizeAudioProviderSettings(settings);
+  const generationPrompts = await Promise.all(normalized.generationPrompts.map(async (prompt) => {
+    if (prompt.generatedSizeBytes || !prompt.generatedUrl) {
+      return prompt;
+    }
+
+    const sizeBytes = await generatedAudioSizeFromUrl(prompt.generatedUrl);
+    return sizeBytes ? { ...prompt, generatedSizeBytes: sizeBytes } : prompt;
+  }));
+  return { ...normalized, generationPrompts };
 }
 
 function findVoiceProfile(settings, prompt) {
@@ -1302,12 +1366,8 @@ const contentTypes = {
 };
 
 async function serveGeneratedAudio(response, url) {
-  const prefix = "/generated-audio/";
-  const requestedName = decodeURIComponent(url.pathname.slice(prefix.length));
-  const safeName = path.basename(requestedName);
-  const filePath = path.normalize(path.join(generatedAudioDir, safeName));
-
-  if (!safeName || !filePath.startsWith(generatedAudioDir)) {
+  const filePath = generatedAudioFilePathFromUrl(url.pathname);
+  if (!filePath) {
     jsonResponse(response, 403, { error: "Forbidden." });
     return;
   }

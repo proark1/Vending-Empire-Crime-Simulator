@@ -5,6 +5,7 @@ export interface AudioAsset {
   id: string;
   label: string;
   loop: boolean;
+  sizeBytes?: number | null;
   url: string;
   volume: number;
 }
@@ -150,6 +151,7 @@ export function normalizeAudioConfig(candidate: unknown): AudioConfig {
       id: stringValue(asset.id, idFromLabel(label, `asset_${index + 1}`)),
       label,
       loop: booleanValue(asset.loop, category === "music"),
+      sizeBytes: typeof asset.sizeBytes === "number" && Number.isFinite(asset.sizeBytes) ? Math.max(0, Math.round(asset.sizeBytes)) : null,
       url: stringValue(asset.url),
       volume: clamp(asset.volume, 0.8)
     };

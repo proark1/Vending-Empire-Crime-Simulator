@@ -567,7 +567,7 @@ export function normalizeAudioProviderSettings(candidate: unknown): AudioProvide
         prompt: stringValue(prompt.prompt, fallback?.prompt ?? ""),
         purpose: purposeValue(prompt.purpose ?? fallback?.purpose),
         trigger: stringValue(prompt.trigger, fallback?.trigger ?? "feedback.cash"),
-        voiceProfileId: stringValue(prompt.voiceProfileId)
+        voiceProfileId: stringValue(prompt.voiceProfileId) || fallback?.voiceProfileId || ""
       };
     }),
     hasApiKey: booleanValue(input.hasApiKey, Boolean(input.apiKey)),

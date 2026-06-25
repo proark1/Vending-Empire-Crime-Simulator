@@ -2101,8 +2101,8 @@ kbd {
   display: grid;
   align-items: center;
   gap: 8px;
-  min-width: 1040px;
-  grid-template-columns: 110px 130px 150px minmax(240px, 1fr) 82px 76px 104px 38px;
+  min-width: 1130px;
+  grid-template-columns: 110px 130px 150px minmax(240px, 1fr) 82px 76px 86px 104px 38px;
 }
 
 .admin-audio-row.cue {

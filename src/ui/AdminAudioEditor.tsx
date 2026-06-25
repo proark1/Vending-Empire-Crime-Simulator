@@ -88,8 +88,20 @@ function formatBytes(bytes: number | null | undefined): string {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
+function generatedAssetId(prompt: Pick<ElevenLabsGenerationPrompt, "id">): string {
+  return `generated_${prompt.id}`;
+}
+
+function generatedAudioInfo(config: AudioConfig, prompt: ElevenLabsGenerationPrompt): { sizeBytes: number | null | undefined; url: string } {
+  const asset = config.assets.find((candidate) => candidate.id === generatedAssetId(prompt));
+  return {
+    sizeBytes: prompt.generatedSizeBytes ?? asset?.sizeBytes,
+    url: prompt.generatedUrl || asset?.url || ""
+  };
+}
+
 function configWithGeneratedAsset(config: AudioConfig, prompts: ElevenLabsGenerationPrompt[], asset: AudioAsset): AudioConfig {
-  const sourcePrompt = prompts.find((prompt) => `generated_${prompt.id}` === asset.id);
+  const sourcePrompt = prompts.find((prompt) => generatedAssetId(prompt) === asset.id);
   const nextAssets = config.assets.some((candidate) => candidate.id === asset.id)
     ? config.assets.map((candidate) => candidate.id === asset.id ? { ...candidate, ...asset } : candidate)
     : [...config.assets, asset];
@@ -684,39 +696,42 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
             {voicePromptRows.length === 0 ? (
               <p>No voice text prompts configured.</p>
             ) : (
-              voicePromptRows.map(({ index, prompt }) => (
-                <div className="admin-audio-row voice-text" key={`voice-text-${prompt.id}-${index}`}>
-                  <label className="admin-audio-compact-check">
-                    <input checked={prompt.enabled} type="checkbox" onChange={(event) => updateGenerationPrompt(index, { enabled: event.target.checked })} />
-                    On
-                  </label>
-                  <input aria-label="Voice prompt label" value={prompt.label} onChange={(event) => updateGenerationPrompt(index, { label: event.target.value })} />
-                  <select aria-label="Voice prompt trigger" value={prompt.trigger} onChange={(event) => updateGenerationPrompt(index, { trigger: event.target.value })}>
-                    {audioTriggerOptions.filter((option) => option.category === "voice").map((option) => (
-                      <option key={option.trigger} value={option.trigger}>{option.label}</option>
-                    ))}
-                  </select>
-                  <select aria-label="Voice prompt profile" value={prompt.voiceProfileId} onChange={(event) => updateGenerationPrompt(index, { voiceProfileId: event.target.value })}>
-                    <option value="">No voice profile</option>
-                    {providerSettings.voiceProfiles.map((profile) => (
-                      <option key={profile.id} value={profile.id}>{profile.label || profile.id}</option>
-                    ))}
-                  </select>
-                  <textarea aria-label="Voice text prompt" value={prompt.prompt} onChange={(event) => updateGenerationPrompt(index, { prompt: event.target.value })} />
-                  <textarea aria-label="Voice direction negative prompt" value={prompt.negativePrompt} onChange={(event) => updateGenerationPrompt(index, { negativePrompt: event.target.value })} />
-                  <input aria-label="Voice duration" max="30" min="0.5" step="0.5" type="number" value={prompt.durationSeconds} onChange={(event) => updateGenerationPrompt(index, { durationSeconds: Number(event.target.value) })} />
-                  <span className="admin-audio-file-size">{formatBytes(prompt.generatedSizeBytes)}</span>
-                  <button disabled={!prompt.generatedUrl} onClick={() => handlePreview({ category: "voice", id: prompt.id, label: prompt.label, loop: false, url: prompt.generatedUrl ?? "", volume: 1 })} type="button">
-                    <Play size={14} aria-hidden="true" />
-                  </button>
-                  <button disabled={Boolean(generatingPromptId)} onClick={() => handleGeneratePrompt(index)} type="button">
-                    {generatingPromptId === prompt.id ? "Generating" : "Generate"}
-                  </button>
-                  <button onClick={() => handleCopyPrompt(prompt.prompt)} type="button">
-                    <Copy size={14} aria-hidden="true" />
-                  </button>
-                </div>
-              ))
+              voicePromptRows.map(({ index, prompt }) => {
+                const generated = generatedAudioInfo(config, prompt);
+                return (
+                  <div className="admin-audio-row voice-text" key={`voice-text-${prompt.id}-${index}`}>
+                    <label className="admin-audio-compact-check">
+                      <input checked={prompt.enabled} type="checkbox" onChange={(event) => updateGenerationPrompt(index, { enabled: event.target.checked })} />
+                      On
+                    </label>
+                    <input aria-label="Voice prompt label" value={prompt.label} onChange={(event) => updateGenerationPrompt(index, { label: event.target.value })} />
+                    <select aria-label="Voice prompt trigger" value={prompt.trigger} onChange={(event) => updateGenerationPrompt(index, { trigger: event.target.value })}>
+                      {audioTriggerOptions.filter((option) => option.category === "voice").map((option) => (
+                        <option key={option.trigger} value={option.trigger}>{option.label}</option>
+                      ))}
+                    </select>
+                    <select aria-label="Voice prompt profile" value={prompt.voiceProfileId} onChange={(event) => updateGenerationPrompt(index, { voiceProfileId: event.target.value })}>
+                      <option value="">No voice profile</option>
+                      {providerSettings.voiceProfiles.map((profile) => (
+                        <option key={profile.id} value={profile.id}>{profile.label || profile.id}</option>
+                      ))}
+                    </select>
+                    <textarea aria-label="Voice text prompt" value={prompt.prompt} onChange={(event) => updateGenerationPrompt(index, { prompt: event.target.value })} />
+                    <textarea aria-label="Voice direction negative prompt" value={prompt.negativePrompt} onChange={(event) => updateGenerationPrompt(index, { negativePrompt: event.target.value })} />
+                    <input aria-label="Voice duration" max="30" min="0.5" step="0.5" type="number" value={prompt.durationSeconds} onChange={(event) => updateGenerationPrompt(index, { durationSeconds: Number(event.target.value) })} />
+                    <span className="admin-audio-file-size">{formatBytes(generated.sizeBytes)}</span>
+                    <button disabled={!generated.url} onClick={() => handlePreview({ category: "voice", id: prompt.id, label: prompt.label, loop: false, url: generated.url, volume: 1 })} type="button">
+                      <Play size={14} aria-hidden="true" />
+                    </button>
+                    <button disabled={Boolean(generatingPromptId)} onClick={() => handleGeneratePrompt(index)} type="button">
+                      {generatingPromptId === prompt.id ? "Generating" : "Generate"}
+                    </button>
+                    <button onClick={() => handleCopyPrompt(prompt.prompt)} type="button">
+                      <Copy size={14} aria-hidden="true" />
+                    </button>
+                  </div>
+                );
+              })
             )}
           </div>
 
@@ -738,45 +753,48 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
             {providerSettings.generationPrompts.length === 0 ? (
               <p>No ElevenLabs prompts configured.</p>
             ) : (
-              providerSettings.generationPrompts.map((prompt, index) => (
-                <div className="admin-audio-row prompt" key={`${prompt.id}-${index}`}>
-                  <label className="admin-audio-compact-check">
-                    <input checked={prompt.enabled} type="checkbox" onChange={(event) => updateGenerationPrompt(index, { enabled: event.target.checked })} />
-                    On
-                  </label>
-                  <select value={prompt.purpose} onChange={(event) => updateGenerationPrompt(index, { purpose: event.target.value as AudioCategory })}>
-                    {Object.entries(categoryLabels).map(([category, label]) => (
-                      <option key={category} value={category}>{label}</option>
-                    ))}
-                  </select>
-                  <input aria-label="Prompt id" value={prompt.id} onChange={(event) => updateGenerationPrompt(index, { id: slug(event.target.value, prompt.id || `prompt_${index + 1}`) })} />
-                  <input aria-label="Prompt label" value={prompt.label} onChange={(event) => updateGenerationPrompt(index, { label: event.target.value })} />
-                  <select aria-label="Prompt trigger" value={prompt.trigger} onChange={(event) => updateGenerationPrompt(index, { trigger: event.target.value })}>
-                    {audioTriggerOptions.map((option) => (
-                      <option key={option.trigger} value={option.trigger}>{option.label}</option>
-                    ))}
-                  </select>
-                  <textarea aria-label="ElevenLabs prompt" value={prompt.prompt} onChange={(event) => updateGenerationPrompt(index, { prompt: event.target.value })} />
-                  <textarea aria-label="ElevenLabs negative prompt" value={prompt.negativePrompt} onChange={(event) => updateGenerationPrompt(index, { negativePrompt: event.target.value })} />
-                  <select aria-label="Prompt voice profile" value={prompt.voiceProfileId} onChange={(event) => updateGenerationPrompt(index, { voiceProfileId: event.target.value })}>
-                    <option value="">No voice profile</option>
-                    {providerSettings.voiceProfiles.map((profile) => (
-                      <option key={profile.id} value={profile.id}>{profile.label || profile.id}</option>
-                    ))}
-                  </select>
-                  <input aria-label="Prompt duration" max="180" min="0.5" step="0.5" type="number" value={prompt.durationSeconds} onChange={(event) => updateGenerationPrompt(index, { durationSeconds: Number(event.target.value) })} />
-                  <span className="admin-audio-file-size">{formatBytes(prompt.generatedSizeBytes)}</span>
-                  <button disabled={!prompt.generatedUrl} onClick={() => handlePreview({ category: prompt.purpose, id: prompt.id, label: prompt.label, loop: prompt.purpose === "music", url: prompt.generatedUrl ?? "", volume: 1 })} type="button">
-                    <Play size={14} aria-hidden="true" />
-                  </button>
-                  <button disabled={Boolean(generatingPromptId)} onClick={() => handleGeneratePrompt(index)} type="button">
-                    {generatingPromptId === prompt.id ? "Generating" : "Generate"}
-                  </button>
-                  <button className="danger" onClick={() => handleDeleteGenerationPrompt(prompt.id)} type="button">
-                    <Trash2 size={14} aria-hidden="true" />
-                  </button>
-                </div>
-              ))
+              providerSettings.generationPrompts.map((prompt, index) => {
+                const generated = generatedAudioInfo(config, prompt);
+                return (
+                  <div className="admin-audio-row prompt" key={`${prompt.id}-${index}`}>
+                    <label className="admin-audio-compact-check">
+                      <input checked={prompt.enabled} type="checkbox" onChange={(event) => updateGenerationPrompt(index, { enabled: event.target.checked })} />
+                      On
+                    </label>
+                    <select value={prompt.purpose} onChange={(event) => updateGenerationPrompt(index, { purpose: event.target.value as AudioCategory })}>
+                      {Object.entries(categoryLabels).map(([category, label]) => (
+                        <option key={category} value={category}>{label}</option>
+                      ))}
+                    </select>
+                    <input aria-label="Prompt id" value={prompt.id} onChange={(event) => updateGenerationPrompt(index, { id: slug(event.target.value, prompt.id || `prompt_${index + 1}`) })} />
+                    <input aria-label="Prompt label" value={prompt.label} onChange={(event) => updateGenerationPrompt(index, { label: event.target.value })} />
+                    <select aria-label="Prompt trigger" value={prompt.trigger} onChange={(event) => updateGenerationPrompt(index, { trigger: event.target.value })}>
+                      {audioTriggerOptions.map((option) => (
+                        <option key={option.trigger} value={option.trigger}>{option.label}</option>
+                      ))}
+                    </select>
+                    <textarea aria-label="ElevenLabs prompt" value={prompt.prompt} onChange={(event) => updateGenerationPrompt(index, { prompt: event.target.value })} />
+                    <textarea aria-label="ElevenLabs negative prompt" value={prompt.negativePrompt} onChange={(event) => updateGenerationPrompt(index, { negativePrompt: event.target.value })} />
+                    <select aria-label="Prompt voice profile" value={prompt.voiceProfileId} onChange={(event) => updateGenerationPrompt(index, { voiceProfileId: event.target.value })}>
+                      <option value="">No voice profile</option>
+                      {providerSettings.voiceProfiles.map((profile) => (
+                        <option key={profile.id} value={profile.id}>{profile.label || profile.id}</option>
+                      ))}
+                    </select>
+                    <input aria-label="Prompt duration" max="180" min="0.5" step="0.5" type="number" value={prompt.durationSeconds} onChange={(event) => updateGenerationPrompt(index, { durationSeconds: Number(event.target.value) })} />
+                    <span className="admin-audio-file-size">{formatBytes(generated.sizeBytes)}</span>
+                    <button disabled={!generated.url} onClick={() => handlePreview({ category: prompt.purpose, id: prompt.id, label: prompt.label, loop: prompt.purpose === "music", url: generated.url, volume: 1 })} type="button">
+                      <Play size={14} aria-hidden="true" />
+                    </button>
+                    <button disabled={Boolean(generatingPromptId)} onClick={() => handleGeneratePrompt(index)} type="button">
+                      {generatingPromptId === prompt.id ? "Generating" : "Generate"}
+                    </button>
+                    <button className="danger" onClick={() => handleDeleteGenerationPrompt(prompt.id)} type="button">
+                      <Trash2 size={14} aria-hidden="true" />
+                    </button>
+                  </div>
+                );
+              })
             )}
           </div>
         </section>
@@ -811,7 +829,8 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
                     <input checked={asset.loop} type="checkbox" onChange={(event) => updateAsset(index, { loop: event.target.checked })} />
                     Loop
                   </label>
-                  <button onClick={() => handlePreview(asset)} type="button">
+                  <span className="admin-audio-file-size">{formatBytes(asset.sizeBytes)}</span>
+                  <button disabled={!asset.url} onClick={() => handlePreview(asset)} type="button">
                     <Play size={14} aria-hidden="true" />
                     {previewingId === asset.id ? "Playing" : "Preview"}
                   </button>
