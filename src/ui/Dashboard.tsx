@@ -1,4 +1,4 @@
-import { AlertTriangle, BarChart3, Boxes, Building2, ClipboardList, Factory, FlaskConical, HandCoins, Landmark, Lock, Map, Navigation, Package, PackagePlus, Route, Search, ShieldAlert, Trophy, Truck, Unlock, UserPlus, Users, Wrench } from "lucide-react";
+import { AlertTriangle, BarChart3, Boxes, Building2, ClipboardList, Factory, FlaskConical, HandCoins, Landmark, Lock, Map, Navigation, Package, PackagePlus, Route, Search, ShieldAlert, SlidersHorizontal, Trophy, Truck, Unlock, UserPlus, Users, Wrench } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { GameCommand, GameState } from "../game/core/types";
 import { employeeRoleList, employeeRoles } from "../game/content/employees";
@@ -52,12 +52,15 @@ import { estimateMachineSalesPerHour } from "../game/systems/economy";
 import { machineModels } from "../game/content/machineModels";
 import { gameDesignPillars, npcRoles } from "../game/content/story";
 import { baseFacilityList } from "../game/content/baseFacilities";
+import { graphicsQualityLabels, graphicsQualityModes, type GraphicsQuality } from "../render/three/graphicsQuality";
 
 type DashboardTab = "machines" | "base" | "catalog" | "finance" | "districts" | "jobs" | "route" | "logistics" | "crew" | "law" | "heat" | "conflict" | "rival" | "story" | "debug" | "log";
 
 interface DashboardProps {
+  graphicsQuality: GraphicsQuality;
   state: GameState;
   onCommand: (command: GameCommand) => void;
+  onGraphicsQualityChange: (quality: GraphicsQuality) => void;
 }
 
 function MiniButton({ children, disabled, onClick }: { children: React.ReactNode; disabled?: boolean; onClick: () => void }) {
@@ -100,7 +103,7 @@ function roleIcon(role: string): React.ReactNode {
   return <PackagePlus size={16} aria-hidden="true" />;
 }
 
-export function Dashboard({ state, onCommand }: DashboardProps) {
+export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQualityChange }: DashboardProps) {
   const [tab, setTab] = useState<DashboardTab>("machines");
   const playerMachines = useMemo(() => ownedMachines(state, state.playerFactionId), [state]);
   const installedPlayerMachines = useMemo(() => installedMachines(state, state.playerFactionId), [state]);
@@ -153,6 +156,25 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
 
   return (
     <aside className="dashboard">
+      <div className="graphics-quality-control" aria-label="Graphics quality">
+        <span>
+          <SlidersHorizontal size={15} aria-hidden="true" />
+          Graphics
+        </span>
+        <div className="graphics-quality-options" role="group" aria-label="Graphics quality">
+          {graphicsQualityModes.map((quality) => (
+            <button
+              aria-pressed={graphicsQuality === quality}
+              className={graphicsQuality === quality ? "quality-button active" : "quality-button"}
+              key={quality}
+              onClick={() => onGraphicsQualityChange(quality)}
+              type="button"
+            >
+              {graphicsQualityLabels[quality]}
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="tab-row" role="tablist" aria-label="Operations dashboard">
         <button className={tab === "machines" ? "tab active" : "tab"} onClick={() => setTab("machines")} type="button">
           <Map size={16} aria-hidden="true" />

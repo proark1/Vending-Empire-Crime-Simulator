@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { ThreeScene } from "./render/three/ThreeScene";
+import { loadGraphicsQuality, saveGraphicsQuality, type GraphicsQuality } from "./render/three/graphicsQuality";
 import type { SceneFeedbackEvent, SceneTarget } from "./render/three/SceneTargets";
 import { Dashboard } from "./ui/Dashboard";
 import { Hud } from "./ui/Hud";
@@ -166,6 +167,7 @@ function GameApp({ initialState, mapLayout, session }: GameAppProps) {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [visibleReport, setVisibleReport] = useState<DayReport | null>(null);
   const [sceneFeedback, setSceneFeedback] = useState<SceneFeedbackEvent | null>(null);
+  const [graphicsQuality, setGraphicsQualityState] = useState<GraphicsQuality>(() => loadGraphicsQuality());
   const lastEventIdRef = useRef(state.eventLog[0]?.id ?? null);
   const lastMissionStepIdRef = useRef<string | null>(null);
   const lastServiceLocationIdRef = useRef<LocationId | null>(state.player.currentLocationId);
@@ -186,6 +188,11 @@ function GameApp({ initialState, mapLayout, session }: GameAppProps) {
     window.setTimeout(() => {
       setToasts((current) => current.filter((message) => message.id !== id));
     }, 4200);
+  }, []);
+
+  const setGraphicsQuality = useCallback((quality: GraphicsQuality) => {
+    saveGraphicsQuality(quality);
+    setGraphicsQualityState(quality);
   }, []);
 
   useEffect(() => {
@@ -336,6 +343,7 @@ function GameApp({ initialState, mapLayout, session }: GameAppProps) {
   return (
     <main className="game-shell">
       <ThreeScene
+        graphicsQuality={graphicsQuality}
         guidanceLocationId={guidanceLocationId}
         mapLayout={mapLayout}
         state={state}
@@ -365,7 +373,7 @@ function GameApp({ initialState, mapLayout, session }: GameAppProps) {
           </button>
         </div>
       )}
-      <Dashboard state={state} onCommand={sendCommandWithFeedback} />
+      <Dashboard graphicsQuality={graphicsQuality} state={state} onCommand={sendCommandWithFeedback} onGraphicsQualityChange={setGraphicsQuality} />
       <Minimap state={state} playerPosition={playerPosition} guidanceLocationId={guidanceLocationId} target={activeTarget} />
       <InteractionPanel state={state} target={activeTarget} onCommand={sendCommandAtActiveTarget} onSave={save} onReload={reload} onRestart={handleRestart} />
       {visibleReport && <DayReportModal report={visibleReport} onClose={() => setVisibleReport(null)} />}

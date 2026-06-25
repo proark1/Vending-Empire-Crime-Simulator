@@ -18,10 +18,12 @@ import {
 } from "../../game/content/world";
 import { pathOnRoads, roadBounds } from "../../game/world/roadGraph";
 import type { SceneFeedbackEvent, SceneTarget } from "./SceneTargets";
+import { resolveGraphicsProfile, type GraphicsQuality } from "./graphicsQuality";
 import { createAsphaltMaterial, createAtmosphere, createBuilding, createNpcCharacter, createRoadMaterial, createSidewalkMaterial, createSkyDome, createStreetProps } from "./proceduralArt";
 
 interface ThreeSceneProps {
   feedbackEvent?: SceneFeedbackEvent | null;
+  graphicsQuality: GraphicsQuality;
   guidanceLocationId?: string;
   mapLayout: WorldMapLayout;
   state: GameState;
@@ -65,17 +67,6 @@ interface FeedbackRuntime {
   duration: number;
   kind: SceneFeedbackEvent["kind"];
   startY: number;
-}
-
-interface SceneRenderProfile {
-  enableLocalLights: boolean;
-  enableShadows: boolean;
-  lowPower: boolean;
-  maxAmbientNpcs: number;
-  maxBackdropBuildings: number;
-  maxPixelRatio: number;
-  maxPolicePatrols: number;
-  maxTrafficLoops: number;
 }
 
 interface NpcRuntimeLimb {
@@ -124,26 +115,6 @@ const worldDepth = worldBounds.maxZ - worldBounds.minZ;
 const worldCenterX = (worldBounds.minX + worldBounds.maxX) / 2;
 const worldCenterZ = (worldBounds.minZ + worldBounds.maxZ) / 2;
 const worldChunkSize = 24;
-
-function detectRenderProfile(layout: WorldMapLayout): SceneRenderProfile {
-  const cores = navigator.hardwareConcurrency || 4;
-  const mobileViewport = window.matchMedia("(max-width: 860px), (max-height: 620px)").matches;
-  const deviceMemory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
-  const highMemory = typeof deviceMemory === "number" && deviceMemory >= 8;
-  const highTier = cores >= 8 && highMemory && !mobileViewport;
-  const lowPower = !highTier;
-
-  return {
-    enableLocalLights: highTier,
-    enableShadows: highTier,
-    lowPower,
-    maxAmbientNpcs: lowPower ? 7 : 12,
-    maxBackdropBuildings: lowPower ? 16 : layout.backdropBuildings.length,
-    maxPixelRatio: lowPower ? 1.1 : 1.5,
-    maxPolicePatrols: lowPower ? 2 : layout.policePatrolPaths.length,
-    maxTrafficLoops: lowPower ? 5 : layout.trafficLoops.length
-  };
-}
 
 function chunkIndexForCoordinate(value: number, min: number): number {
   return Math.floor((value - min) / worldChunkSize);
@@ -585,7 +556,68 @@ function createMachineDisplayTexture(damage: number): THREE.CanvasTexture {
   return texture;
 }
 
-function createMachineMesh(color: string, damage: number, installedUpgrades: MachineUpgradeId[] = []): THREE.Group {
+function createLowMachineMesh(color: string, damage: number, installedUpgrades: MachineUpgradeId[] = []): THREE.Group {
+  const group = new THREE.Group();
+  const upgrades = new Set(installedUpgrades);
+  const bodyMaterial = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.1 });
+  const darkMaterial = new THREE.MeshStandardMaterial({ color: "#0f172a", roughness: 0.55, metalness: 0.12 });
+
+  const base = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.12, 0.54), darkMaterial);
+  base.position.y = 0.06;
+  base.castShadow = true;
+  group.add(base);
+
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.72, 1.52, 0.46), bodyMaterial);
+  body.position.y = 0.88;
+  body.castShadow = true;
+  group.add(body);
+
+  const sign = new THREE.Mesh(
+    new THREE.BoxGeometry(0.58, 0.18, 0.035),
+    new THREE.MeshStandardMaterial({ map: createMachineSignTexture(color, damage), emissive: color, emissiveIntensity: 0.12, roughness: 0.34 })
+  );
+  sign.position.set(0, 1.58, -0.245);
+  group.add(sign);
+
+  const glass = new THREE.Mesh(
+    new THREE.BoxGeometry(0.42, 0.78, 0.03),
+    new THREE.MeshBasicMaterial({ color: damage > 65 ? "#7f1d1d" : "#bae6fd", transparent: true, opacity: 0.58 })
+  );
+  glass.position.set(-0.09, 1.03, -0.255);
+  group.add(glass);
+
+  const display = new THREE.Mesh(
+    new THREE.BoxGeometry(0.12, 0.12, 0.024),
+    new THREE.MeshBasicMaterial({ map: createMachineDisplayTexture(damage) })
+  );
+  display.position.set(0.25, 1.22, -0.27);
+  group.add(display);
+
+  const slot = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.1, 0.035), darkMaterial);
+  slot.position.set(-0.08, 0.38, -0.267);
+  group.add(slot);
+
+  if (upgrades.size > 0) {
+    const upgradeDot = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 8), new THREE.MeshBasicMaterial({ color: "#5eead4" }));
+    upgradeDot.position.set(0.31, 1.45, -0.274);
+    group.add(upgradeDot);
+  }
+
+  if (damage > 15) {
+    const dent = new THREE.Mesh(new THREE.BoxGeometry(0.18 + damage / 360, 0.055, 0.035), new THREE.MeshBasicMaterial({ color: "#fbbf24" }));
+    dent.position.set(0.15, 1.42, -0.278);
+    dent.rotation.z = -0.32;
+    group.add(dent);
+  }
+
+  return group;
+}
+
+function createMachineMesh(color: string, damage: number, installedUpgrades: MachineUpgradeId[] = [], quality: GraphicsQuality = "medium"): THREE.Group {
+  if (quality === "low") {
+    return createLowMachineMesh(color, damage, installedUpgrades);
+  }
+
   const group = new THREE.Group();
   const upgrades = new Set(installedUpgrades);
   const trimMaterial = new THREE.MeshStandardMaterial({ color, roughness: 0.38, metalness: 0.12 });
@@ -870,6 +902,34 @@ function createMachineMesh(color: string, damage: number, installedUpgrades: Mac
     group.add(antenna);
   }
 
+  if (quality === "high") {
+    const servicePanel = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.72, 0.028), new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.42, metalness: 0.24 }));
+    servicePanel.position.set(0.43, 1.0, 0.02);
+    servicePanel.rotation.y = Math.PI / 2;
+    group.add(servicePanel);
+
+    for (let i = 0; i < 6; i += 1) {
+      const sideVent = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.16, 0.018), new THREE.MeshBasicMaterial({ color: "#020617" }));
+      sideVent.position.set(0.43, 0.62 + i * 0.1, -0.1);
+      sideVent.rotation.y = Math.PI / 2;
+      group.add(sideVent);
+    }
+
+    const qrPlate = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.09, 0.018), new THREE.MeshBasicMaterial({ color: "#f8fafc" }));
+    qrPlate.position.set(0.26, 0.65, -0.326);
+    group.add(qrPlate);
+    for (const [x, y] of [[0.235, 0.675], [0.285, 0.675], [0.235, 0.625], [0.275, 0.635]] as Array<[number, number]>) {
+      const qrMark = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.018, 0.006), new THREE.MeshBasicMaterial({ color: "#020617" }));
+      qrMark.position.set(x, y, -0.338);
+      group.add(qrMark);
+    }
+
+    const roofUnit = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.12, 0.24), new THREE.MeshStandardMaterial({ color: "#334155", roughness: 0.5, metalness: 0.2 }));
+    roofUnit.position.set(0.14, 1.9, 0.04);
+    roofUnit.castShadow = true;
+    group.add(roofUnit);
+  }
+
   if (damage > 15) {
     const dent = new THREE.Mesh(
       new THREE.BoxGeometry(0.18 + damage / 340, 0.05, 0.04),
@@ -1043,7 +1103,7 @@ function createRoutePressureRing(tone: "good" | "warning" | "danger"): THREE.Gro
   return group;
 }
 
-function createVehicleMesh(): THREE.Group {
+function createVehicleMesh(quality: GraphicsQuality = "medium"): THREE.Group {
   const group = new THREE.Group();
   const bodyMaterial = new THREE.MeshStandardMaterial({ color: "#d9f99d", roughness: 0.48, metalness: 0.08 });
   const trimMaterial = new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.42, metalness: 0.12 });
@@ -1068,6 +1128,40 @@ function createVehicleMesh(): THREE.Group {
   const stripe = new THREE.Mesh(new THREE.BoxGeometry(1.78, 0.1, 0.035), new THREE.MeshBasicMaterial({ color: "#2dd4bf" }));
   stripe.position.set(0.08, 0.66, -0.54);
   group.add(stripe);
+
+  if (quality !== "low") {
+    const sideDoor = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.36, 0.032), new THREE.MeshStandardMaterial({ color: "#bef264", roughness: 0.5, metalness: 0.08 }));
+    sideDoor.position.set(-0.2, 0.79, -0.54);
+    group.add(sideDoor);
+
+    const mirrorMaterial = new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.4, metalness: 0.16 });
+    for (const z of [-0.56, 0.56]) {
+      const mirror = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.09, 0.035), mirrorMaterial);
+      mirror.position.set(-1.06, 1.12, z * 0.86);
+      group.add(mirror);
+    }
+  }
+
+  if (quality === "high") {
+    const roofRack = new THREE.Group();
+    roofRack.position.set(0.24, 1.0, 0);
+    for (const z of [-0.36, 0.36]) {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.035, 0.035), trimMaterial);
+      rail.position.set(0, 0.62, z);
+      roofRack.add(rail);
+    }
+    for (const x of [-0.38, 0.38]) {
+      const crossbar = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.035, 0.76), trimMaterial);
+      crossbar.position.set(x, 0.62, 0);
+      roofRack.add(crossbar);
+    }
+    group.add(roofRack);
+
+    const rearHandle = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.035, 0.034), new THREE.MeshBasicMaterial({ color: "#f8fafc" }));
+    rearHandle.position.set(1.08, 0.78, 0);
+    rearHandle.rotation.y = Math.PI / 2;
+    group.add(rearHandle);
+  }
 
   for (const x of [-0.68, 0.74]) {
     for (const z of [-0.56, 0.56]) {
@@ -1258,9 +1352,9 @@ function activityActorVariant(activity: StreetActivity): "customer" | "rival" | 
   return "customer";
 }
 
-function createActivityActor(activity: StreetActivity, placement: { position: THREE.Vector3; rotationY: number }, servicePoint: THREE.Vector3, currentWorldTime: number): THREE.Group {
+function createActivityActor(activity: StreetActivity, placement: { position: THREE.Vector3; rotationY: number }, servicePoint: THREE.Vector3, currentWorldTime: number, quality: GraphicsQuality): THREE.Group {
   const variant = activityActorVariant(activity);
-  const character = createNpcCharacter(variant);
+  const character = createNpcCharacter(variant, quality);
   const front = machineFrontVector(placement.rotationY).normalize();
   const side = new THREE.Vector3(-front.z, 0, front.x);
   const sideDirection = activity.id.charCodeAt(activity.id.length - 1) % 2 === 0 ? 1 : -1;
@@ -1293,9 +1387,9 @@ function createActivityActor(activity: StreetActivity, placement: { position: TH
   return character;
 }
 
-function createAmbientMachineActor(machine: VendingMachine, location: Location, index: number, currentWorldTime: number): THREE.Group {
+function createAmbientMachineActor(machine: VendingMachine, location: Location, index: number, currentWorldTime: number, quality: GraphicsQuality): THREE.Group {
   const variant = machine.ownerFactionId === "player" ? "customer" : "rival";
-  const character = createNpcCharacter(variant);
+  const character = createNpcCharacter(variant, quality);
   const placement = machinePlacementForLocation(location);
   const servicePoint = machineInteractionPoint(placement);
   const front = machineFrontVector(placement.rotationY).normalize();
@@ -1320,8 +1414,8 @@ function createAmbientMachineActor(machine: VendingMachine, location: Location, 
   return character;
 }
 
-function createAlarmIntruderActor(placement: { position: THREE.Vector3; rotationY: number }, currentWorldTime: number, startedHour: number): THREE.Group {
-  const character = createNpcCharacter("rival");
+function createAlarmIntruderActor(placement: { position: THREE.Vector3; rotationY: number }, currentWorldTime: number, startedHour: number, quality: GraphicsQuality): THREE.Group {
+  const character = createNpcCharacter("rival", quality);
   const servicePoint = machineInteractionPoint(placement);
   const front = machineFrontVector(placement.rotationY).normalize();
   const side = new THREE.Vector3(-front.z, 0, front.x);
@@ -1456,7 +1550,7 @@ function createSpark(color: string): THREE.Mesh {
   return spark;
 }
 
-function createSceneFeedbackEffect(event: SceneFeedbackEvent, currentState: GameState): THREE.Group | null {
+function createSceneFeedbackEffect(event: SceneFeedbackEvent, currentState: GameState, quality: GraphicsQuality): THREE.Group | null {
   const position = sceneFeedbackPosition(event, currentState);
   if (!position) {
     return null;
@@ -1491,7 +1585,7 @@ function createSceneFeedbackEffect(event: SceneFeedbackEvent, currentState: Game
   }
 
   if (event.kind === "install") {
-    const ghost = createMachineMesh("#2dd4bf", 0);
+    const ghost = createMachineMesh("#2dd4bf", 0, [], quality);
     ghost.position.y = 0.08;
     ghost.scale.setScalar(0.72);
     ghost.traverse((child) => {
@@ -1693,8 +1787,8 @@ function updateCarriedCrateMount(mount: THREE.Group, crate: StockCrate | null, p
   mount.add(crateMesh);
 }
 
-function createPlayerAvatar(): { avatar: THREE.Group; cargoMount: THREE.Group } {
-  const avatar = createNpcCharacter("worker");
+function createPlayerAvatar(quality: GraphicsQuality): { avatar: THREE.Group; cargoMount: THREE.Group } {
+  const avatar = createNpcCharacter("worker", quality);
   avatar.scale.setScalar(1.05);
   avatar.position.set(0, 0, 0.06);
   avatar.userData.action = "walk";
@@ -1768,7 +1862,7 @@ function createInteriorCrateStack(color: string, x: number, z: number): THREE.Gr
   return stack;
 }
 
-function addInteriorProps(group: THREE.Group, interior: WorldInterior): void {
+function addInteriorProps(group: THREE.Group, interior: WorldInterior, quality: GraphicsQuality): void {
   if (interior.style === "laundromat") {
     const washerZ = interior.openSide === "north" ? -interior.depth / 2 + 0.42 : interior.depth / 2 - 0.42;
     for (const x of [-1.65, -0.85, -0.05, 0.75, 1.55]) {
@@ -1804,14 +1898,14 @@ function addInteriorProps(group: THREE.Group, interior: WorldInterior): void {
   toolChest.castShadow = true;
   group.add(toolChest);
 
-  const shell = createMachineMesh("#64748b", 82);
+  const shell = createMachineMesh("#64748b", 82, [], quality);
   shell.position.set(0.55, 0.02, -0.65);
   shell.rotation.y = 0.08;
   shell.scale.setScalar(0.62);
   group.add(shell);
 }
 
-function createInteriorCell(interior: WorldInterior): THREE.Group {
+function createInteriorCell(interior: WorldInterior, quality: GraphicsQuality): THREE.Group {
   const group = new THREE.Group();
   const profile = districtVisualProfiles[interior.districtId] ?? districtVisualProfiles.starter_suburb;
   const wallHeight = 2.2;
@@ -1867,13 +1961,13 @@ function createInteriorCell(interior: WorldInterior): THREE.Group {
   awning.scale.y = 1.4;
   group.add(awning);
 
-  addInteriorProps(group, interior);
+  addInteriorProps(group, interior, quality);
   addLabel(group, interior.label, profile.accentColor, new THREE.Vector3(0, 0, 0), 2.72);
   group.position.set(interior.x, 0, interior.z);
   return group;
 }
 
-function createBackdropBuilding(definition: CityBackdropBuilding): THREE.Group {
+function createBackdropBuilding(definition: CityBackdropBuilding, quality: GraphicsQuality): THREE.Group {
   const group = new THREE.Group();
   const bodyMaterial = new THREE.MeshStandardMaterial({ color: definition.color, roughness: 0.84, metalness: 0.05 });
   const trimMaterial = new THREE.MeshBasicMaterial({ color: "#020617", transparent: true, opacity: 0.5 });
@@ -1895,14 +1989,14 @@ function createBackdropBuilding(definition: CityBackdropBuilding): THREE.Group {
   roof.position.y = definition.height + 0.08;
   group.add(roof);
 
-  for (let y = 1.15; y < definition.height - 0.55; y += 1.25) {
+  for (let y = 1.15; y < definition.height - 0.55; y += quality === "high" ? 0.95 : 1.25) {
     const band = new THREE.Mesh(new THREE.BoxGeometry(definition.width + 0.05, 0.028, 0.035), bandMaterial);
     band.position.set(0, y, -definition.depth / 2 - 0.018);
     group.add(band);
   }
 
-  const rows = Math.max(2, Math.min(13, Math.floor(definition.height / 1.05)));
-  const cols = Math.max(2, Math.min(9, Math.floor(definition.width / 0.72)));
+  const rows = Math.max(2, Math.min(quality === "high" ? 18 : 13, Math.floor(definition.height / (quality === "low" ? 1.55 : quality === "high" ? 0.85 : 1.05))));
+  const cols = Math.max(2, Math.min(quality === "high" ? 12 : 9, Math.floor(definition.width / (quality === "low" ? 1.05 : quality === "high" ? 0.58 : 0.72))));
   const frontZ = -definition.depth / 2 - 0.012;
   for (let row = 0; row < rows; row += 1) {
     for (let col = 0; col < cols; col += 1) {
@@ -1915,6 +2009,11 @@ function createBackdropBuilding(definition: CityBackdropBuilding): THREE.Group {
       );
       group.add(window);
     }
+  }
+
+  if (quality === "low") {
+    group.position.set(definition.x, 0, definition.z);
+    return group;
   }
 
   const sideRows = Math.max(2, Math.min(10, Math.floor(definition.height / 1.25)));
@@ -1961,6 +2060,15 @@ function createBackdropBuilding(definition: CityBackdropBuilding): THREE.Group {
     group.add(beacon);
   }
 
+  if (quality === "high" && definition.height > 7) {
+    const crownGlow = new THREE.Mesh(
+      new THREE.BoxGeometry(definition.width + 0.18, 0.06, 0.05),
+      new THREE.MeshBasicMaterial({ color: litMaterial.color, transparent: true, opacity: 0.34 })
+    );
+    crownGlow.position.set(0, definition.height + 0.18, -definition.depth / 2 - 0.035);
+    group.add(crownGlow);
+  }
+
   group.position.set(definition.x, 0, definition.z);
   return group;
 }
@@ -1995,8 +2103,8 @@ function createPatrolZone(zone: PatrolZone): THREE.Group {
   return group;
 }
 
-function createPolicePatrolOfficer(patrol: PolicePatrolPath): THREE.Group {
-  const officer = createNpcCharacter("scout");
+function createPolicePatrolOfficer(patrol: PolicePatrolPath, quality: GraphicsQuality): THREE.Group {
+  const officer = createNpcCharacter("scout", quality);
   const start = patrol.path[0];
   officer.position.set(start.x, 0, start.z);
   officer.scale.setScalar(0.96);
@@ -2021,15 +2129,21 @@ function createPolicePatrolOfficer(patrol: PolicePatrolPath): THREE.Group {
   const radio = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.13, 0.04), new THREE.MeshBasicMaterial({ color: "#020617" }));
   radio.position.set(0.23, 1.02, -0.2);
   officer.add(radio);
+  if (quality === "high") {
+    const flashlight = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.16, 8), new THREE.MeshBasicMaterial({ color: "#fde68a" }));
+    flashlight.position.set(-0.22, 0.98, -0.21);
+    flashlight.rotation.x = Math.PI / 2;
+    officer.add(flashlight);
+  }
   return officer;
 }
 
-function createPolicePatrolLayer(patrols: PolicePatrolPath[], maxPatrols: number): { animated: THREE.Object3D[]; group: THREE.Group } {
+function createPolicePatrolLayer(patrols: PolicePatrolPath[], maxPatrols: number, quality: GraphicsQuality): { animated: THREE.Object3D[]; group: THREE.Group } {
   const group = new THREE.Group();
   const animated: THREE.Object3D[] = [];
 
   patrols.slice(0, maxPatrols).forEach((patrol) => {
-    const officer = createPolicePatrolOfficer(patrol);
+    const officer = createPolicePatrolOfficer(patrol, quality);
     group.add(officer);
     animated.push(officer);
   });
@@ -2037,7 +2151,7 @@ function createPolicePatrolLayer(patrols: PolicePatrolPath[], maxPatrols: number
   return { animated, group };
 }
 
-function createTrafficVehicleMesh(loop: TrafficLoop, enableShadows: boolean): THREE.Group {
+function createTrafficVehicleMesh(loop: TrafficLoop, enableShadows: boolean, quality: GraphicsQuality): THREE.Group {
   const group = new THREE.Group();
   const bodyColor = loop.kind === "police" ? "#f8fafc" : loop.color;
   const bodyMaterial = new THREE.MeshStandardMaterial({ color: bodyColor, roughness: 0.48, metalness: 0.08 });
@@ -2059,6 +2173,15 @@ function createTrafficVehicleMesh(loop: TrafficLoop, enableShadows: boolean): TH
   cab.position.set(0, body.position.y + bodyHeight / 2 + cabHeight / 2 - 0.08, -length * 0.16);
   group.add(cab);
 
+  if (quality !== "low") {
+    const bumperMaterial = new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.42, metalness: 0.2 });
+    for (const z of [-length / 2 - 0.04, length / 2 + 0.04]) {
+      const bumper = new THREE.Mesh(new THREE.BoxGeometry(width * 0.82, 0.08, 0.06), bumperMaterial);
+      bumper.position.set(0, 0.48, z);
+      group.add(bumper);
+    }
+  }
+
   if (loop.kind === "police") {
     const stripe = new THREE.Mesh(new THREE.BoxGeometry(width + 0.04, 0.1, length + 0.045), new THREE.MeshBasicMaterial({ color: "#1d4ed8" }));
     stripe.position.set(0, body.position.y + 0.02, 0);
@@ -2073,11 +2196,16 @@ function createTrafficVehicleMesh(loop: TrafficLoop, enableShadows: boolean): TH
     const cargoLine = new THREE.Mesh(new THREE.BoxGeometry(width + 0.04, 0.09, 1.18), new THREE.MeshBasicMaterial({ color: "#451a03" }));
     cargoLine.position.set(0, body.position.y + 0.08, 0.25);
     group.add(cargoLine);
+    if (quality === "high") {
+      const cargoDoor = new THREE.Mesh(new THREE.BoxGeometry(width * 0.78, 0.42, 0.035), new THREE.MeshStandardMaterial({ color: "#78350f", roughness: 0.55, metalness: 0.08 }));
+      cargoDoor.position.set(0, body.position.y + 0.08, length / 2 + 0.02);
+      group.add(cargoDoor);
+    }
   }
 
   for (const x of [-width / 2 - 0.05, width / 2 + 0.05]) {
     for (const z of [-length * 0.32, length * 0.34]) {
-      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.1, 16), trimMaterial);
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.1, quality === "low" ? 10 : 16), trimMaterial);
       wheel.position.set(x, 0.22, z);
       wheel.rotation.z = Math.PI / 2;
       wheel.castShadow = enableShadows;
@@ -2092,15 +2220,24 @@ function createTrafficVehicleMesh(loop: TrafficLoop, enableShadows: boolean): TH
     group.add(light);
   }
 
+  if (quality === "high") {
+    const tailLightMaterial = new THREE.MeshBasicMaterial({ color: "#ef4444", transparent: true, opacity: 0.78 });
+    for (const x of [-width * 0.26, width * 0.26]) {
+      const tail = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.055, 0.022), tailLightMaterial);
+      tail.position.set(x, body.position.y + 0.01, length / 2 + 0.015);
+      group.add(tail);
+    }
+  }
+
   return group;
 }
 
-function createTrafficLayer(loops: TrafficLoop[], roads: WorldRoad[], maxLoops: number, enableShadows: boolean): { animated: THREE.Object3D[]; group: THREE.Group } {
+function createTrafficLayer(loops: TrafficLoop[], roads: WorldRoad[], maxLoops: number, enableShadows: boolean, quality: GraphicsQuality): { animated: THREE.Object3D[]; group: THREE.Group } {
   const group = new THREE.Group();
   const animated: THREE.Object3D[] = [];
 
   loops.filter((loop) => pathOnRoads(loop.path, roads)).slice(0, maxLoops).forEach((loop) => {
-    const vehicle = createTrafficVehicleMesh(loop, enableShadows);
+    const vehicle = createTrafficVehicleMesh(loop, enableShadows, quality);
     const start = loop.path[0];
     vehicle.position.set(start.x, 0.02, start.z);
     vehicle.userData.trafficLoop = true;
@@ -2150,14 +2287,14 @@ function addRoadMarkingsToChunks(chunks: Map<string, WorldChunkRuntime>, parent:
   }
 }
 
-function createWorldDecoration(decoration: WorldDecoration, enableLocalLights: boolean): THREE.Group {
+function createWorldDecoration(decoration: WorldDecoration, enableLocalLights: boolean, quality: GraphicsQuality): THREE.Group {
   const group = new THREE.Group();
   const color = decoration.color ?? "#94a3b8";
   const darkMaterial = new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.55, metalness: 0.12 });
   const accentMaterial = new THREE.MeshStandardMaterial({ color, roughness: 0.52, metalness: 0.08 });
 
   if (decoration.kind === "streetlight") {
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.05, 2.6, 10), darkMaterial);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.05, 2.6, quality === "low" ? 6 : 10), darkMaterial);
     pole.position.y = 1.3;
     pole.castShadow = true;
     group.add(pole);
@@ -2167,7 +2304,7 @@ function createWorldDecoration(decoration: WorldDecoration, enableLocalLights: b
     arm.castShadow = true;
     group.add(arm);
 
-    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.12, 16, 8), new THREE.MeshBasicMaterial({ color }));
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.12, quality === "low" ? 8 : 16, quality === "low" ? 6 : 8), new THREE.MeshBasicMaterial({ color }));
     lamp.position.set(0.55, 2.42, 0);
     group.add(lamp);
 
@@ -2176,6 +2313,16 @@ function createWorldDecoration(decoration: WorldDecoration, enableLocalLights: b
       light.position.copy(lamp.position);
       group.add(light);
     }
+
+    if (quality === "high") {
+      const cableCurve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(-0.18, 2.36, 0),
+        new THREE.Vector3(0.12, 2.48, 0.02),
+        new THREE.Vector3(0.55, 2.42, 0)
+      ]);
+      const cable = new THREE.Mesh(new THREE.TubeGeometry(cableCurve, 10, 0.006, 5), darkMaterial);
+      group.add(cable);
+    }
   } else if (decoration.kind === "planter") {
     const planter = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.28, 0.38), new THREE.MeshStandardMaterial({ color: "#78350f", roughness: 0.78, metalness: 0.02 }));
     planter.position.y = 0.16;
@@ -2183,8 +2330,9 @@ function createWorldDecoration(decoration: WorldDecoration, enableLocalLights: b
     planter.receiveShadow = true;
     group.add(planter);
 
-    for (const x of [-0.32, 0, 0.32]) {
-      const leaves = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.48, 7), accentMaterial);
+    const leafOffsets = quality === "low" ? [-0.26, 0.26] : quality === "high" ? [-0.38, -0.18, 0, 0.18, 0.38] : [-0.32, 0, 0.32];
+    for (const x of leafOffsets) {
+      const leaves = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.48, quality === "low" ? 5 : 7), accentMaterial);
       leaves.position.set(x, 0.54, Math.sin(x * 7) * 0.05);
       leaves.rotation.z = x * 0.18;
       leaves.castShadow = true;
@@ -2203,10 +2351,15 @@ function createWorldDecoration(decoration: WorldDecoration, enableLocalLights: b
     group.add(lid);
 
     for (const x of [-0.42, 0.42]) {
-      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.07, 12), darkMaterial);
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.07, quality === "low" ? 8 : 12), darkMaterial);
       wheel.position.set(x, 0.08, 0.35);
       wheel.rotation.x = Math.PI / 2;
       group.add(wheel);
+    }
+    if (quality === "high") {
+      const sideStencil = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.16, 0.018), new THREE.MeshBasicMaterial({ color: "#f8fafc", transparent: true, opacity: 0.42 }));
+      sideStencil.position.set(0, 0.52, -0.33);
+      group.add(sideStencil);
     }
   } else if (decoration.kind === "billboard") {
     const posts = [-0.48, 0.48].map((x) => {
@@ -2225,14 +2378,21 @@ function createWorldDecoration(decoration: WorldDecoration, enableLocalLights: b
     const stripe = new THREE.Mesh(new THREE.BoxGeometry(1.16, 0.08, 0.09), new THREE.MeshBasicMaterial({ color: "#f8fafc" }));
     stripe.position.set(0, 1.52, -0.05);
     group.add(stripe);
+    if (quality === "high") {
+      for (const x of [-0.48, 0, 0.48]) {
+        const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6), new THREE.MeshBasicMaterial({ color: "#fde68a" }));
+        bulb.position.set(x, 1.9, -0.07);
+        group.add(bulb);
+      }
+    }
   } else if (decoration.kind === "bollard") {
-    for (const x of [-0.36, 0, 0.36]) {
-      const bollard = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.075, 0.58, 12), darkMaterial);
+    for (const x of quality === "low" ? [-0.32, 0.32] : [-0.36, 0, 0.36]) {
+      const bollard = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.075, 0.58, quality === "low" ? 8 : 12), darkMaterial);
       bollard.position.set(x, 0.31, 0);
       bollard.castShadow = true;
       group.add(bollard);
 
-      const cap = new THREE.Mesh(new THREE.SphereGeometry(0.075, 10, 6), new THREE.MeshBasicMaterial({ color }));
+      const cap = new THREE.Mesh(new THREE.SphereGeometry(0.075, quality === "low" ? 8 : 10, 6), new THREE.MeshBasicMaterial({ color }));
       cap.position.set(x, 0.62, 0);
       group.add(cap);
     }
@@ -2371,7 +2531,7 @@ function addDistrictAccessOverlays(group: THREE.Group, currentState: GameState):
   }
 }
 
-function populateDynamicObjects(group: THREE.Group, currentState: GameState, guidanceLocationId?: string): Interactable[] {
+function populateDynamicObjects(group: THREE.Group, currentState: GameState, guidanceLocationId: string | undefined, quality: GraphicsQuality): Interactable[] {
   clearGroup(group);
   const interactables: Interactable[] = [];
   addDistrictAccessOverlays(group, currentState);
@@ -2449,7 +2609,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
     if (machine) {
       const owner = currentState.factions[machine.ownerFactionId];
       group.add(createMachinePlacementDressing(machinePlacement, owner?.color ?? "#94a3b8", true));
-      const machineGroup = createMachineMesh(owner?.color ?? "#94a3b8", machine.damage, machine.upgrades ?? []);
+      const machineGroup = createMachineMesh(owner?.color ?? "#94a3b8", machine.damage, machine.upgrades ?? [], quality);
       machineGroup.position.copy(machinePlacement.position);
       machineGroup.rotation.y = machinePlacement.rotationY;
       group.add(machineGroup);
@@ -2466,7 +2626,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
         alarmRing.position.set(machinePlacement.position.x, 2.36, machinePlacement.position.z);
         group.add(alarmRing);
         addLabel(group, "ALARM", "#fb7185", machinePlacement.position, 3.08);
-        group.add(createAlarmIntruderActor(machinePlacement, currentState.worldTimeHours, activeAlarm.startedHour));
+        group.add(createAlarmIntruderActor(machinePlacement, currentState.worldTimeHours, activeAlarm.startedHour, quality));
       }
       addLabel(group, machine.name, owner?.color ?? "#94a3b8", machinePlacement.position, 2.2);
       addGuidanceBeacon(owner?.color ?? "#94a3b8", machinePlacement.position);
@@ -2495,20 +2655,20 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       const bLocation = currentState.locations[b.locationId];
       return (bLocation?.footTraffic ?? 0) + b.revenueStored * 0.004 - ((aLocation?.footTraffic ?? 0) + a.revenueStored * 0.004);
     })
-    .slice(0, 7)
+    .slice(0, quality === "low" ? 3 : quality === "high" ? 10 : 7)
     .forEach((machine, index) => {
       const location = currentState.locations[machine.locationId];
       if (!location) {
         return;
       }
 
-      group.add(createAmbientMachineActor(machine, location, index, currentState.worldTimeHours));
+      group.add(createAmbientMachineActor(machine, location, index, currentState.worldTimeHours, quality));
     });
 
   const recentActivities = currentState.streetLife?.recentActivities ?? [];
   recentActivities
     .filter((activity) => currentState.worldTimeHours - activity.hour <= 1.25)
-    .slice(0, 8)
+    .slice(0, quality === "low" ? 4 : quality === "high" ? 10 : 8)
     .forEach((activity, index) => {
       const machine = activity.machineId ? currentState.machines[activity.machineId] : undefined;
       const location = machine ? currentState.locations[machine.locationId] : currentState.locations[activity.locationId];
@@ -2529,7 +2689,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
         pulse.userData.phase = index * 0.7;
         group.add(pulse);
 
-        const actor = createActivityActor(activity, placement, servicePoint, currentState.worldTimeHours);
+        const actor = createActivityActor(activity, placement, servicePoint, currentState.worldTimeHours, quality);
         actor.userData.phase = index * 0.9 + activity.hour;
         group.add(actor);
       }
@@ -2539,7 +2699,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
   const vehicleLocation = vehicle ? currentState.locations[vehicle.locationId] : undefined;
   if (vehicle && vehicleLocation) {
     const vehiclePosition = new THREE.Vector3(vehicleLocation.position.x + 1.15, 0, vehicleLocation.position.z + 0.88);
-    const vehicleGroup = createVehicleMesh();
+    const vehicleGroup = createVehicleMesh(quality);
     vehicleGroup.position.copy(vehiclePosition);
     vehicleGroup.rotation.y = vehicleLocation.id === "garage" || vehicleLocation.position.z > 0 ? -Math.PI / 2 : Math.PI / 2;
     group.add(vehicleGroup);
@@ -2561,7 +2721,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
   return interactables;
 }
 
-export function ThreeScene({ feedbackEvent, guidanceLocationId, mapLayout, state, onPlayerPositionChange, onPlayerHeadingChange, onTargetChange }: ThreeSceneProps) {
+export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId, mapLayout, state, onPlayerPositionChange, onPlayerHeadingChange, onTargetChange }: ThreeSceneProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const stateRef = useRef(state);
   const dynamicGroupRef = useRef<THREE.Group | null>(null);
@@ -2605,10 +2765,14 @@ export function ThreeScene({ feedbackEvent, guidanceLocationId, mapLayout, state
       return;
     }
 
-    const renderProfile = detectRenderProfile(mapLayout);
+    const renderProfile = resolveGraphicsProfile(graphicsQuality, mapLayout);
     const scene = new THREE.Scene();
     scene.background = new THREE.Color("#0f172a");
-    scene.fog = new THREE.Fog("#18243a", renderProfile.lowPower ? 28 : 38, renderProfile.lowPower ? 122 : 148);
+    scene.fog = new THREE.Fog(
+      "#18243a",
+      renderProfile.detail === "low" ? 24 : renderProfile.detail === "high" ? 44 : 34,
+      renderProfile.detail === "low" ? 108 : renderProfile.detail === "high" ? 162 : 136
+    );
 
     const camera = new THREE.PerspectiveCamera(70, mount.clientWidth / mount.clientHeight, 0.1, 220);
     camera.position.set(0, 1.65, 0);
@@ -2625,7 +2789,7 @@ export function ThreeScene({ feedbackEvent, guidanceLocationId, mapLayout, state
     carriedCrateMountRef.current = carriedCrateMount;
     updateCarriedCrateMount(carriedCrateMount, stateRef.current.player.carriedCrate ?? null);
 
-    const { avatar: playerAvatar, cargoMount: playerAvatarCargoMount } = createPlayerAvatar();
+    const { avatar: playerAvatar, cargoMount: playerAvatarCargoMount } = createPlayerAvatar(renderProfile.detail);
     playerAvatar.visible = false;
     yaw.add(playerAvatar);
     playerAvatarCargoMountRef.current = playerAvatarCargoMount;
@@ -2642,8 +2806,8 @@ export function ThreeScene({ feedbackEvent, guidanceLocationId, mapLayout, state
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     mount.appendChild(renderer.domElement);
 
-    scene.add(createSkyDome());
-    const atmosphere = createAtmosphere();
+    scene.add(createSkyDome(renderProfile.detail));
+    const atmosphere = createAtmosphere(renderProfile.detail, renderProfile.atmosphereParticles);
     scene.add(atmosphere);
 
     const hemi = new THREE.HemisphereLight("#dbeafe", "#172554", 1.05);
@@ -2652,10 +2816,12 @@ export function ThreeScene({ feedbackEvent, guidanceLocationId, mapLayout, state
     const keyLight = new THREE.DirectionalLight("#bfdbfe", 1.45);
     keyLight.position.set(-8, 13, 7);
     keyLight.castShadow = renderProfile.enableShadows;
-    keyLight.shadow.mapSize.set(renderProfile.lowPower ? 512 : 1024, renderProfile.lowPower ? 512 : 1024);
+    if (renderProfile.shadowMapSize > 0) {
+      keyLight.shadow.mapSize.set(renderProfile.shadowMapSize, renderProfile.shadowMapSize);
+    }
     scene.add(keyLight);
 
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(worldWidth + 10, worldDepth + 10), createAsphaltMaterial());
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(worldWidth + 10, worldDepth + 10), createAsphaltMaterial(renderProfile.detail));
     ground.rotation.x = -Math.PI / 2;
     ground.position.set(worldCenterX, 0, worldCenterZ);
     ground.receiveShadow = true;
@@ -2665,15 +2831,17 @@ export function ThreeScene({ feedbackEvent, guidanceLocationId, mapLayout, state
     const addStaticObject = (object: THREE.Object3D, x: number, z: number) => {
       addObjectToWorldChunk(staticChunks, scene, object, x, z);
     };
-    const roadMaterial = createRoadMaterial();
-    const sidewalkMaterial = createSidewalkMaterial();
+    const roadMaterial = createRoadMaterial(renderProfile.detail);
+    const sidewalkMaterial = createSidewalkMaterial(renderProfile.detail);
     const sidewalks = mapLayout.roads.flatMap(sidewalkStripsForRoad);
 
     for (const road of mapLayout.roads) {
       addRectMeshesToWorldChunks(staticChunks, scene, roadBounds(road), 0.025, 0.035, roadMaterial, (mesh) => {
         mesh.receiveShadow = true;
       });
-      addRoadMarkingsToChunks(staticChunks, scene, road);
+      if (renderProfile.detail !== "low") {
+        addRoadMarkingsToChunks(staticChunks, scene, road);
+      }
     }
 
     for (const sidewalk of sidewalks) {
@@ -2701,25 +2869,25 @@ export function ThreeScene({ feedbackEvent, guidanceLocationId, mapLayout, state
         continue;
       }
 
-      const buildingGroup = createBuilding(building.width, building.depth, building.height, building.style, building.signText);
+      const buildingGroup = createBuilding(building.width, building.depth, building.height, building.style, building.signText, renderProfile.detail);
       buildingGroup.position.set(building.x, 0, building.z);
       addStaticObject(buildingGroup, building.x, building.z);
     }
 
     for (const interior of mapLayout.interiors) {
-      addStaticObject(createInteriorCell(interior), interior.x, interior.z);
+      addStaticObject(createInteriorCell(interior, renderProfile.detail), interior.x, interior.z);
     }
 
     mapLayout.backdropBuildings.slice(0, renderProfile.maxBackdropBuildings).forEach((building) => {
-      addStaticObject(createBackdropBuilding(building), building.x, building.z);
+      addStaticObject(createBackdropBuilding(building, renderProfile.detail), building.x, building.z);
     });
 
-    mapLayout.patrolZones.slice(0, renderProfile.lowPower ? 2 : mapLayout.patrolZones.length).forEach((zone) => {
+    mapLayout.patrolZones.slice(0, renderProfile.maxPatrolZones).forEach((zone) => {
       addStaticObject(createPatrolZone(zone), zone.x, zone.z);
     });
 
-    for (const decoration of mapLayout.decorations) {
-      addStaticObject(createWorldDecoration(decoration, renderProfile.enableLocalLights), decoration.x, decoration.z);
+    for (const decoration of mapLayout.decorations.slice(0, renderProfile.decorationLimit)) {
+      addStaticObject(createWorldDecoration(decoration, renderProfile.enableLocalLights, renderProfile.detail), decoration.x, decoration.z);
     }
 
     for (const label of districtLabels) {
@@ -2741,7 +2909,8 @@ export function ThreeScene({ feedbackEvent, guidanceLocationId, mapLayout, state
 
     const streetProps = createStreetProps({
       enableLocalLights: renderProfile.enableLocalLights,
-      maxNpcs: renderProfile.maxAmbientNpcs
+      maxNpcs: renderProfile.maxAmbientNpcs,
+      quality: renderProfile.detail
     });
     const animatedProps: THREE.Object3D[] = [];
     streetProps.traverse((object) => {
@@ -2755,16 +2924,16 @@ export function ThreeScene({ feedbackEvent, guidanceLocationId, mapLayout, state
       addStaticObject(child, worldPosition.x, worldPosition.z);
     });
 
-    const trafficLayer = createTrafficLayer(mapLayout.trafficLoops, mapLayout.roads, renderProfile.maxTrafficLoops, renderProfile.enableShadows);
+    const trafficLayer = createTrafficLayer(mapLayout.trafficLoops, mapLayout.roads, renderProfile.maxTrafficLoops, renderProfile.enableShadows, renderProfile.detail);
     animatedProps.push(...trafficLayer.animated);
-    const policePatrolLayer = createPolicePatrolLayer(mapLayout.policePatrolPaths, renderProfile.maxPolicePatrols);
+    const policePatrolLayer = createPolicePatrolLayer(mapLayout.policePatrolPaths, renderProfile.maxPolicePatrols, renderProfile.detail);
     animatedProps.push(...policePatrolLayer.animated);
     animatedPropsRef.current = animatedProps;
     scene.add(trafficLayer.group);
     scene.add(policePatrolLayer.group);
 
     const staticChunkRuntimes = Array.from(staticChunks.values());
-    const activeChunkRadius = renderProfile.lowPower ? 1 : 2;
+    const activeChunkRadius = renderProfile.chunkRadius;
     updateWorldChunkVisibility(staticChunkRuntimes, yaw.position, activeChunkRadius);
 
     const dynamicGroup = new THREE.Group();
@@ -2797,7 +2966,7 @@ export function ThreeScene({ feedbackEvent, guidanceLocationId, mapLayout, state
         return;
       }
 
-      interactablesRef.current = populateDynamicObjects(dynamicGroupRef.current, stateRef.current, guidanceLocationIdRef.current);
+      interactablesRef.current = populateDynamicObjects(dynamicGroupRef.current, stateRef.current, guidanceLocationIdRef.current, renderProfile.detail);
       if (debugVisible && debugGroupRef.current) {
         populateDebugOverlay(debugGroupRef.current, stateRef.current, interactablesRef.current, animatedProps, mapLayout);
       }
@@ -3036,7 +3205,7 @@ export function ThreeScene({ feedbackEvent, guidanceLocationId, mapLayout, state
       carriedCrateSignatureRef.current = null;
       interactablesRef.current = [];
     };
-  }, [mapLayout]);
+  }, [graphicsQuality, mapLayout]);
 
   useEffect(() => {
     const dynamicGroup = dynamicGroupRef.current;
@@ -3044,12 +3213,12 @@ export function ThreeScene({ feedbackEvent, guidanceLocationId, mapLayout, state
       return;
     }
 
-    interactablesRef.current = populateDynamicObjects(dynamicGroup, state, guidanceLocationId);
+    interactablesRef.current = populateDynamicObjects(dynamicGroup, state, guidanceLocationId, graphicsQuality);
     const debugGroup = debugGroupRef.current;
     if (debugGroup?.visible) {
       populateDebugOverlay(debugGroup, state, interactablesRef.current, animatedPropsRef.current, mapLayout);
     }
-  }, [guidanceLocationId, mapLayout, state]);
+  }, [graphicsQuality, guidanceLocationId, mapLayout, state]);
 
   useEffect(() => {
     const feedbackGroup = feedbackGroupRef.current;
@@ -3058,11 +3227,11 @@ export function ThreeScene({ feedbackEvent, guidanceLocationId, mapLayout, state
     }
 
     processedFeedbackIdRef.current = feedbackEvent.id;
-    const effect = createSceneFeedbackEffect(feedbackEvent, state);
+    const effect = createSceneFeedbackEffect(feedbackEvent, state, graphicsQuality);
     if (effect) {
       feedbackGroup.add(effect);
     }
-  }, [feedbackEvent, state]);
+  }, [feedbackEvent, graphicsQuality, state]);
 
   useEffect(() => {
     const mount = carriedCrateMountRef.current;

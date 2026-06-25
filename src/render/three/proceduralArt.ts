@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import type { GraphicsQuality } from "./graphicsQuality";
 
 type TexturePainter = (context: CanvasRenderingContext2D, size: number) => void;
 
@@ -31,13 +32,14 @@ function jitter(context: CanvasRenderingContext2D, size: number, count: number, 
   }
 }
 
-export function createAsphaltMaterial(): THREE.MeshStandardMaterial {
+export function createAsphaltMaterial(quality: GraphicsQuality = "medium"): THREE.MeshStandardMaterial {
+  const size = quality === "low" ? 128 : quality === "high" ? 512 : 256;
   const map = textureFromCanvas(
-    256,
+    size,
     (context, size) => {
       context.fillStyle = "#202936";
       context.fillRect(0, 0, size, size);
-      jitter(context, size, 1500, 0.16);
+      jitter(context, size, quality === "low" ? 420 : quality === "high" ? 2600 : 1500, quality === "low" ? 0.1 : 0.16);
       context.strokeStyle = "rgba(226, 232, 240, 0.18)";
       context.lineWidth = 2;
       for (let x = 20; x < size; x += 64) {
@@ -47,19 +49,20 @@ export function createAsphaltMaterial(): THREE.MeshStandardMaterial {
         context.stroke();
       }
     },
-    8
+    quality === "low" ? 4 : quality === "high" ? 10 : 8
   );
 
   return new THREE.MeshStandardMaterial({ map, color: "#2f3a47", roughness: 0.92, metalness: 0.02 });
 }
 
-export function createRoadMaterial(): THREE.MeshStandardMaterial {
+export function createRoadMaterial(quality: GraphicsQuality = "medium"): THREE.MeshStandardMaterial {
+  const size = quality === "low" ? 128 : quality === "high" ? 512 : 256;
   const map = textureFromCanvas(
-    256,
+    size,
     (context, size) => {
       context.fillStyle = "#171d27";
       context.fillRect(0, 0, size, size);
-      jitter(context, size, 1900, 0.19);
+      jitter(context, size, quality === "low" ? 520 : quality === "high" ? 3200 : 1900, quality === "low" ? 0.12 : 0.19);
       context.fillStyle = "rgba(248, 250, 252, 0.18)";
       for (let y = 120; y < size; y += 128) {
         for (let x = 18; x < size; x += 72) {
@@ -67,15 +70,16 @@ export function createRoadMaterial(): THREE.MeshStandardMaterial {
         }
       }
     },
-    6
+    quality === "low" ? 3 : quality === "high" ? 8 : 6
   );
 
   return new THREE.MeshStandardMaterial({ map, color: "#222a35", roughness: 0.96 });
 }
 
-export function createSidewalkMaterial(): THREE.MeshStandardMaterial {
+export function createSidewalkMaterial(quality: GraphicsQuality = "medium"): THREE.MeshStandardMaterial {
+  const size = quality === "low" ? 128 : quality === "high" ? 512 : 256;
   const map = textureFromCanvas(
-    256,
+    size,
     (context, size) => {
       context.fillStyle = "#596476";
       context.fillRect(0, 0, size, size);
@@ -93,17 +97,18 @@ export function createSidewalkMaterial(): THREE.MeshStandardMaterial {
         context.lineTo(size, y);
         context.stroke();
       }
-      jitter(context, size, 800, 0.12);
+      jitter(context, size, quality === "low" ? 220 : quality === "high" ? 1400 : 800, quality === "low" ? 0.08 : 0.12);
     },
-    5
+    quality === "low" ? 3 : quality === "high" ? 7 : 5
   );
 
   return new THREE.MeshStandardMaterial({ map, color: "#8a94a5", roughness: 0.88 });
 }
 
-function createWallMaterial(base: string, mortar: string): THREE.MeshStandardMaterial {
+function createWallMaterial(base: string, mortar: string, quality: GraphicsQuality): THREE.MeshStandardMaterial {
+  const size = quality === "low" ? 128 : quality === "high" ? 512 : 256;
   const map = textureFromCanvas(
-    256,
+    size,
     (context, size) => {
       context.fillStyle = base;
       context.fillRect(0, 0, size, size);
@@ -143,39 +148,47 @@ function createWallMaterial(base: string, mortar: string): THREE.MeshStandardMat
         context.lineTo(x + 12 + Math.random() * 30, y + Math.random() * 9 - 4);
         context.stroke();
       }
-      jitter(context, size, 550, 0.12);
+      jitter(context, size, quality === "low" ? 160 : quality === "high" ? 960 : 550, quality === "low" ? 0.08 : 0.12);
     },
     2
   );
 
-  const bumpMap = textureFromCanvas(
-    256,
-    (context, size) => {
-      context.fillStyle = "#8f8f8f";
-      context.fillRect(0, 0, size, size);
-      context.strokeStyle = "#303030";
-      context.lineWidth = 4;
-      const brickHeight = 32;
-      const brickWidth = 74;
-      for (let y = 0; y <= size; y += brickHeight) {
-        context.beginPath();
-        context.moveTo(0, y);
-        context.lineTo(size, y);
-        context.stroke();
-        const offset = (y / brickHeight) % 2 === 0 ? 0 : brickWidth / 2;
-        for (let x = -offset; x <= size; x += brickWidth) {
+  const bumpMap = quality === "low"
+    ? undefined
+    : textureFromCanvas(
+      size,
+      (context, size) => {
+        context.fillStyle = "#8f8f8f";
+        context.fillRect(0, 0, size, size);
+        context.strokeStyle = "#303030";
+        context.lineWidth = 4;
+        const brickHeight = 32;
+        const brickWidth = 74;
+        for (let y = 0; y <= size; y += brickHeight) {
           context.beginPath();
-          context.moveTo(x, y);
-          context.lineTo(x, y + brickHeight);
+          context.moveTo(0, y);
+          context.lineTo(size, y);
           context.stroke();
+          const offset = (y / brickHeight) % 2 === 0 ? 0 : brickWidth / 2;
+          for (let x = -offset; x <= size; x += brickWidth) {
+            context.beginPath();
+            context.moveTo(x, y);
+            context.lineTo(x, y + brickHeight);
+            context.stroke();
+          }
         }
-      }
-      jitter(context, size, 420, 0.22);
-    },
-    2
-  );
+        jitter(context, size, quality === "high" ? 720 : 420, 0.22);
+      },
+      2
+    );
 
-  return new THREE.MeshStandardMaterial({ map, bumpMap, bumpScale: 0.035, color: "#ffffff", roughness: 0.9, metalness: 0.02 });
+  return new THREE.MeshStandardMaterial({
+    map,
+    ...(bumpMap ? { bumpMap, bumpScale: 0.035 } : {}),
+    color: "#ffffff",
+    roughness: 0.9,
+    metalness: 0.02
+  });
 }
 
 function createSignTexture(text: string, background: string, accent: string): THREE.CanvasTexture {
@@ -252,16 +265,16 @@ function litWindowMaterial(style: BuildingStyle, lit: boolean): THREE.MeshStanda
   });
 }
 
-function addWindows(group: THREE.Group, width: number, height: number, depth: number, buildingHeight: number, style: BuildingStyle): void {
+function addWindows(group: THREE.Group, width: number, height: number, depth: number, buildingHeight: number, style: BuildingStyle, quality: GraphicsQuality): void {
   const frameMaterial = new THREE.MeshStandardMaterial({ color: "#0f172a", roughness: 0.48, metalness: 0.12 });
   const mullionMaterial = new THREE.MeshBasicMaterial({ color: "#020617", transparent: true, opacity: 0.78 });
   const sillMaterial = new THREE.MeshStandardMaterial({ color: "#cbd5e1", roughness: 0.7, metalness: 0.05 });
 
-  const cols = Math.max(2, Math.floor(width / 1.3));
-  const rows = Math.max(1, Math.floor(buildingHeight / 1.25));
+  const cols = Math.max(2, Math.floor(width / (quality === "high" ? 1.08 : quality === "low" ? 1.8 : 1.3)));
+  const rows = Math.max(1, Math.floor(buildingHeight / (quality === "high" ? 1.02 : quality === "low" ? 1.75 : 1.25)));
   for (let row = 0; row < rows; row += 1) {
     for (let col = 0; col < cols; col += 1) {
-      if ((row + col) % 3 === 0 && style !== "arcade") {
+      if ((row + col) % (quality === "low" ? 2 : 3) === 0 && style !== "arcade") {
         continue;
       }
 
@@ -274,15 +287,28 @@ function addWindows(group: THREE.Group, width: number, height: number, depth: nu
       const windowMaterial = litWindowMaterial(style, lit);
       addPlane(group, 0.48, 0.42, frameMaterial, new THREE.Vector3(x, y, -depth / 2 - 0.012), 0);
       addPlane(group, 0.38, 0.32, windowMaterial, new THREE.Vector3(x, y, -depth / 2 - 0.011), 0);
-      addPlane(group, 0.024, 0.32, mullionMaterial, new THREE.Vector3(x, y, -depth / 2 - 0.018), 0);
-      addPlane(group, 0.38, 0.018, mullionMaterial, new THREE.Vector3(x, y, -depth / 2 - 0.019), 0);
-      const glint = addPlane(group, 0.028, 0.28, new THREE.MeshBasicMaterial({ color: "#f8fafc", transparent: true, opacity: lit ? 0.18 : 0.05 }), new THREE.Vector3(x - 0.12, y + 0.01, -depth / 2 - 0.02), 0);
-      glint.rotation.z = -0.28;
-      const sill = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.045, 0.12), sillMaterial);
-      sill.position.set(x, y - 0.21, -depth / 2 - 0.045);
-      sill.castShadow = true;
-      group.add(sill);
+      if (quality !== "low") {
+        addPlane(group, 0.024, 0.32, mullionMaterial, new THREE.Vector3(x, y, -depth / 2 - 0.018), 0);
+        addPlane(group, 0.38, 0.018, mullionMaterial, new THREE.Vector3(x, y, -depth / 2 - 0.019), 0);
+        const glint = addPlane(group, 0.028, 0.28, new THREE.MeshBasicMaterial({ color: "#f8fafc", transparent: true, opacity: lit ? 0.18 : 0.05 }), new THREE.Vector3(x - 0.12, y + 0.01, -depth / 2 - 0.02), 0);
+        glint.rotation.z = -0.28;
+        const sill = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.045, 0.12), sillMaterial);
+        sill.position.set(x, y - 0.21, -depth / 2 - 0.045);
+        sill.castShadow = true;
+        group.add(sill);
+      }
+
+      if (quality === "high" && row % 2 === 1) {
+        const awning = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.055, 0.2), new THREE.MeshStandardMaterial({ color: style === "rival" ? "#fb7185" : "#38bdf8", roughness: 0.58, metalness: 0.06 }));
+        awning.position.set(x, y + 0.27, -depth / 2 - 0.09);
+        awning.castShadow = true;
+        group.add(awning);
+      }
     }
+  }
+
+  if (quality === "low") {
+    return;
   }
 
   const sideRows = Math.max(1, Math.floor(buildingHeight / 1.55));
@@ -306,6 +332,13 @@ function addWindows(group: THREE.Group, width: number, height: number, depth: nu
         addPlane(group, 0.38, 0.34, frameMaterial, new THREE.Vector3(x, y, z), side > 0 ? Math.PI / 2 : -Math.PI / 2);
         addPlane(group, 0.3, 0.26, windowMaterial, new THREE.Vector3(x + side * 0.002, y, z), side > 0 ? Math.PI / 2 : -Math.PI / 2);
         addPlane(group, 0.3, 0.016, mullionMaterial, new THREE.Vector3(x + side * 0.004, y, z), side > 0 ? Math.PI / 2 : -Math.PI / 2);
+        if (quality === "high" && (row + col + side) % 3 === 0) {
+          const ac = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.16, 0.22), new THREE.MeshStandardMaterial({ color: "#94a3b8", roughness: 0.52, metalness: 0.32 }));
+          ac.position.set(x + side * 0.055, y - 0.24, z);
+          ac.rotation.y = side > 0 ? Math.PI / 2 : -Math.PI / 2;
+          ac.castShadow = true;
+          group.add(ac);
+        }
       }
     }
   }
@@ -319,7 +352,7 @@ function addWindows(group: THREE.Group, width: number, height: number, depth: nu
   }
 }
 
-function addFacadeDetails(group: THREE.Group, width: number, depth: number, height: number, style: BuildingStyle, accent: string): void {
+function addFacadeDetails(group: THREE.Group, width: number, depth: number, height: number, style: BuildingStyle, accent: string, quality: GraphicsQuality): void {
   const frontZ = -depth / 2;
   const darkMaterial = new THREE.MeshStandardMaterial({ color: "#0f172a", roughness: 0.55, metalness: 0.12 });
   const trimMaterial = new THREE.MeshStandardMaterial({ color: accent, roughness: 0.58, metalness: 0.08 });
@@ -386,6 +419,10 @@ function addFacadeDetails(group: THREE.Group, width: number, depth: number, heig
   threshold.castShadow = true;
   threshold.receiveShadow = true;
   group.add(threshold);
+
+  if (quality === "low") {
+    return;
+  }
 
   const displayWidth = Math.min(width * 0.44, 1.9);
   const displayX = Math.min(width * 0.18, 1.0);
@@ -483,18 +520,54 @@ function addFacadeDetails(group: THREE.Group, width: number, depth: number, heig
     bladeCore.position.set(width / 2 + 0.105, blade.position.y, frontZ - 0.32);
     group.add(bladeCore);
   }
+
+  if (quality === "high") {
+    const stairMaterial = new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.55, metalness: 0.32 });
+    for (let step = 0; step < 4; step += 1) {
+      const tread = new THREE.Mesh(new THREE.BoxGeometry(0.94 - step * 0.08, 0.045, 0.26), stairMaterial);
+      tread.position.set(doorX, 0.14 + step * 0.075, frontZ - 0.36 - step * 0.17);
+      tread.castShadow = true;
+      tread.receiveShadow = true;
+      group.add(tread);
+    }
+
+    const roofTank = new THREE.Group();
+    const tankMaterial = new THREE.MeshStandardMaterial({ color: "#64748b", roughness: 0.5, metalness: 0.28 });
+    const tank = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.62, 18), tankMaterial);
+    tank.rotation.z = Math.PI / 2;
+    tank.position.set(0, height + 0.72, depth * 0.2);
+    tank.castShadow = true;
+    roofTank.add(tank);
+    for (const x of [-0.22, 0.22]) {
+      const stand = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.42, 8), stairMaterial);
+      stand.position.set(x, height + 0.35, depth * 0.2);
+      roofTank.add(stand);
+    }
+    group.add(roofTank);
+
+    for (const x of [-width * 0.34, width * 0.36]) {
+      const wallLamp = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 8), new THREE.MeshBasicMaterial({ color: "#fde68a", transparent: true, opacity: 0.85 }));
+      wallLamp.position.set(x, 1.75, frontZ - 0.12);
+      group.add(wallLamp);
+    }
+
+    const sideSign = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.5, 0.82), new THREE.MeshBasicMaterial({ color: accent }));
+    sideSign.position.set(-width / 2 - 0.08, Math.min(height - 0.55, 2.35), frontZ - 0.36);
+    sideSign.castShadow = true;
+    group.add(sideSign);
+  }
 }
 
-export function createBuilding(width: number, depth: number, height: number, style: BuildingStyle, signText: string): THREE.Group {
+export function createBuilding(width: number, depth: number, height: number, style: BuildingStyle, signText: string, quality: GraphicsQuality = "medium"): THREE.Group {
   const group = new THREE.Group();
   const materialByStyle: Record<BuildingStyle, THREE.MeshStandardMaterial> = {
-    garage: createWallMaterial("#475569", "rgba(15, 23, 42, 0.26)"),
-    supplier: createWallMaterial("#6b3f17", "rgba(15, 23, 42, 0.28)"),
-    laundromat: createWallMaterial("#0f766e", "rgba(15, 23, 42, 0.24)"),
-    gym: createWallMaterial("#7c2d12", "rgba(15, 23, 42, 0.26)"),
-    arcade: createWallMaterial("#4c1d95", "rgba(15, 23, 42, 0.2)"),
-    transit: createWallMaterial("#0e7490", "rgba(15, 23, 42, 0.24)"),
-    rival: createWallMaterial("#7f1d1d", "rgba(15, 23, 42, 0.32)")
+    garage: createWallMaterial("#475569", "rgba(15, 23, 42, 0.26)", quality),
+    supplier: createWallMaterial("#6b3f17", "rgba(15, 23, 42, 0.28)", quality),
+    laundromat: createWallMaterial("#0f766e", "rgba(15, 23, 42, 0.24)", quality),
+    gym: createWallMaterial("#7c2d12", "rgba(15, 23, 42, 0.26)", quality),
+    arcade: createWallMaterial("#4c1d95", "rgba(15, 23, 42, 0.2)", quality),
+    transit: createWallMaterial("#0e7490", "rgba(15, 23, 42, 0.24)", quality),
+    rival: createWallMaterial("#7f1d1d", "rgba(15, 23, 42, 0.32)", quality)
   };
   const signAccent: Record<BuildingStyle, string> = {
     garage: "#38bdf8",
@@ -508,12 +581,12 @@ export function createBuilding(width: number, depth: number, height: number, sty
 
   const body = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), materialByStyle[style]);
   body.position.y = height / 2;
-  body.castShadow = true;
+  body.castShadow = quality !== "low";
   body.receiveShadow = true;
   group.add(body);
 
-  addFacadeDetails(group, width, depth, height, style, signAccent[style]);
-  addWindows(group, width, height, depth, height, style);
+  addFacadeDetails(group, width, depth, height, style, signAccent[style], quality);
+  addWindows(group, width, height, depth, height, style, quality);
 
   const signMaterial = new THREE.MeshStandardMaterial({
     map: createSignTexture(signText, "rgba(15, 23, 42, 0.96)", signAccent[style]),
@@ -533,10 +606,10 @@ export function createBuilding(width: number, depth: number, height: number, sty
   return group;
 }
 
-export function createSkyDome(): THREE.Mesh {
+export function createSkyDome(quality: GraphicsQuality = "medium"): THREE.Mesh {
   const canvas = document.createElement("canvas");
-  canvas.width = 1024;
-  canvas.height = 512;
+  canvas.width = quality === "low" ? 512 : quality === "high" ? 1536 : 1024;
+  canvas.height = canvas.width / 2;
   const context = canvas.getContext("2d");
 
   if (context) {
@@ -548,7 +621,8 @@ export function createSkyDome(): THREE.Mesh {
     context.fillRect(0, 0, canvas.width, canvas.height);
 
     context.fillStyle = "rgba(248, 250, 252, 0.8)";
-    for (let i = 0; i < 90; i += 1) {
+    const starCount = quality === "low" ? 36 : quality === "high" ? 150 : 90;
+    for (let i = 0; i < starCount; i += 1) {
       const x = Math.random() * canvas.width;
       const y = Math.random() * canvas.height * 0.42;
       const radius = Math.random() * 1.6 + 0.4;
@@ -574,8 +648,10 @@ export function createSkyDome(): THREE.Mesh {
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
+  const widthSegments = quality === "low" ? 24 : quality === "high" ? 64 : 48;
+  const heightSegments = quality === "low" ? 12 : quality === "high" ? 32 : 24;
   const sky = new THREE.Mesh(
-    new THREE.SphereGeometry(106, 48, 24),
+    new THREE.SphereGeometry(106, widthSegments, heightSegments),
     new THREE.MeshBasicMaterial({ map: texture, side: THREE.BackSide })
   );
   sky.position.y = 6;
@@ -785,7 +861,73 @@ function createLegRig(side: -1 | 1, pantsMaterial: THREE.Material, shoeMaterial:
   return { lower, upper, wrist };
 }
 
-export function createNpcCharacter(variant: NpcVariant): THREE.Group {
+function createLowNpcCharacter(variant: NpcVariant): THREE.Group {
+  const palette = {
+    customer: { jacket: "#0f766e", pants: "#1e293b", accent: "#2dd4bf", skin: "#c08457" },
+    rival: { jacket: "#991b1b", pants: "#020617", accent: "#fb7185", skin: "#b45309" },
+    worker: { jacket: "#f97316", pants: "#334155", accent: "#facc15", skin: "#d6a06f" },
+    scout: { jacket: "#4338ca", pants: "#111827", accent: "#93c5fd", skin: "#9a6a4f" }
+  }[variant];
+
+  const group = new THREE.Group();
+  group.userData.floatSpeed = variant === "rival" ? 1.2 : 1;
+  group.userData.floatAmount = variant === "worker" ? 0.012 : 0.008;
+
+  const shadow = new THREE.Mesh(
+    new THREE.CircleGeometry(0.34, 12),
+    new THREE.MeshBasicMaterial({ color: "#020617", transparent: true, opacity: 0.3 })
+  );
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = 0.01;
+  group.add(shadow);
+
+  const jacketMaterial = new THREE.MeshStandardMaterial({ color: palette.jacket, roughness: 0.7 });
+  const pantsMaterial = new THREE.MeshStandardMaterial({ color: palette.pants, roughness: 0.78 });
+  const skinMaterial = new THREE.MeshStandardMaterial({ color: palette.skin, roughness: 0.62 });
+  const accentMaterial = new THREE.MeshBasicMaterial({ color: palette.accent });
+
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.2, 0.46, 4, 8), jacketMaterial);
+  body.position.set(0, 0.84, 0);
+  body.castShadow = true;
+  group.add(body);
+
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 8), skinMaterial);
+  head.position.set(0, 1.3, -0.01);
+  head.castShadow = true;
+  group.add(head);
+
+  for (const x of [-0.13, 0.13]) {
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.06, 0.48, 8), pantsMaterial);
+    leg.position.set(x, 0.34, 0.01);
+    leg.castShadow = true;
+    group.add(leg);
+
+    const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.05, 0.5, 8), jacketMaterial);
+    arm.position.set(x * 2.15, 0.82, -0.02);
+    arm.rotation.z = -Math.sign(x) * 0.2;
+    arm.castShadow = true;
+    group.add(arm);
+  }
+
+  const badge = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.045, 0.025), accentMaterial);
+  badge.position.set(0.08, 0.98, -0.19);
+  group.add(badge);
+
+  if (variant === "worker") {
+    const crate = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.2, 0.18), new THREE.MeshStandardMaterial({ color: "#92400e", roughness: 0.8 }));
+    crate.position.set(0, 0.76, -0.22);
+    group.add(crate);
+  }
+
+  group.userData.npcVariant = variant;
+  return group;
+}
+
+export function createNpcCharacter(variant: NpcVariant, quality: GraphicsQuality = "medium"): THREE.Group {
+  if (quality === "low") {
+    return createLowNpcCharacter(variant);
+  }
+
   const palette = {
     customer: { jacket: "#0f766e", shirt: "#e0f2fe", pants: "#1e293b", accent: "#2dd4bf", skin: "#c08457" },
     rival: { jacket: "#991b1b", shirt: "#111827", pants: "#020617", accent: "#fb7185", skin: "#b45309" },
@@ -938,6 +1080,32 @@ export function createNpcCharacter(variant: NpcVariant): THREE.Group {
     leftArm.wrist.add(bag);
   }
 
+  if (quality === "high") {
+    const zipper = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.5, 0.018), new THREE.MeshBasicMaterial({ color: "#e2e8f0", transparent: true, opacity: 0.78 }));
+    zipper.position.set(0, 0.84, -0.228);
+    group.add(zipper);
+
+    for (const side of [-1, 1] as const) {
+      const shoulderPatch = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.055, 0.026), new THREE.MeshBasicMaterial({ color: palette.accent }));
+      shoulderPatch.position.set(side * 0.23, 1.08, -0.17);
+      shoulderPatch.rotation.z = side * 0.12;
+      group.add(shoulderPatch);
+    }
+
+    if (variant === "worker") {
+      const clipboard = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.19, 0.018), new THREE.MeshBasicMaterial({ color: "#f8fafc" }));
+      clipboard.position.set(-0.02, -0.03, -0.08);
+      clipboard.rotation.x = 0.18;
+      rightArm.wrist.add(clipboard);
+    }
+
+    if (variant === "scout") {
+      const earpiece = new THREE.Mesh(new THREE.SphereGeometry(0.025, 8, 6), new THREE.MeshBasicMaterial({ color: "#38bdf8" }));
+      earpiece.position.set(0.18, 0.13, -0.03);
+      headPivot.add(earpiece);
+    }
+  }
+
   group.userData.npcVariant = variant;
   group.userData.rig = {
     body,
@@ -954,8 +1122,8 @@ export function createNpcCharacter(variant: NpcVariant): THREE.Group {
   return group;
 }
 
-export function createAtmosphere(): THREE.Points {
-  const count = 160;
+export function createAtmosphere(quality: GraphicsQuality = "medium", overrideCount?: number): THREE.Points {
+  const count = overrideCount ?? (quality === "low" ? 70 : quality === "high" ? 280 : 160);
   const positions = new Float32Array(count * 3);
   const colors = new Float32Array(count * 3);
   const color = new THREE.Color();
@@ -990,10 +1158,11 @@ export function createAtmosphere(): THREE.Points {
   return points;
 }
 
-export function createStreetProps(options: { enableLocalLights?: boolean; maxNpcs?: number } = {}): THREE.Group {
+export function createStreetProps(options: { enableLocalLights?: boolean; maxNpcs?: number; quality?: GraphicsQuality } = {}): THREE.Group {
   const group = new THREE.Group();
   const maxNpcs = options.maxNpcs ?? 16;
   const enableLocalLights = options.enableLocalLights ?? true;
+  const quality = options.quality ?? "medium";
   const props: Array<{ kind: "poster" | "trash" | "pallet" | "graffiti"; x: number; z: number; y: number; w: number; h: number }> = [
     { kind: "poster", x: -6.9, z: -6.6, y: 1.1, w: 0.85, h: 1.15 },
     { kind: "poster", x: 6.4, z: 7.0, y: 1.0, w: 0.85, h: 1.15 },
@@ -1010,7 +1179,8 @@ export function createStreetProps(options: { enableLocalLights?: boolean; maxNpc
     { kind: "graffiti", x: 21.2, z: -25.9, y: 1.22, w: 1.5, h: 0.95 }
   ];
 
-  for (const prop of props) {
+  const visibleProps = quality === "low" ? props.slice(0, 7) : quality === "high" ? props : props.slice(0, 11);
+  for (const prop of visibleProps) {
     const sprite = createBillboardSprite(prop.kind, prop.w, prop.h);
     sprite.position.set(prop.x, prop.y, prop.z);
     group.add(sprite);
@@ -1219,7 +1389,7 @@ export function createStreetProps(options: { enableLocalLights?: boolean; maxNpc
 
   npcs.slice(0, maxNpcs).forEach((npc, index) => {
     const [startX, startZ] = npc.path[0];
-    const character = createNpcCharacter(npc.variant);
+    const character = createNpcCharacter(npc.variant, quality);
     character.position.set(startX, 0, startZ);
     character.rotation.y = npc.rotation;
     character.userData.action = npc.action;
@@ -1230,6 +1400,10 @@ export function createStreetProps(options: { enableLocalLights?: boolean; maxNpc
     character.userData.walkSpeed = npc.speed;
     group.add(character);
   });
+
+  if (quality === "low") {
+    return group;
+  }
 
   const metalMaterial = new THREE.MeshStandardMaterial({ color: "#334155", roughness: 0.5, metalness: 0.38 });
   const glassMaterial = new THREE.MeshPhysicalMaterial({ color: "#bfdbfe", roughness: 0.05, transparent: true, opacity: 0.34, transmission: 0.18 });
@@ -1261,14 +1435,15 @@ export function createStreetProps(options: { enableLocalLights?: boolean; maxNpc
   group.add(busShelter);
 
   const utilityMaterial = new THREE.MeshStandardMaterial({ color: "#475569", roughness: 0.68, metalness: 0.12 });
-  for (const [x, z, color] of [
+  const utilityBoxes: Array<[number, number, string]> = [
     [5.8, 4.6, "#0ea5e9"],
     [6.25, 4.62, "#f97316"],
     [-6.7, 2.75, "#22c55e"],
     [-28.6, 16.3, "#f97316"],
     [24.1, 10.2, "#0ea5e9"],
     [26.0, -19.4, "#e879f9"]
-  ] as Array<[number, number, string]>) {
+  ];
+  for (const [x, z, color] of quality === "medium" ? utilityBoxes.slice(0, 4) : utilityBoxes) {
     const box = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.72, 0.34), utilityMaterial);
     box.position.set(x, 0.36, z);
     box.castShadow = true;
@@ -1281,7 +1456,7 @@ export function createStreetProps(options: { enableLocalLights?: boolean; maxNpc
 
   const planterMaterial = new THREE.MeshStandardMaterial({ color: "#78350f", roughness: 0.72, metalness: 0.03 });
   const leafMaterial = new THREE.MeshStandardMaterial({ color: "#15803d", roughness: 0.74 });
-  for (const [x, z] of [
+  const planterPositions: Array<[number, number]> = [
     [-4.1, -3.75],
     [3.35, -4.55],
     [8.1, 1.35],
@@ -1290,7 +1465,8 @@ export function createStreetProps(options: { enableLocalLights?: boolean; maxNpc
     [24.0, -4.8],
     [12.4, -19.3],
     [28.8, -20.0]
-  ] as Array<[number, number]>) {
+  ];
+  for (const [x, z] of quality === "medium" ? planterPositions.slice(0, 6) : planterPositions) {
     const planter = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.26, 0.34), planterMaterial);
     planter.position.set(x, 0.13, z);
     planter.castShadow = true;
@@ -1303,7 +1479,7 @@ export function createStreetProps(options: { enableLocalLights?: boolean; maxNpc
     }
   }
 
-  for (const [x, z] of [
+  const bollardPositions: Array<[number, number]> = [
     [-3.25, -3.35],
     [-2.85, -3.35],
     [2.85, 3.35],
@@ -1315,7 +1491,8 @@ export function createStreetProps(options: { enableLocalLights?: boolean; maxNpc
     [24.0, 5.2],
     [7.0, -20.0],
     [18.0, -20.0]
-  ] as Array<[number, number]>) {
+  ];
+  for (const [x, z] of quality === "medium" ? bollardPositions.slice(0, 8) : bollardPositions) {
     const bollard = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.065, 0.54, 12), metalMaterial);
     bollard.position.set(x, 0.27, z);
     bollard.castShadow = true;
@@ -1327,7 +1504,7 @@ export function createStreetProps(options: { enableLocalLights?: boolean; maxNpc
 
   const lampMaterial = new THREE.MeshStandardMaterial({ color: "#1e293b", roughness: 0.5, metalness: 0.35 });
   const glowMaterial = new THREE.MeshBasicMaterial({ color: "#fde68a", transparent: true, opacity: 0.62 });
-  for (const position of [
+  const lampPositions = [
     new THREE.Vector3(-7.2, 0, 0.9),
     new THREE.Vector3(5.4, 0, -1.0),
     new THREE.Vector3(-1.1, 0, -6.5),
@@ -1337,7 +1514,8 @@ export function createStreetProps(options: { enableLocalLights?: boolean; maxNpc
     new THREE.Vector3(24.0, 0, 11.2),
     new THREE.Vector3(8.4, 0, -20.0),
     new THREE.Vector3(29.6, 0, -20.1)
-  ]) {
+  ];
+  for (const position of quality === "medium" ? lampPositions.slice(0, 6) : lampPositions) {
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 3.4, 10), lampMaterial);
     pole.position.copy(position).add(new THREE.Vector3(0, 1.7, 0));
     pole.castShadow = true;
@@ -1351,6 +1529,37 @@ export function createStreetProps(options: { enableLocalLights?: boolean; maxNpc
       const light = new THREE.PointLight("#fde68a", 9, 8, 1.6);
       light.position.copy(head.position);
       group.add(light);
+    }
+  }
+
+  if (quality === "high") {
+    const newspaperMaterial = new THREE.MeshStandardMaterial({ color: "#1d4ed8", roughness: 0.48, metalness: 0.1 });
+    for (const [x, z, color] of [
+      [-6.1, -3.4, "#f8fafc"],
+      [7.7, 2.2, "#facc15"],
+      [24.9, -6.5, "#fb7185"],
+      [-29.8, 9.3, "#67e8f9"]
+    ] as Array<[number, number, string]>) {
+      const stand = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.48, 0.28), newspaperMaterial);
+      stand.position.set(x, 0.24, z);
+      stand.castShadow = true;
+      group.add(stand);
+      const placard = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.12, 0.018), new THREE.MeshBasicMaterial({ color }));
+      placard.position.set(x, 0.36, z - 0.15);
+      group.add(placard);
+    }
+
+    const rackMaterial = new THREE.MeshStandardMaterial({ color: "#94a3b8", roughness: 0.38, metalness: 0.42 });
+    for (const [x, z] of [[-5.35, 2.2], [5.7, -4.6], [23.4, 8.8]] as Array<[number, number]>) {
+      const rack = new THREE.Group();
+      rack.position.set(x, 0.18, z);
+      for (let loop = 0; loop < 3; loop += 1) {
+        const hoop = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.012, 6, 20), rackMaterial);
+        hoop.position.set((loop - 1) * 0.22, 0.2, 0);
+        hoop.rotation.x = Math.PI / 2;
+        rack.add(hoop);
+      }
+      group.add(rack);
     }
   }
 
