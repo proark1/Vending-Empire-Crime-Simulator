@@ -15,9 +15,49 @@ const seedAdminName = process.env.ADMIN_NAME ?? "proark";
 const seedAdminPin = process.env.ADMIN_PIN ?? "4924";
 const sessionDays = Number(process.env.SESSION_DAYS ?? 14);
 const jsonLimitBytes = Number(process.env.JSON_LIMIT_BYTES ?? 8 * 1024 * 1024);
+const startedAt = new Date();
 
 let pool = null;
 let databaseReady = null;
+const recentEvents = [];
+const metrics = {
+  adminFailedLogins: 0,
+  adminLogins: 0,
+  apiRequests: 0,
+  dbFailures: 0,
+  expiredSessions: 0,
+  failedWrites: 0,
+  gameSaveConflicts: 0,
+  gameSaves: 0,
+  mapRestores: 0,
+  mapRevisions: 0,
+  mapSaves: 0,
+  serverErrors: 0
+};
+
+function recordEvent(level, type, message, details = {}) {
+  const event = {
+    at: new Date().toISOString(),
+    level,
+    type,
+    message,
+    details
+  };
+  recentEvents.unshift(event);
+  recentEvents.splice(80);
+  const log = JSON.stringify(event);
+  if (level === "error") {
+    console.error(log);
+  } else if (level === "warning") {
+    console.warn(log);
+  } else {
+    console.log(log);
+  }
+}
+
+function httpError(message, statusCode, code, details = {}) {
+  return Object.assign(new Error(message), { code, details, statusCode });
+}
 
 function hashValue(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -112,6 +152,7 @@ async function ensureDatabase() {
         CREATE TABLE IF NOT EXISTS game_saves (
           profile_id TEXT PRIMARY KEY REFERENCES player_profiles(id) ON DELETE CASCADE,
           state JSONB NOT NULL,
+          revision INTEGER NOT NULL DEFAULT 1,
           created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         );
@@ -140,12 +181,29 @@ async function ensureDatabase() {
         CREATE TABLE IF NOT EXISTS map_layouts (
           id TEXT PRIMARY KEY,
           layout JSONB NOT NULL,
+          revision INTEGER NOT NULL DEFAULT 1,
           created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           updated_by TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS map_layout_revisions (
+          id TEXT PRIMARY KEY,
+          layout_id TEXT NOT NULL,
+          revision INTEGER NOT NULL,
+          layout JSONB NOT NULL,
+          action TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          created_by TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS map_layout_revisions_layout_id_idx ON map_layout_revisions(layout_id);
+        CREATE INDEX IF NOT EXISTS map_layout_revisions_created_at_idx ON map_layout_revisions(created_at);
       `);
+      await db.query("ALTER TABLE game_saves ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1");
+      await db.query("ALTER TABLE map_layouts ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1");
       await ensureSeededAdminUser(db);
+      recordEvent("info", "database_ready", "Database schema is ready.");
     })();
   }
 
@@ -257,7 +315,8 @@ async function requirePlayer(request, bodyToken = null) {
   );
 
   if (!result.rows[0]) {
-    throw Object.assign(new Error("Session expired. Sign in again."), { statusCode: 401 });
+    metrics.expiredSessions += 1;
+    throw httpError("Session expired. Sign in again.", 401, "SESSION_EXPIRED");
   }
 
   return result.rows[0];
@@ -285,7 +344,8 @@ async function requireAdmin(request) {
   );
 
   if (!result.rows[0]) {
-    throw Object.assign(new Error("Admin session expired. Sign in again."), { statusCode: 401 });
+    metrics.expiredSessions += 1;
+    throw httpError("Admin session expired. Sign in again.", 401, "ADMIN_SESSION_EXPIRED");
   }
 
   return result.rows[0];
@@ -318,11 +378,11 @@ async function handleGameLogin(response, body) {
 
   await db.query("DELETE FROM player_sessions WHERE expires_at <= now()");
   const token = await createPlayerSession(profile.id);
-  const save = await db.query("SELECT state, updated_at FROM game_saves WHERE profile_id = $1", [profile.id]);
+  const save = await db.query("SELECT state, updated_at, revision FROM game_saves WHERE profile_id = $1", [profile.id]);
 
   jsonResponse(response, 200, {
     profile: { id: profile.id, name: profile.name },
-    save: save.rows[0] ? { state: save.rows[0].state, updatedAt: save.rows[0].updated_at } : null,
+    save: save.rows[0] ? { state: save.rows[0].state, updatedAt: save.rows[0].updated_at, revision: save.rows[0].revision } : null,
     token
   });
 }
@@ -368,23 +428,46 @@ async function handleGameSave(request, response, body) {
     return;
   }
 
-  await getPool().query(
-    `INSERT INTO game_saves (profile_id, state, updated_at)
-     VALUES ($1, $2, now())
+  const baseRevision = typeof body.baseRevision === "number" && Number.isFinite(body.baseRevision) ? Math.max(0, Math.floor(body.baseRevision)) : null;
+  const result = await getPool().query(
+    `INSERT INTO game_saves (profile_id, state, revision, updated_at)
+     VALUES ($1, $2, 1, now())
      ON CONFLICT (profile_id)
-     DO UPDATE SET state = EXCLUDED.state, updated_at = now()`,
-    [profile.id, body.state]
+     DO UPDATE SET
+       state = EXCLUDED.state,
+       revision = game_saves.revision + 1,
+       updated_at = now()
+     WHERE $3::integer IS NULL OR game_saves.revision = $3::integer
+     RETURNING updated_at, revision`,
+    [profile.id, body.state, baseRevision]
   );
 
-  jsonResponse(response, 200, { ok: true, updatedAt: new Date().toISOString() });
+  if (!result.rows[0]) {
+    metrics.gameSaveConflicts += 1;
+    const current = await getPool().query("SELECT updated_at, revision FROM game_saves WHERE profile_id = $1", [profile.id]);
+    recordEvent("warning", "game_save_conflict", "Rejected stale game save.", {
+      baseRevision,
+      currentRevision: current.rows[0]?.revision ?? null,
+      profileId: profile.id
+    });
+    jsonResponse(response, 409, {
+      code: "SAVE_CONFLICT",
+      error: "This save is older than the database copy. Reloaded the latest saved state.",
+      save: current.rows[0] ? { updatedAt: current.rows[0].updated_at, revision: current.rows[0].revision } : null
+    });
+    return;
+  }
+
+  metrics.gameSaves += 1;
+  jsonResponse(response, 200, { ok: true, updatedAt: result.rows[0].updated_at, revision: result.rows[0].revision });
 }
 
 async function handleGameSaveRead(request, response) {
   const profile = await requirePlayer(request);
-  const save = await getPool().query("SELECT state, updated_at FROM game_saves WHERE profile_id = $1", [profile.id]);
+  const save = await getPool().query("SELECT state, updated_at, revision FROM game_saves WHERE profile_id = $1", [profile.id]);
   jsonResponse(response, 200, {
     profile,
-    save: save.rows[0] ? { state: save.rows[0].state, updatedAt: save.rows[0].updated_at } : null
+    save: save.rows[0] ? { state: save.rows[0].state, updatedAt: save.rows[0].updated_at, revision: save.rows[0].revision } : null
   });
 }
 
@@ -401,22 +484,27 @@ async function handleAdminLogin(response, body) {
   const expectedHash = admin ? hashPin(pin, admin.pin_salt) : "";
 
   if (!admin || !safeEqual(expectedHash, admin.pin_hash)) {
+    metrics.adminFailedLogins += 1;
+    recordEvent("warning", "admin_login_failed", "Admin login failed.", { name });
     jsonResponse(response, 401, { error: "Admin name or PIN is incorrect." });
     return;
   }
 
   await getPool().query("DELETE FROM admin_sessions WHERE expires_at <= now()");
   const token = await createAdminSession(admin.name);
+  metrics.adminLogins += 1;
+  recordEvent("info", "admin_login", "Admin signed in.", { name: admin.name, role: admin.role });
   jsonResponse(response, 200, { token, admin: { name: admin.name, role: admin.role } });
 }
 
 async function handleMapLayoutRead(response) {
   await ensureDatabase();
-  const result = await getPool().query("SELECT layout, updated_at, updated_by FROM map_layouts WHERE id = 'default'");
+  const result = await getPool().query("SELECT layout, updated_at, updated_by, revision FROM map_layouts WHERE id = 'default'");
   jsonResponse(response, 200, {
     layout: result.rows[0]?.layout ?? null,
     updatedAt: result.rows[0]?.updated_at ?? null,
-    updatedBy: result.rows[0]?.updated_by ?? null
+    updatedBy: result.rows[0]?.updated_by ?? null,
+    revision: result.rows[0]?.revision ?? null
   });
 }
 
@@ -427,31 +515,191 @@ async function handleMapLayoutSave(request, response, body) {
     return;
   }
 
-  await getPool().query(
-    `INSERT INTO map_layouts (id, layout, updated_at, updated_by)
-     VALUES ('default', $1, now(), $2)
-     ON CONFLICT (id)
-     DO UPDATE SET layout = EXCLUDED.layout, updated_at = now(), updated_by = EXCLUDED.updated_by`,
-    [body.layout, admin.name]
-  );
-  jsonResponse(response, 200, { ok: true, updatedAt: new Date().toISOString() });
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const saved = await client.query(
+      `INSERT INTO map_layouts (id, layout, revision, updated_at, updated_by)
+       VALUES ('default', $1, 1, now(), $2)
+       ON CONFLICT (id)
+       DO UPDATE SET
+         layout = EXCLUDED.layout,
+         revision = map_layouts.revision + 1,
+         updated_at = now(),
+         updated_by = EXCLUDED.updated_by
+       RETURNING layout, updated_at, updated_by, revision`,
+      [body.layout, admin.name]
+    );
+    const row = saved.rows[0];
+    await client.query(
+      `INSERT INTO map_layout_revisions (id, layout_id, revision, layout, action, created_by)
+       VALUES ($1, 'default', $2, $3, 'save', $4)`,
+      [randomUUID(), row.revision, row.layout, admin.name]
+    );
+    await client.query("COMMIT");
+    metrics.mapSaves += 1;
+    metrics.mapRevisions += 1;
+    recordEvent("info", "map_saved", "Map layout saved.", { revision: row.revision, updatedBy: admin.name });
+    jsonResponse(response, 200, { ok: true, updatedAt: row.updated_at, updatedBy: row.updated_by, revision: row.revision });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    metrics.failedWrites += 1;
+    recordEvent("error", "map_save_failed", "Map layout save failed.", { error: error.message });
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 async function handleMapLayoutReset(request, response) {
-  await requireAdmin(request);
-  await getPool().query("DELETE FROM map_layouts WHERE id = 'default'");
+  const admin = await requireAdmin(request);
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const current = await client.query("SELECT layout, revision FROM map_layouts WHERE id = 'default'");
+    if (current.rows[0]) {
+      await client.query(
+        `INSERT INTO map_layout_revisions (id, layout_id, revision, layout, action, created_by)
+         VALUES ($1, 'default', $2, $3, 'reset_backup', $4)`,
+        [randomUUID(), current.rows[0].revision + 1, current.rows[0].layout, admin.name]
+      );
+      metrics.mapRevisions += 1;
+    }
+    await client.query("DELETE FROM map_layouts WHERE id = 'default'");
+    await client.query("COMMIT");
+    recordEvent("warning", "map_reset", "Map layout reset to authored default.", { by: admin.name });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    metrics.failedWrites += 1;
+    recordEvent("error", "map_reset_failed", "Map layout reset failed.", { error: error.message });
+    throw error;
+  } finally {
+    client.release();
+  }
   emptyResponse(response);
+}
+
+async function handleMapLayoutRevisionsRead(request, response) {
+  await requireAdmin(request);
+  const result = await getPool().query(
+    `SELECT id, revision, action, created_at, created_by
+       FROM map_layout_revisions
+      WHERE layout_id = 'default'
+      ORDER BY created_at DESC
+      LIMIT 30`
+  );
+  jsonResponse(response, 200, {
+    revisions: result.rows.map((row) => ({
+      id: row.id,
+      revision: row.revision,
+      action: row.action,
+      createdAt: row.created_at,
+      createdBy: row.created_by
+    }))
+  });
+}
+
+async function handleMapLayoutRestore(request, response, body) {
+  const admin = await requireAdmin(request);
+  const revisionId = String(body?.revisionId ?? "").trim();
+  if (!revisionId) {
+    jsonResponse(response, 400, { error: "Missing revision id." });
+    return;
+  }
+
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const revision = await client.query("SELECT layout, revision FROM map_layout_revisions WHERE id = $1 AND layout_id = 'default'", [revisionId]);
+    if (!revision.rows[0]) {
+      await client.query("ROLLBACK");
+      jsonResponse(response, 404, { error: "Map revision not found." });
+      return;
+    }
+
+    const restored = await client.query(
+      `INSERT INTO map_layouts (id, layout, revision, updated_at, updated_by)
+       VALUES ('default', $1, 1, now(), $2)
+       ON CONFLICT (id)
+       DO UPDATE SET
+         layout = EXCLUDED.layout,
+         revision = map_layouts.revision + 1,
+         updated_at = now(),
+         updated_by = EXCLUDED.updated_by
+       RETURNING layout, updated_at, updated_by, revision`,
+      [revision.rows[0].layout, admin.name]
+    );
+    const row = restored.rows[0];
+    await client.query(
+      `INSERT INTO map_layout_revisions (id, layout_id, revision, layout, action, created_by)
+       VALUES ($1, 'default', $2, $3, 'restore', $4)`,
+      [randomUUID(), row.revision, row.layout, admin.name]
+    );
+    await client.query("COMMIT");
+    metrics.mapRestores += 1;
+    metrics.mapRevisions += 1;
+    recordEvent("warning", "map_restored", "Map layout restored from revision.", {
+      restoredFromRevision: revision.rows[0].revision,
+      revision: row.revision,
+      by: admin.name
+    });
+    jsonResponse(response, 200, {
+      layout: row.layout,
+      updatedAt: row.updated_at,
+      updatedBy: row.updated_by,
+      revision: row.revision
+    });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    metrics.failedWrites += 1;
+    recordEvent("error", "map_restore_failed", "Map layout restore failed.", { error: error.message });
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function handleAdminMonitoring(request, response) {
+  await requireAdmin(request);
+  let database = { ok: false, latencyMs: null };
+  if (databaseUrl) {
+    const started = Date.now();
+    try {
+      await getPool().query("SELECT 1");
+      database = { ok: true, latencyMs: Date.now() - started };
+    } catch (error) {
+      metrics.dbFailures += 1;
+      recordEvent("error", "database_check_failed", "Database health check failed.", { error: error.message });
+    }
+  }
+
+  jsonResponse(response, 200, {
+    ok: true,
+    startedAt: startedAt.toISOString(),
+    uptimeSeconds: Math.round((Date.now() - startedAt.getTime()) / 1000),
+    database,
+    metrics,
+    recentEvents
+  });
 }
 
 async function routeApi(request, response, url) {
   if (url.pathname === "/api/health" && request.method === "GET") {
-    jsonResponse(response, 200, { ok: true, database: Boolean(databaseUrl) });
+    metrics.apiRequests += 1;
+    jsonResponse(response, 200, {
+      ok: true,
+      database: Boolean(databaseUrl),
+      startedAt: startedAt.toISOString(),
+      uptimeSeconds: Math.round((Date.now() - startedAt.getTime()) / 1000)
+    });
     return true;
   }
 
   if (!url.pathname.startsWith("/api/")) {
     return false;
   }
+
+  metrics.apiRequests += 1;
 
   try {
     const body = request.method === "GET" || request.method === "DELETE" ? {} : await readJson(request);
@@ -496,16 +744,40 @@ async function routeApi(request, response, url) {
       return true;
     }
 
+    if (url.pathname === "/api/admin/map-layout/revisions" && request.method === "GET") {
+      await handleMapLayoutRevisionsRead(request, response);
+      return true;
+    }
+
+    if (url.pathname === "/api/admin/map-layout/restore" && request.method === "POST") {
+      await handleMapLayoutRestore(request, response, body);
+      return true;
+    }
+
+    if (url.pathname === "/api/admin/monitoring" && request.method === "GET") {
+      await handleAdminMonitoring(request, response);
+      return true;
+    }
+
     jsonResponse(response, 404, { error: "API route not found." });
     return true;
   } catch (error) {
     const statusCode = error.statusCode ?? 500;
+    if (statusCode === 500) {
+      metrics.serverErrors += 1;
+    }
+    if (statusCode >= 500) {
+      metrics.dbFailures += url.pathname.includes("save") || url.pathname.includes("map-layout") ? 1 : 0;
+    }
+    recordEvent(statusCode >= 500 ? "error" : "warning", "api_error", error.message, {
+      code: error.code,
+      path: url.pathname,
+      statusCode
+    });
     jsonResponse(response, statusCode, {
+      code: error.code,
       error: statusCode === 500 ? "Server error." : error.message
     });
-    if (statusCode === 500) {
-      console.error(error);
-    }
     return true;
   }
 }

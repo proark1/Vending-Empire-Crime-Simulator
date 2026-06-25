@@ -1642,8 +1642,12 @@ kbd {
 .admin-login button,
 .admin-actions button,
 .admin-view-toggle button,
+.admin-layer-note button,
 .admin-layer-tabs button,
-.admin-object-list button {
+.admin-object-list button,
+.admin-object-actions button,
+.admin-revisions button,
+.admin-monitoring button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1661,8 +1665,12 @@ kbd {
 .admin-login button:hover,
 .admin-actions button:hover,
 .admin-view-toggle button:hover,
+.admin-layer-note button:hover,
 .admin-layer-tabs button:hover,
-.admin-object-list button:hover {
+.admin-object-list button:hover,
+.admin-object-actions button:hover,
+.admin-revisions button:hover,
+.admin-monitoring button:hover {
   border-color: rgba(45, 212, 191, 0.38);
 }
 
@@ -1766,6 +1774,12 @@ kbd {
   font-size: 13px;
 }
 
+.admin-layer-note button {
+  justify-self: start;
+  margin-top: 4px;
+  padding: 0 10px;
+}
+
 .admin-object-list {
   display: grid;
   gap: 6px;
@@ -1811,6 +1825,31 @@ kbd {
   justify-content: space-between;
   gap: 10px;
   min-height: 36px;
+}
+
+.admin-snap-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.admin-snap-control input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+}
+
+.admin-snap-control input[type="number"] {
+  width: 58px;
+  min-height: 30px;
+  border: 1px solid rgba(226, 232, 240, 0.16);
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.8);
+  color: #f8fafc;
+  padding: 5px 7px;
+  font: inherit;
 }
 
 .admin-view-toolbar > span {
@@ -2017,6 +2056,21 @@ kbd {
   min-width: 0;
 }
 
+.admin-object-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.admin-object-actions button {
+  min-width: 0;
+}
+
+.admin-object-actions button.danger {
+  border-color: rgba(248, 113, 113, 0.4);
+  background: rgba(127, 29, 29, 0.35);
+}
+
 .admin-field-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2027,14 +2081,18 @@ kbd {
   grid-column: 1 / -1;
 }
 
-.admin-validation {
+.admin-validation,
+.admin-revisions,
+.admin-monitoring {
   display: grid;
   gap: 8px;
   padding-top: 10px;
   border-top: 1px solid var(--line);
 }
 
-.admin-validation h3 {
+.admin-validation h3,
+.admin-revisions h3,
+.admin-monitoring h3 {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -2043,12 +2101,65 @@ kbd {
   font-size: 13px;
 }
 
+.admin-revisions h3,
+.admin-monitoring h3 {
+  justify-content: space-between;
+}
+
+.admin-revisions h3 svg,
+.admin-monitoring h3 svg {
+  flex: 0 0 auto;
+}
+
+.admin-revisions h3 button,
+.admin-monitoring h3 button {
+  min-height: 26px;
+  padding: 0 8px;
+}
+
 .admin-validation p,
+.admin-revisions p,
+.admin-monitoring p,
 .admin-status {
   margin: 0;
   color: #cbd5e1;
   font-size: 12px;
   line-height: 1.35;
+}
+
+.admin-revisions > button {
+  display: grid;
+  justify-items: start;
+  gap: 3px;
+  width: 100%;
+  text-align: left;
+}
+
+.admin-revisions small,
+.admin-monitoring small {
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.admin-monitoring > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.admin-monitoring span {
+  color: #cbd5e1;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.admin-monitoring small.error {
+  color: #fecdd3;
+}
+
+.admin-monitoring small.warning {
+  color: #fde68a;
 }
 
 .admin-validation p.error {
@@ -2205,5 +2316,9 @@ kbd {
 
   .admin-view-toggle button {
     flex: 1;
+  }
+
+  .admin-snap-control {
+    justify-content: space-between;
   }
 }

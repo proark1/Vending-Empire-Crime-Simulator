@@ -1,17 +1,23 @@
-import { AlertTriangle, Building2, CircleDot, Eye, Map, RotateCcw, Route, Save, Square, Trees, Undo2 } from "lucide-react";
+import { AlertTriangle, Building2, CircleDot, Copy, Eye, Gauge, History, Map, Plus, Redo2, RotateCcw, RotateCw, Route, Save, Square, Trash2, Trees, Undo2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import * as THREE from "three";
-import { districts, worldBounds, type BuildingVisualStyle, type WorldDecorationKind, type WorldMapLayout } from "../game/content/world";
+import { districts, machinePlacementAnchors, worldBounds, type BuildingVisualStyle, type WorldDecorationKind, type WorldMapLayout } from "../game/content/world";
 import { createDefaultWorldMapLayout, validateWorldMapLayout } from "../game/world/mapLayoutStorage";
 import {
+  loadAdminMonitoring,
+  loadRemoteMapRevisions,
   clearStoredAdminSession,
   loadStoredAdminSession,
   loginAdmin,
+  restoreRemoteMapRevision,
   resetRemoteMapLayout,
   saveRemoteMapLayout,
-  type AdminSession
+  type AdminMonitoringSnapshot,
+  type AdminSession,
+  type RemoteMapRevision
 } from "../game/save/api";
+import { createBuilding } from "../render/three/proceduralArt";
 
 type EditableLayer = "roads" | "buildings" | "backdropBuildings" | "decorations" | "patrolZones";
 type AdminViewMode = "2d" | "3d";
@@ -35,9 +41,12 @@ interface DragState extends Selection {
 interface AdminThreeMapEditorProps {
   activeLayer: EditableLayer;
   layout: WorldMapLayout;
-  onMove: (target: Selection, patch: Record<string, unknown>) => void;
+  onEditStart: () => void;
+  onMove: (target: Selection, patch: Record<string, unknown>, options?: { recordHistory?: boolean }) => void;
   onSelect: (target: Selection) => void;
   selection: Selection;
+  snapEnabled: boolean;
+  snapStep: number;
 }
 
 const editableLayers: Array<{ description: string; icon: ReactNode; id: EditableLayer; label: string }> = [
@@ -171,6 +180,110 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+function snapCoordinate(value: number, enabled: boolean, step: number): number {
+  if (!enabled || step <= 0) {
+    return Number(value.toFixed(2));
+  }
+
+  return Number((Math.round(value / step) * step).toFixed(2));
+}
+
+function uniqueId(prefix: string, items: Array<Record<string, unknown>>): string {
+  const ids = new Set(items.map((item) => String(item.id ?? "")));
+  let index = items.length + 1;
+  let candidate = `${prefix}_${index}`;
+  while (ids.has(candidate)) {
+    index += 1;
+    candidate = `${prefix}_${index}`;
+  }
+  return candidate;
+}
+
+function defaultItemForLayer(layer: EditableLayer, layout: WorldMapLayout, selectedItem?: Record<string, unknown>): Record<string, unknown> {
+  const districtId = String(selectedItem?.districtId ?? "starter_suburb");
+  const position = selectedItem ? itemPosition(selectedItem) : { x: -1, z: 1 };
+  const x = clamp(position.x + 1.5, worldBounds.minX + 1, worldBounds.maxX - 1);
+  const z = clamp(position.z + 1.5, worldBounds.minZ + 1, worldBounds.maxZ - 1);
+
+  if (layer === "roads") {
+    return {
+      id: uniqueId("road", layout.roads as unknown as Array<Record<string, unknown>>),
+      districtId,
+      x,
+      z,
+      width: 8,
+      depth: 2.8
+    };
+  }
+
+  if (layer === "buildings") {
+    return {
+      districtId,
+      height: 3.4,
+      signText: "NEW BUILDING",
+      style: "garage",
+      width: 4.2,
+      depth: 3.2,
+      x,
+      z
+    };
+  }
+
+  if (layer === "backdropBuildings") {
+    return {
+      color: "#475569",
+      districtId,
+      height: 8,
+      lit: 0.35,
+      width: 4.4,
+      depth: 4,
+      x,
+      z
+    };
+  }
+
+  if (layer === "patrolZones") {
+    return {
+      id: uniqueId("patrol_zone", layout.patrolZones as unknown as Array<Record<string, unknown>>),
+      color: "#93c5fd",
+      districtId,
+      label: "New patrol",
+      radius: 5,
+      x,
+      z
+    };
+  }
+
+  return {
+    id: uniqueId("prop", layout.decorations as unknown as Array<Record<string, unknown>>),
+    color: "#f59e0b",
+    districtId,
+    kind: "streetlight",
+    rotationY: 0,
+    scale: 1,
+    x,
+    z
+  };
+}
+
+function cloneItemForLayer(layer: EditableLayer, item: Record<string, unknown>, layout: WorldMapLayout): Record<string, unknown> {
+  const clone = { ...item };
+  const position = itemPosition(item);
+  clone.x = clamp(position.x + 1.5, worldBounds.minX + 1, worldBounds.maxX - 1);
+  clone.z = clamp(position.z + 1.5, worldBounds.minZ + 1, worldBounds.maxZ - 1);
+
+  if ("id" in clone) {
+    clone.id = uniqueId(String(clone.id || layer), layerItems(layout, layer));
+  }
+
+  if (layer === "buildings") {
+    clone.signText = `${String(clone.signText ?? "BUILDING")} COPY`;
+    delete clone.locationId;
+  }
+
+  return clone;
+}
+
 function createAdminMaterial(color: string, opacity: number, emissive = "#000000"): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({
     color,
@@ -180,6 +293,18 @@ function createAdminMaterial(color: string, opacity: number, emissive = "#000000
     opacity,
     roughness: 0.78,
     transparent: opacity < 1
+  });
+}
+
+function setObjectOpacity(object: THREE.Object3D, opacity: number): void {
+  object.traverse((child) => {
+    if (child instanceof THREE.Mesh) {
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+      materials.forEach((material) => {
+        material.transparent = opacity < 1;
+        material.opacity = opacity;
+      });
+    }
   });
 }
 
@@ -257,22 +382,57 @@ function createAdminObject(layer: EditableLayer, item: Record<string, unknown>, 
   const z = numericValue(item, "z");
 
   if (layer === "roads") {
-    const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(numericValue(item, "width", 1), 0.08, numericValue(item, "depth", 1)),
-      createAdminMaterial("#334155", opacity, selected ? "#64748b" : "#000000")
+    const group = new THREE.Group();
+    const width = numericValue(item, "width", 1);
+    const depth = numericValue(item, "depth", 1);
+    const road = new THREE.Mesh(
+      new THREE.BoxGeometry(width, 0.08, depth),
+      createAdminMaterial("#263241", opacity, selected ? "#64748b" : "#000000")
     );
-    mesh.position.set(x, 0.04, z);
-    return mesh;
+    road.position.set(0, 0.04, 0);
+    group.add(road);
+
+    const laneAlongX = width >= depth;
+    const lane = new THREE.Mesh(
+      new THREE.BoxGeometry(laneAlongX ? width * 0.86 : 0.08, 0.025, laneAlongX ? 0.08 : depth * 0.86),
+      createAdminMaterial("#e2e8f0", opacity)
+    );
+    lane.position.y = 0.095;
+    group.add(lane);
+
+    const curbMaterial = createAdminMaterial("#94a3b8", opacity);
+    for (const side of [-1, 1]) {
+      const curb = new THREE.Mesh(
+        new THREE.BoxGeometry(laneAlongX ? width : 0.14, 0.12, laneAlongX ? 0.14 : depth),
+        curbMaterial
+      );
+      curb.position.set(laneAlongX ? 0 : side * width / 2, 0.11, laneAlongX ? side * depth / 2 : 0);
+      group.add(curb);
+    }
+    group.position.set(x, 0, z);
+    return group;
   }
 
   if (layer === "buildings" || layer === "backdropBuildings") {
     const style = String(item.style ?? "garage") as BuildingVisualStyle;
     const height = numericValue(item, "height", 1);
     const color = layer === "buildings" ? buildingStyleColors[style] ?? layerColors.buildings : String(item.color ?? "#475569");
-    const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(numericValue(item, "width", 1), height, numericValue(item, "depth", 1)),
-      createAdminMaterial(color, opacity, selected ? color : "#000000")
-    );
+    if (layer === "buildings") {
+      const building = createBuilding(numericValue(item, "width", 1), numericValue(item, "depth", 1), height, style, String(item.signText ?? ""));
+      building.position.set(x, 0, z);
+      setObjectOpacity(building, opacity);
+      if (selected) {
+        const glow = new THREE.Mesh(
+          new THREE.BoxGeometry(numericValue(item, "width", 1) + 0.18, height + 0.18, numericValue(item, "depth", 1) + 0.18),
+          new THREE.MeshBasicMaterial({ color: "#f8fafc", opacity: 0.12, transparent: true, wireframe: true })
+        );
+        glow.position.y = height / 2;
+        building.add(glow);
+      }
+      return building;
+    }
+
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(numericValue(item, "width", 1), height, numericValue(item, "depth", 1)), createAdminMaterial(color, opacity, selected ? color : "#000000"));
     mesh.position.set(x, height / 2, z);
     return mesh;
   }
@@ -314,14 +474,43 @@ function createSelectionMarker(layer: EditableLayer, item: Record<string, unknow
   return marker;
 }
 
-function AdminThreeMapEditor({ activeLayer, layout, onMove, onSelect, selection }: AdminThreeMapEditorProps) {
+function createPathOverlay(path: Array<{ x: number; z: number }>, color: string, y = 0.18): THREE.Line | null {
+  if (path.length < 2) {
+    return null;
+  }
+
+  const points = [...path, path[0]].map((point) => new THREE.Vector3(point.x, y, point.z));
+  const geometry = new THREE.BufferGeometry().setFromPoints(points);
+  return new THREE.Line(geometry, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.72 }));
+}
+
+function createAnchorMarker(x: number, z: number, rotationY: number): THREE.Group {
+  const group = new THREE.Group();
+  const base = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.28, 0.28, 0.05, 16),
+    new THREE.MeshBasicMaterial({ color: "#fef08a", transparent: true, opacity: 0.8 })
+  );
+  base.position.y = 0.22;
+  const direction = new THREE.Mesh(
+    new THREE.ConeGeometry(0.18, 0.42, 3),
+    new THREE.MeshBasicMaterial({ color: "#facc15", transparent: true, opacity: 0.9 })
+  );
+  direction.position.set(-Math.sin(rotationY) * 0.48, 0.28, -Math.cos(rotationY) * 0.48);
+  direction.rotation.y = rotationY;
+  group.add(base, direction);
+  group.position.set(x, 0, z);
+  group.userData.ignorePick = true;
+  return group;
+}
+
+function AdminThreeMapEditor({ activeLayer, layout, onEditStart, onMove, onSelect, selection, snapEnabled, snapStep }: AdminThreeMapEditorProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const mapGroupRef = useRef<THREE.Group | null>(null);
   const pickablesRef = useRef<THREE.Object3D[]>([]);
-  const propsRef = useRef({ activeLayer, layout, onMove, onSelect, selection });
+  const propsRef = useRef({ activeLayer, layout, onEditStart, onMove, onSelect, selection, snapEnabled, snapStep });
   const dragRef = useRef<DragState | null>(null);
   const lookDragRef = useRef<{ x: number; y: number } | null>(null);
   const keysRef = useRef<Set<string>>(new Set());
@@ -329,8 +518,8 @@ function AdminThreeMapEditor({ activeLayer, layout, onMove, onSelect, selection 
   const pitchRef = useRef(-0.42);
 
   useEffect(() => {
-    propsRef.current = { activeLayer, layout, onMove, onSelect, selection };
-  }, [activeLayer, layout, onMove, onSelect, selection]);
+    propsRef.current = { activeLayer, layout, onEditStart, onMove, onSelect, selection, snapEnabled, snapStep };
+  }, [activeLayer, layout, onEditStart, onMove, onSelect, selection, snapEnabled, snapStep]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -426,6 +615,7 @@ function AdminThreeMapEditor({ activeLayer, layout, onMove, onSelect, selection 
         const point = pointOnGround(event);
         propsRef.current.onSelect(hitSelection);
         if (currentItem && point) {
+          propsRef.current.onEditStart();
           const currentPosition = itemPosition(currentItem);
           dragRef.current = {
             ...hitSelection,
@@ -447,9 +637,9 @@ function AdminThreeMapEditor({ activeLayer, layout, onMove, onSelect, selection 
         const point = pointOnGround(event);
         if (point) {
           propsRef.current.onMove(drag, {
-            x: Number(clamp(point.x - drag.offsetX, worldBounds.minX, worldBounds.maxX).toFixed(2)),
-            z: Number(clamp(point.z - drag.offsetZ, worldBounds.minZ, worldBounds.maxZ).toFixed(2))
-          });
+            x: snapCoordinate(clamp(point.x - drag.offsetX, worldBounds.minX, worldBounds.maxX), propsRef.current.snapEnabled, propsRef.current.snapStep),
+            z: snapCoordinate(clamp(point.z - drag.offsetZ, worldBounds.minZ, worldBounds.maxZ), propsRef.current.snapEnabled, propsRef.current.snapStep)
+          }, { recordHistory: false });
         }
         event.preventDefault();
         return;
@@ -586,6 +776,26 @@ function AdminThreeMapEditor({ activeLayer, layout, onMove, onSelect, selection 
     addLayer("buildings");
     addLayer("decorations");
 
+    layout.trafficLoops.forEach((loop) => {
+      const line = createPathOverlay(loop.path, loop.kind === "police" ? "#93c5fd" : loop.color, 0.2);
+      if (line) {
+        line.userData.ignorePick = true;
+        group.add(line);
+      }
+    });
+
+    layout.policePatrolPaths.forEach((path) => {
+      const line = createPathOverlay(path.path, path.color, 0.28);
+      if (line) {
+        line.userData.ignorePick = true;
+        group.add(line);
+      }
+    });
+
+    Object.values(machinePlacementAnchors).forEach((anchor) => {
+      group.add(createAnchorMarker(anchor.x, anchor.z, anchor.rotationY));
+    });
+
     const selectedItem = layerItems(layout, selection.layer)[selection.index];
     if (selectedItem) {
       group.add(createSelectionMarker(selection.layer, selectedItem));
@@ -615,13 +825,23 @@ export function AdminMapEditor({ initialLayout, onReset, onSave }: AdminMapEdito
   const [activeLayer, setActiveLayer] = useState<EditableLayer>("buildings");
   const [selection, setSelection] = useState<Selection>({ layer: "buildings", index: 0 });
   const [viewMode, setViewMode] = useState<AdminViewMode>("2d");
+  const [snapEnabled, setSnapEnabled] = useState(true);
+  const [snapStep, setSnapStep] = useState(0.5);
+  const [history, setHistory] = useState<{ future: WorldMapLayout[]; past: WorldMapLayout[] }>({ future: [], past: [] });
+  const [revisions, setRevisions] = useState<RemoteMapRevision[]>([]);
+  const [monitoring, setMonitoring] = useState<AdminMonitoringSnapshot | null>(null);
   const [status, setStatus] = useState("");
   const svgRef = useRef<SVGSVGElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
+  const layoutRef = useRef(layout);
   const issues = useMemo(() => validateWorldMapLayout(layout), [layout]);
   const blockingIssues = issues.filter((issue) => issue.severity === "error");
   const selectedItem = layerItems(layout, selection.layer)[selection.index];
   const activeItems = layerItems(layout, activeLayer);
+
+  useEffect(() => {
+    layoutRef.current = layout;
+  }, [layout]);
 
   const pointFromPointer = (event: { clientX: number; clientY: number }) => {
     const svg = svgRef.current;
@@ -638,26 +858,222 @@ export function AdminMapEditor({ initialLayout, onReset, onSave }: AdminMapEdito
     };
   };
 
+  const pushHistorySnapshot = useCallback(() => {
+    setHistory((current) => ({
+      past: [...current.past.slice(-39), cloneLayout(layoutRef.current)],
+      future: []
+    }));
+  }, []);
+
+  const commitLayout = useCallback((updater: (current: WorldMapLayout) => WorldMapLayout, options: { recordHistory?: boolean } = {}) => {
+    const recordHistory = options.recordHistory ?? true;
+    setLayout((current) => {
+      const next = updater(current);
+      if (recordHistory) {
+        setHistory((historyState) => ({
+          past: [...historyState.past.slice(-39), cloneLayout(current)],
+          future: []
+        }));
+      }
+      return next;
+    });
+    setStatus("");
+  }, []);
+
   const selectItem = useCallback((target: Selection) => {
     setSelection(target);
     setActiveLayer(target.layer);
     setStatus("");
   }, []);
 
-  const updateItem = useCallback((target: Selection, patch: Record<string, unknown>) => {
-    setLayout((current) => {
+  const updateItem = useCallback((target: Selection, patch: Record<string, unknown>, options: { recordHistory?: boolean } = {}) => {
+    commitLayout((current) => {
       const items = layerItems(current, target.layer);
       return {
         ...current,
         [target.layer]: items.map((item, index) => (index === target.index ? { ...item, ...patch } : item))
       } as WorldMapLayout;
-    });
-    setStatus("");
-  }, []);
+    }, options);
+  }, [commitLayout]);
 
   const updateSelected = (patch: Record<string, unknown>) => {
     updateItem(selection, patch);
   };
+
+  const handleUndo = useCallback(() => {
+    setHistory((current) => {
+      const previous = current.past.at(-1);
+      if (!previous) {
+        return current;
+      }
+
+      setLayout(cloneLayout(previous));
+      return {
+        past: current.past.slice(0, -1),
+        future: [cloneLayout(layoutRef.current), ...current.future.slice(0, 39)]
+      };
+    });
+    setStatus("Undo applied.");
+  }, []);
+
+  const handleRedo = useCallback(() => {
+    setHistory((current) => {
+      const next = current.future[0];
+      if (!next) {
+        return current;
+      }
+
+      setLayout(cloneLayout(next));
+      return {
+        past: [...current.past.slice(-39), cloneLayout(layoutRef.current)],
+        future: current.future.slice(1)
+      };
+    });
+    setStatus("Redo applied.");
+  }, []);
+
+  const handleAddItem = useCallback(() => {
+    const item = defaultItemForLayer(activeLayer, layoutRef.current, selectedItem);
+    commitLayout((current) => {
+      const items = layerItems(current, activeLayer);
+      const nextItems = [...items, item];
+      window.setTimeout(() => selectItem({ layer: activeLayer, index: nextItems.length - 1 }), 0);
+      return { ...current, [activeLayer]: nextItems } as WorldMapLayout;
+    });
+  }, [activeLayer, commitLayout, selectItem, selectedItem]);
+
+  const handleDuplicateItem = useCallback(() => {
+    if (!selectedItem) {
+      return;
+    }
+
+    const duplicated = cloneItemForLayer(selection.layer, selectedItem, layoutRef.current);
+    commitLayout((current) => {
+      const items = layerItems(current, selection.layer);
+      const nextItems = [...items, duplicated];
+      window.setTimeout(() => selectItem({ layer: selection.layer, index: nextItems.length - 1 }), 0);
+      return { ...current, [selection.layer]: nextItems } as WorldMapLayout;
+    });
+  }, [commitLayout, selectItem, selectedItem, selection.layer]);
+
+  const handleDeleteItem = useCallback(() => {
+    if (!selectedItem || layerItems(layoutRef.current, selection.layer).length <= 1) {
+      setStatus("Keep at least one object in each layer.");
+      return;
+    }
+
+    commitLayout((current) => {
+      const items = layerItems(current, selection.layer);
+      const nextItems = items.filter((_, index) => index !== selection.index);
+      window.setTimeout(() => selectItem({ layer: selection.layer, index: Math.max(0, Math.min(selection.index, nextItems.length - 1)) }), 0);
+      return { ...current, [selection.layer]: nextItems } as WorldMapLayout;
+    });
+  }, [commitLayout, selectItem, selectedItem, selection.index, selection.layer]);
+
+  const handleRotateSelected = useCallback((amountRadians: number) => {
+    if (!selectedItem) {
+      return;
+    }
+
+    if (selection.layer === "decorations") {
+      updateSelected({ rotationY: Number((numericValue(selectedItem, "rotationY") + amountRadians).toFixed(3)) });
+      return;
+    }
+
+    if (selection.layer === "roads" || selection.layer === "buildings" || selection.layer === "backdropBuildings") {
+      updateSelected({
+        width: numericValue(selectedItem, "depth", 1),
+        depth: numericValue(selectedItem, "width", 1)
+      });
+    }
+  }, [selectedItem, selection.layer]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.tagName === "INPUT" || target?.tagName === "SELECT" || target?.tagName === "TEXTAREA") {
+        return;
+      }
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z" && !event.shiftKey) {
+        event.preventDefault();
+        handleUndo();
+      } else if ((event.metaKey || event.ctrlKey) && (event.key.toLowerCase() === "y" || (event.shiftKey && event.key.toLowerCase() === "z"))) {
+        event.preventDefault();
+        handleRedo();
+      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "d") {
+        event.preventDefault();
+        handleDuplicateItem();
+      } else if (event.key === "Delete" || event.key === "Backspace") {
+        event.preventDefault();
+        handleDeleteItem();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [handleDeleteItem, handleDuplicateItem, handleRedo, handleUndo]);
+
+  const refreshRevisions = useCallback((session = adminSession) => {
+    if (!session) {
+      return;
+    }
+
+    loadRemoteMapRevisions(session)
+      .then(setRevisions)
+      .catch((error) => {
+        setStatus(error instanceof Error ? error.message : "Could not load map revisions.");
+      });
+  }, [adminSession]);
+
+  const refreshMonitoring = useCallback((session = adminSession) => {
+    if (!session) {
+      return;
+    }
+
+    loadAdminMonitoring(session)
+      .then(setMonitoring)
+      .catch((error) => {
+        setStatus(error instanceof Error ? error.message : "Could not load monitoring data.");
+      });
+  }, [adminSession]);
+
+  useEffect(() => {
+    if (!adminSession) {
+      return;
+    }
+
+    refreshRevisions(adminSession);
+    refreshMonitoring(adminSession);
+  }, [adminSession, refreshMonitoring, refreshRevisions]);
+
+  const handleRestoreRevision = useCallback((revision: RemoteMapRevision) => {
+    if (!adminSession) {
+      setStatus("Admin session expired. Sign in again.");
+      return;
+    }
+
+    if (!window.confirm(`Restore map revision ${revision.revision}? Current layout will become a new restorable revision.`)) {
+      return;
+    }
+
+    setSaving(true);
+    restoreRemoteMapRevision(adminSession, revision.id)
+      .then((remote) => {
+        if (remote.layout) {
+          pushHistorySnapshot();
+          setLayout(remote.layout);
+          onSave(remote.layout);
+          setStatus(`Restored map revision ${revision.revision}.`);
+        }
+        refreshRevisions(adminSession);
+        refreshMonitoring(adminSession);
+      })
+      .catch((error) => {
+        setStatus(error instanceof Error ? error.message : "Map restore failed.");
+      })
+      .finally(() => setSaving(false));
+  }, [adminSession, onSave, pushHistorySnapshot, refreshMonitoring, refreshRevisions]);
 
   const handleLogin = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -665,6 +1081,8 @@ export function AdminMapEditor({ initialLayout, onReset, onSave }: AdminMapEdito
     loginAdmin(credentials.username, credentials.password)
       .then((session) => {
         setAdminSession(session);
+        refreshRevisions(session);
+        refreshMonitoring(session);
       })
       .catch((error) => {
         setLoginError(error instanceof Error ? error.message : "Admin sign in failed.");
@@ -673,6 +1091,7 @@ export function AdminMapEditor({ initialLayout, onReset, onSave }: AdminMapEdito
 
   const startDrag = (event: ReactPointerEvent<SVGElement>, target: Selection, currentX: number, currentZ: number) => {
     const point = pointFromPointer(event);
+    pushHistorySnapshot();
     dragRef.current = {
       ...target,
       offsetX: point.x - currentX,
@@ -691,9 +1110,9 @@ export function AdminMapEditor({ initialLayout, onReset, onSave }: AdminMapEdito
 
     const point = pointFromPointer(event);
     updateItem(drag, {
-      x: Number((point.x - drag.offsetX).toFixed(2)),
-      z: Number((point.z - drag.offsetZ).toFixed(2))
-    });
+      x: snapCoordinate(point.x - drag.offsetX, snapEnabled, snapStep),
+      z: snapCoordinate(point.z - drag.offsetZ, snapEnabled, snapStep)
+    }, { recordHistory: false });
   };
 
   const stopDrag = (event: ReactPointerEvent<SVGSVGElement>) => {
@@ -716,9 +1135,11 @@ export function AdminMapEditor({ initialLayout, onReset, onSave }: AdminMapEdito
 
     setSaving(true);
     saveRemoteMapLayout(adminSession, layout)
-      .then(() => {
+      .then((remote) => {
         onSave(layout);
-        setStatus("Map layout saved.");
+        setStatus(`Map layout saved as revision ${remote.revision}.`);
+        refreshRevisions(adminSession);
+        refreshMonitoring(adminSession);
       })
       .catch((error) => {
         setStatus(error instanceof Error ? error.message : "Map save failed.");
@@ -742,11 +1163,14 @@ export function AdminMapEditor({ initialLayout, onReset, onSave }: AdminMapEdito
     resetRemoteMapLayout(adminSession)
       .then(() => {
         const nextLayout = createDefaultWorldMapLayout();
+        pushHistorySnapshot();
         setLayout(nextLayout);
         setSelection({ layer: "buildings", index: 0 });
         setActiveLayer("buildings");
         onReset();
         setStatus("Default map restored.");
+        refreshRevisions(adminSession);
+        refreshMonitoring(adminSession);
       })
       .catch((error) => {
         setStatus(error instanceof Error ? error.message : "Map reset failed.");
@@ -793,6 +1217,14 @@ export function AdminMapEditor({ initialLayout, onReset, onSave }: AdminMapEdito
           </div>
         </div>
         <div className="admin-actions">
+          <button disabled={history.past.length === 0 || saving} onClick={handleUndo} type="button">
+            <Undo2 size={16} aria-hidden="true" />
+            Undo
+          </button>
+          <button disabled={history.future.length === 0 || saving} onClick={handleRedo} type="button">
+            <Redo2 size={16} aria-hidden="true" />
+            Redo
+          </button>
           <button onClick={() => window.location.assign("/")} type="button">
             <Undo2 size={16} aria-hidden="true" />
             Game
@@ -821,6 +1253,10 @@ export function AdminMapEditor({ initialLayout, onReset, onSave }: AdminMapEdito
           <div className="admin-layer-note">
             <strong>{layerMeta(activeLayer).label}</strong>
             <span>{layerMeta(activeLayer).description}</span>
+            <button onClick={handleAddItem} type="button">
+              <Plus size={15} aria-hidden="true" />
+              Add {layerMeta(activeLayer).label.slice(0, -1) || layerMeta(activeLayer).label}
+            </button>
           </div>
 
           <div className="admin-object-list">
@@ -851,6 +1287,11 @@ export function AdminMapEditor({ initialLayout, onReset, onSave }: AdminMapEdito
                 3D
               </button>
             </div>
+            <label className="admin-snap-control">
+              <input checked={snapEnabled} onChange={(event) => setSnapEnabled(event.target.checked)} type="checkbox" />
+              Snap
+              <input min="0.1" step="0.1" type="number" value={snapStep} onChange={(event) => setSnapStep(Math.max(0.1, Number(event.target.value) || 0.5))} />
+            </label>
             <span>{viewMode === "2d" ? "Drag shapes to move them. Active layer names are shown on the map." : "Fly the map and drag objects directly in 3D."}</span>
           </div>
 
@@ -943,7 +1384,16 @@ export function AdminMapEditor({ initialLayout, onReset, onSave }: AdminMapEdito
                 </g>
               </svg>
             ) : (
-              <AdminThreeMapEditor activeLayer={activeLayer} layout={layout} onMove={updateItem} onSelect={selectItem} selection={selection} />
+              <AdminThreeMapEditor
+                activeLayer={activeLayer}
+                layout={layout}
+                onEditStart={pushHistorySnapshot}
+                onMove={updateItem}
+                onSelect={selectItem}
+                selection={selection}
+                snapEnabled={snapEnabled}
+                snapStep={snapStep}
+              />
             )}
 
             <div className="admin-map-legend" aria-label="Map legend">
@@ -980,6 +1430,21 @@ export function AdminMapEditor({ initialLayout, onReset, onSave }: AdminMapEdito
                 </p>
               </div>
 
+              <div className="admin-object-actions">
+                <button onClick={handleDuplicateItem} type="button">
+                  <Copy size={15} aria-hidden="true" />
+                  Duplicate
+                </button>
+                <button onClick={() => handleRotateSelected(Math.PI / 12)} type="button">
+                  <RotateCw size={15} aria-hidden="true" />
+                  Rotate
+                </button>
+                <button className="danger" onClick={handleDeleteItem} type="button">
+                  <Trash2 size={15} aria-hidden="true" />
+                  Delete
+                </button>
+              </div>
+
               <div className="admin-field-grid">
                 <label>
                   X
@@ -989,6 +1454,34 @@ export function AdminMapEditor({ initialLayout, onReset, onSave }: AdminMapEdito
                   Z
                   <input type="number" step="0.1" value={numericValue(selectedItem, "z")} onChange={(event) => updateSelected({ z: Number(event.target.value) })} />
                 </label>
+
+                {selection.layer === "buildings" && (
+                  <label className="wide">
+                    Sign text
+                    <input type="text" value={String(selectedItem.signText ?? "")} onChange={(event) => updateSelected({ signText: event.target.value.toUpperCase() })} />
+                  </label>
+                )}
+
+                {(selection.layer === "roads" || selection.layer === "decorations" || selection.layer === "patrolZones") && (
+                  <label className="wide">
+                    ID
+                    <input type="text" value={String(selectedItem.id ?? "")} onChange={(event) => updateSelected({ id: event.target.value })} />
+                  </label>
+                )}
+
+                {selection.layer === "patrolZones" && (
+                  <label className="wide">
+                    Label
+                    <input type="text" value={String(selectedItem.label ?? "")} onChange={(event) => updateSelected({ label: event.target.value })} />
+                  </label>
+                )}
+
+                {(selection.layer === "decorations" || selection.layer === "patrolZones" || selection.layer === "backdropBuildings") && (
+                  <label className="wide">
+                    Color
+                    <input type="text" value={String(selectedItem.color ?? "")} onChange={(event) => updateSelected({ color: event.target.value })} />
+                  </label>
+                )}
 
                 {(selection.layer === "roads" || selection.layer === "buildings" || selection.layer === "backdropBuildings") && (
                   <>
@@ -1065,13 +1558,56 @@ export function AdminMapEditor({ initialLayout, onReset, onSave }: AdminMapEdito
               Validation
             </h3>
             {issues.length === 0 ? (
-              <p>No road/building conflicts.</p>
+              <p>No map validation issues.</p>
             ) : (
               issues.slice(0, 7).map((issue, index) => (
                 <p className={issue.severity} key={`${issue.message}-${index}`}>
                   {issue.message}
                 </p>
               ))
+            )}
+          </div>
+
+          <div className="admin-revisions">
+            <h3>
+              <History size={16} aria-hidden="true" />
+              Map History
+              <button onClick={() => refreshRevisions()} type="button">Refresh</button>
+            </h3>
+            {revisions.length === 0 ? (
+              <p>No saved revisions yet.</p>
+            ) : (
+              revisions.slice(0, 6).map((revision) => (
+                <button disabled={saving} key={revision.id} onClick={() => handleRestoreRevision(revision)} type="button">
+                  <span>r{revision.revision} {revision.action.replace("_", " ")}</span>
+                  <small>{new Date(revision.createdAt).toLocaleString()} · {revision.createdBy ?? "unknown"}</small>
+                </button>
+              ))
+            )}
+          </div>
+
+          <div className="admin-monitoring">
+            <h3>
+              <Gauge size={16} aria-hidden="true" />
+              Operations
+              <button onClick={() => refreshMonitoring()} type="button">Refresh</button>
+            </h3>
+            {monitoring ? (
+              <>
+                <p>DB {monitoring.database.ok ? "ok" : "offline"} · {monitoring.database.latencyMs ?? "--"}ms · uptime {monitoring.uptimeSeconds}s</p>
+                <div>
+                  <span>Requests {monitoring.metrics.apiRequests ?? 0}</span>
+                  <span>Saves {monitoring.metrics.gameSaves ?? 0}</span>
+                  <span>Conflicts {monitoring.metrics.gameSaveConflicts ?? 0}</span>
+                  <span>Map saves {monitoring.metrics.mapSaves ?? 0}</span>
+                  <span>Errors {monitoring.metrics.serverErrors ?? 0}</span>
+                </div>
+                {monitoring.recentEvents.slice(0, 4).map((event) => (
+                  <small className={event.level} key={`${event.at}-${event.type}`}>{event.type}: {event.message}</small>
+                ))}
+              </>
+            ) : (
+              <p>Monitoring snapshot not loaded.</p>
             )}
           </div>
           {status && <p className="admin-status">{status}</p>}

@@ -10,6 +10,8 @@ export interface GameSession {
     id: string;
     name: string;
   };
+  saveRevision?: number | null;
+  saveUpdatedAt?: string | null;
   token: string;
 }
 
@@ -22,6 +24,7 @@ export interface AdminSession {
 
 interface GameAuthResponse extends GameSession {
   save: {
+    revision: number;
     state: GameState;
     updatedAt: string;
   } | null;
@@ -30,6 +33,7 @@ interface GameAuthResponse extends GameSession {
 interface RemoteGameSaveResponse {
   profile: GameSession["profile"];
   save: {
+    revision: number;
     state: GameState;
     updatedAt: string;
   } | null;
@@ -37,8 +41,48 @@ interface RemoteGameSaveResponse {
 
 interface RemoteMapLayoutResponse {
   layout: WorldMapLayout | null;
+  revision: number | null;
   updatedAt: string | null;
   updatedBy: string | null;
+}
+
+export interface RemoteMapRevision {
+  action: string;
+  createdAt: string;
+  createdBy: string | null;
+  id: string;
+  revision: number;
+}
+
+export interface AdminMonitoringSnapshot {
+  database: {
+    latencyMs: number | null;
+    ok: boolean;
+  };
+  metrics: Record<string, number>;
+  recentEvents: Array<{
+    at: string;
+    details?: Record<string, unknown>;
+    level: "error" | "info" | "warning";
+    message: string;
+    type: string;
+  }>;
+  startedAt: string;
+  uptimeSeconds: number;
+}
+
+export class ApiError extends Error {
+  code?: string;
+  payload: unknown;
+  status: number;
+
+  constructor(message: string, status: number, code: string | undefined, payload: unknown) {
+    super(message);
+    this.name = "ApiError";
+    this.code = code;
+    this.payload = payload;
+    this.status = status;
+  }
 }
 
 async function requestJson<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -53,7 +97,7 @@ async function requestJson<T>(path: string, options: RequestInit = {}): Promise<
 
   if (!response.ok) {
     const message = typeof payload.error === "string" ? payload.error : "Request failed.";
-    throw new Error(message);
+    throw new ApiError(message, response.status, typeof payload.code === "string" ? payload.code : undefined, payload);
   }
 
   return payload as T;
@@ -81,6 +125,19 @@ export function loadStoredGameSession(): GameSession | null {
 
 export function storeGameSession(session: GameSession): void {
   window.localStorage.setItem(GAME_SESSION_KEY, JSON.stringify(session));
+}
+
+export function updateStoredGameSessionSaveRevision(revision: number | null, updatedAt: string | null): void {
+  const session = loadStoredGameSession();
+  if (!session) {
+    return;
+  }
+
+  storeGameSession({
+    ...session,
+    saveRevision: revision,
+    saveUpdatedAt: updatedAt
+  });
 }
 
 export function clearStoredGameSession(): void {
@@ -118,7 +175,7 @@ export async function loginGame(name: string, pin: string): Promise<GameAuthResp
     method: "POST",
     body: JSON.stringify({ name, pin })
   });
-  storeGameSession({ profile: response.profile, token: response.token });
+  storeGameSession({ profile: response.profile, saveRevision: response.save?.revision ?? null, saveUpdatedAt: response.save?.updatedAt ?? null, token: response.token });
   return migrateGameAuthResponse(response);
 }
 
@@ -127,7 +184,7 @@ export async function registerGame(name: string, pin: string): Promise<GameAuthR
     method: "POST",
     body: JSON.stringify({ name, pin })
   });
-  storeGameSession({ profile: response.profile, token: response.token });
+  storeGameSession({ profile: response.profile, saveRevision: response.save?.revision ?? null, saveUpdatedAt: response.save?.updatedAt ?? null, token: response.token });
   return migrateGameAuthResponse(response);
 }
 
@@ -136,19 +193,22 @@ export async function loadRemoteGame(session: GameSession): Promise<RemoteGameSa
     method: "GET",
     headers: authHeaders(session.token)
   });
+  updateStoredGameSessionSaveRevision(response.save?.revision ?? null, response.save?.updatedAt ?? null);
   return response.save ? { ...response, save: { ...response.save, state: migrateGameState(response.save.state) } } : response;
 }
 
-export async function saveRemoteGame(session: GameSession, state: GameState): Promise<void> {
-  await requestJson<{ ok: true }>("/api/game/save", {
+export async function saveRemoteGame(session: GameSession, state: GameState, baseRevision: number | null = session.saveRevision ?? null): Promise<{ revision: number; updatedAt: string }> {
+  const response = await requestJson<{ ok: true; revision: number; updatedAt: string }>("/api/game/save", {
     method: "POST",
     headers: authHeaders(session.token),
-    body: JSON.stringify({ state })
+    body: JSON.stringify({ baseRevision, state })
   });
+  updateStoredGameSessionSaveRevision(response.revision, response.updatedAt);
+  return { revision: response.revision, updatedAt: response.updatedAt };
 }
 
-export function saveRemoteGameBeacon(session: GameSession, state: GameState): boolean {
-  const payload = JSON.stringify({ token: session.token, state });
+export function saveRemoteGameBeacon(session: GameSession, state: GameState, baseRevision: number | null = session.saveRevision ?? null): boolean {
+  const payload = JSON.stringify({ baseRevision, token: session.token, state });
 
   if (navigator.sendBeacon) {
     return navigator.sendBeacon("/api/game/save-beacon", new Blob([payload], { type: "application/json" }));
@@ -178,11 +238,34 @@ export async function loadRemoteMapLayout(): Promise<RemoteMapLayoutResponse> {
   });
 }
 
-export async function saveRemoteMapLayout(session: AdminSession, layout: WorldMapLayout): Promise<void> {
-  await requestJson<{ ok: true }>("/api/admin/map-layout", {
+export async function saveRemoteMapLayout(session: AdminSession, layout: WorldMapLayout): Promise<{ revision: number; updatedAt: string; updatedBy: string }> {
+  return requestJson<{ ok: true; revision: number; updatedAt: string; updatedBy: string }>("/api/admin/map-layout", {
     method: "POST",
     headers: authHeaders(session.token),
     body: JSON.stringify({ layout })
+  });
+}
+
+export async function loadRemoteMapRevisions(session: AdminSession): Promise<RemoteMapRevision[]> {
+  const response = await requestJson<{ revisions: RemoteMapRevision[] }>("/api/admin/map-layout/revisions", {
+    method: "GET",
+    headers: authHeaders(session.token)
+  });
+  return response.revisions;
+}
+
+export async function restoreRemoteMapRevision(session: AdminSession, revisionId: string): Promise<RemoteMapLayoutResponse> {
+  return requestJson<RemoteMapLayoutResponse>("/api/admin/map-layout/restore", {
+    method: "POST",
+    headers: authHeaders(session.token),
+    body: JSON.stringify({ revisionId })
+  });
+}
+
+export async function loadAdminMonitoring(session: AdminSession): Promise<AdminMonitoringSnapshot> {
+  return requestJson<AdminMonitoringSnapshot>("/api/admin/monitoring", {
+    method: "GET",
+    headers: authHeaders(session.token)
   });
 }
 

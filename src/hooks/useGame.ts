@@ -3,7 +3,7 @@ import type { GameCommand, GameState } from "../game/core/types";
 import { LocalTransport } from "../game/core/transport";
 import { createInitialState } from "../game/content/initialState";
 import { loadGame, saveGame, clearSave } from "../game/save/storage";
-import { loadRemoteGame, saveRemoteGame, saveRemoteGameBeacon, type GameSession } from "../game/save/api";
+import { ApiError, loadRemoteGame, saveRemoteGame, saveRemoteGameBeacon, updateStoredGameSessionSaveRevision, type GameSession } from "../game/save/api";
 import { planNpcCommands } from "../game/ai/rivalAi";
 import { reduceCommands, reduceGameState } from "../game/systems/reducer";
 
@@ -26,6 +26,7 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
   const [state, setState] = useState<GameState>(() => options.initialState ?? loadGame());
   const stateRef = useRef(state);
   const sessionRef = useRef<GameSession | null>(options.session ?? null);
+  const remoteSaveRevisionRef = useRef<number | null>(options.session?.saveRevision ?? null);
   const saveTimerRef = useRef<number | null>(null);
   const transport = useMemo(() => new LocalTransport(), []);
 
@@ -35,7 +36,22 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
 
   useEffect(() => {
     sessionRef.current = options.session ?? null;
+    remoteSaveRevisionRef.current = options.session?.saveRevision ?? null;
   }, [options.session]);
+
+  const loadLatestRemoteSave = useCallback((session: GameSession) => {
+    void loadRemoteGame(session)
+      .then((remote) => {
+        remoteSaveRevisionRef.current = remote.save?.revision ?? null;
+        updateStoredGameSessionSaveRevision(remote.save?.revision ?? null, remote.save?.updatedAt ?? null);
+        const nextState = remote.save?.state ?? loadGame();
+        saveGame(nextState);
+        setState(nextState);
+      })
+      .catch((error) => {
+        console.warn("Remote reload failed", error);
+      });
+  }, []);
 
   const persistState = useCallback((mode: "normal" | "beacon" = "normal") => {
     const currentState = stateRef.current;
@@ -47,14 +63,29 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
     }
 
     if (mode === "beacon") {
-      saveRemoteGameBeacon(session, currentState);
+      saveRemoteGameBeacon(session, currentState, remoteSaveRevisionRef.current);
       return;
     }
 
-    void saveRemoteGame(session, currentState).catch((error) => {
-      console.warn("Remote save failed", error);
-    });
-  }, []);
+    void saveRemoteGame(session, currentState, remoteSaveRevisionRef.current)
+      .then((result) => {
+        remoteSaveRevisionRef.current = result.revision;
+        sessionRef.current = {
+          ...session,
+          saveRevision: result.revision,
+          saveUpdatedAt: result.updatedAt
+        };
+      })
+      .catch((error) => {
+        if (error instanceof ApiError && error.code === "SAVE_CONFLICT") {
+          console.warn("Remote save conflict; loading latest database save");
+          loadLatestRemoteSave(session);
+          return;
+        }
+
+        console.warn("Remote save failed", error);
+      });
+  }, [loadLatestRemoteSave]);
 
   useEffect(() => {
     saveGame(state);
@@ -143,14 +174,8 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
       return;
     }
 
-    void loadRemoteGame(session)
-      .then((remote) => {
-        setState(remote.save?.state ?? loadGame());
-      })
-      .catch(() => {
-        setState(loadGame());
-      });
-  }, []);
+    loadLatestRemoteSave(session);
+  }, [loadLatestRemoteSave]);
 
   const restart = useCallback(() => {
     const nextState = createInitialState();
@@ -160,9 +185,13 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
 
     const session = sessionRef.current;
     if (session) {
-      void saveRemoteGame(session, nextState).catch((error) => {
-        console.warn("Remote reset save failed", error);
-      });
+      void saveRemoteGame(session, nextState, remoteSaveRevisionRef.current)
+        .then((result) => {
+          remoteSaveRevisionRef.current = result.revision;
+        })
+        .catch((error) => {
+          console.warn("Remote reset save failed", error);
+        });
     }
   }, []);
 
