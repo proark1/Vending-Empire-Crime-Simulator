@@ -873,6 +873,43 @@ function normalizeAudioProviderString(value, fallback = "") {
   return typeof value === "string" ? value.trim() : fallback;
 }
 
+const recommendedAudioVoiceProfileByPromptKey = Object.freeze({
+  voice_district_entry: "voice_fixer_dispatcher",
+  "voice.district_entry": "voice_fixer_dispatcher",
+  voice_heat_warning: "voice_authority",
+  "voice.heat_warning": "voice_authority",
+  voice_rival_attack: "voice_rival_enforcer",
+  "voice.rival_attack": "voice_rival_enforcer",
+  voice_mission_complete: "voice_fixer_dispatcher",
+  "voice.mission_complete": "voice_fixer_dispatcher",
+  voice_supplier_offer: "voice_supplier_mechanic",
+  "voice.supplier_offer": "voice_supplier_mechanic",
+  voice_fixer_tip: "voice_fixer_dispatcher",
+  "voice.fixer_tip": "voice_fixer_dispatcher",
+  voice_landlord_pressure: "voice_authority",
+  "voice.landlord_pressure": "voice_authority",
+  voice_rival_boss_threat: "voice_rival_enforcer",
+  "voice.rival_boss_threat": "voice_rival_enforcer",
+  voice_mechanic_unlock: "voice_supplier_mechanic",
+  "voice.mechanic_unlock": "voice_supplier_mechanic",
+  voice_driver_warning: "voice_supplier_mechanic",
+  "voice.driver_warning": "voice_supplier_mechanic",
+  voice_guard_contact: "voice_rival_enforcer",
+  "voice.guard_contact": "voice_rival_enforcer",
+  voice_inspector_notice: "voice_authority",
+  "voice.inspector_notice": "voice_authority",
+  voice_lawyer_notice: "voice_authority",
+  "voice.lawyer_notice": "voice_authority",
+  voice_informant_tip: "voice_informant",
+  "voice.informant_tip": "voice_informant"
+});
+
+function recommendedAudioProviderVoiceProfileId(promptInput) {
+  return recommendedAudioVoiceProfileByPromptKey[normalizeAudioProviderString(promptInput.id)]
+    || recommendedAudioVoiceProfileByPromptKey[normalizeAudioProviderString(promptInput.trigger)]
+    || "";
+}
+
 function normalizeAudioProviderSettings(candidate, existing = null, options = {}) {
   const input = typeof candidate === "object" && candidate !== null ? candidate : {};
   const existingSettings = typeof existing === "object" && existing !== null ? existing : {};
@@ -893,20 +930,22 @@ function normalizeAudioProviderSettings(candidate, existing = null, options = {}
     ...(prompts ? {
       generationPrompts: prompts.map((prompt, index) => {
         const promptInput = typeof prompt === "object" && prompt !== null ? prompt : {};
+        const id = normalizeAudioProviderString(promptInput.id, `prompt_${index + 1}`);
         const label = normalizeAudioProviderString(promptInput.label, `Prompt ${index + 1}`);
+        const trigger = normalizeAudioProviderString(promptInput.trigger);
         return {
           durationSeconds: normalizeAudioProviderNumber(promptInput.durationSeconds, 3, 0.5, 180),
           enabled: typeof promptInput.enabled === "boolean" ? promptInput.enabled : true,
           generatedAt: normalizeAudioProviderString(promptInput.generatedAt),
           generatedSizeBytes: typeof promptInput.generatedSizeBytes === "number" && Number.isFinite(promptInput.generatedSizeBytes) ? Math.max(0, Math.round(promptInput.generatedSizeBytes)) : null,
           generatedUrl: normalizeAudioProviderString(promptInput.generatedUrl),
-          id: normalizeAudioProviderString(promptInput.id, `prompt_${index + 1}`),
+          id,
           label,
           negativePrompt: normalizeAudioProviderString(promptInput.negativePrompt),
           prompt: normalizeAudioProviderString(promptInput.prompt),
           purpose: normalizeAudioProviderCategory(promptInput.purpose),
-          trigger: normalizeAudioProviderString(promptInput.trigger),
-          voiceProfileId: normalizeAudioProviderString(promptInput.voiceProfileId)
+          trigger,
+          voiceProfileId: normalizeAudioProviderString(promptInput.voiceProfileId) || recommendedAudioProviderVoiceProfileId({ id, trigger })
         };
       })
     } : {}),

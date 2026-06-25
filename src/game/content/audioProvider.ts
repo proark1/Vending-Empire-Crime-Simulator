@@ -370,7 +370,7 @@ export const defaultElevenLabsGenerationPrompts: ElevenLabsGenerationPrompt[] = 
     prompt: "Heat is climbing. Kill the noise before inspectors start knocking.",
     purpose: "voice",
     trigger: "voice.heat_warning",
-    voiceProfileId: "voice_fixer_dispatcher"
+    voiceProfileId: "voice_authority"
   },
   {
     durationSeconds: 4,
@@ -381,7 +381,7 @@ export const defaultElevenLabsGenerationPrompts: ElevenLabsGenerationPrompt[] = 
     prompt: "Redline is moving on one of our machines. Get there now.",
     purpose: "voice",
     trigger: "voice.rival_attack",
-    voiceProfileId: "voice_fixer_dispatcher"
+    voiceProfileId: "voice_rival_enforcer"
   },
   {
     durationSeconds: 4,
@@ -531,6 +531,14 @@ function idFromLabel(label: string, fallback: string): string {
   return id || fallback;
 }
 
+export function recommendedElevenLabsVoiceProfileId(prompt: Pick<ElevenLabsGenerationPrompt, "id" | "trigger">): string {
+  const defaultPrompt = defaultElevenLabsGenerationPrompts.find((candidate) => (
+    candidate.purpose === "voice" &&
+    (candidate.id === prompt.id || candidate.trigger === prompt.trigger)
+  ));
+  return defaultPrompt?.voiceProfileId ?? "";
+}
+
 export function createDefaultAudioProviderSettings(): AudioProviderSettings {
   return {
     apiKey: "",
@@ -567,7 +575,10 @@ export function normalizeAudioProviderSettings(candidate: unknown): AudioProvide
         prompt: stringValue(prompt.prompt, fallback?.prompt ?? ""),
         purpose: purposeValue(prompt.purpose ?? fallback?.purpose),
         trigger: stringValue(prompt.trigger, fallback?.trigger ?? "feedback.cash"),
-        voiceProfileId: stringValue(prompt.voiceProfileId) || fallback?.voiceProfileId || ""
+        voiceProfileId: stringValue(prompt.voiceProfileId) || recommendedElevenLabsVoiceProfileId({
+          id: stringValue(prompt.id, idFromLabel(label, `prompt_${index + 1}`)),
+          trigger: stringValue(prompt.trigger, fallback?.trigger ?? "feedback.cash")
+        }) || fallback?.voiceProfileId || ""
       };
     }),
     hasApiKey: booleanValue(input.hasApiKey, Boolean(input.apiKey)),

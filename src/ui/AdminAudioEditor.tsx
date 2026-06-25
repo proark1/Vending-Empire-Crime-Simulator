@@ -15,6 +15,7 @@ import {
   defaultElevenLabsGenerationPrompts,
   defaultElevenLabsVoiceProfiles,
   normalizeAudioProviderSettings,
+  recommendedElevenLabsVoiceProfileId,
   validateAudioProviderSettings,
   type AudioProviderSettings,
   type ElevenLabsGenerationPrompt,
@@ -361,6 +362,30 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
     }));
   }, [setNormalizedProviderSettings]);
 
+  const handleAssignRecommendedVoiceProfiles = useCallback(() => {
+    const nextSettings = normalizeAudioProviderSettings({
+      ...providerSettings,
+      generationPrompts: providerSettings.generationPrompts.map((prompt) => {
+        if (prompt.purpose !== "voice") {
+          return prompt;
+        }
+
+        const voiceProfileId = recommendedElevenLabsVoiceProfileId(prompt);
+        return voiceProfileId ? { ...prompt, voiceProfileId } : prompt;
+      })
+    });
+
+    setProviderSettings(nextSettings);
+    setProviderSaving(true);
+    saveAdminAudioProviderSettings(session, nextSettings)
+      .then((response) => {
+        setProviderSettings(normalizeAudioProviderSettings(response.settings ?? nextSettings));
+        setStatus(`Assigned and saved recommended voice profiles r${response.revision ?? "--"}.`);
+      })
+      .catch((error) => setStatus(error instanceof Error ? error.message : "Voice profile assignment save failed."))
+      .finally(() => setProviderSaving(false));
+  }, [providerSettings, session]);
+
   const handleDeleteAsset = useCallback((assetId: string) => {
     setNormalizedConfig((current) => ({
       ...current,
@@ -685,6 +710,10 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
           <div className="admin-audio-subheading">
             <h3>Voice Text Prompts</h3>
             <div className="admin-audio-heading-actions">
+              <button disabled={providerSaving} onClick={handleAssignRecommendedVoiceProfiles} type="button">
+                <Mic2 size={14} aria-hidden="true" />
+                Assign Voices
+              </button>
               <button onClick={handleResetGenerationPrompts} type="button">
                 <RotateCcw size={14} aria-hidden="true" />
                 Defaults
