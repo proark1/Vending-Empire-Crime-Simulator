@@ -116,6 +116,9 @@ const productCrateColors: Record<ProductId, string> = {
 };
 
 const playerRadius = 0.36;
+const playerGroundY = 0;
+const playerJumpVelocity = 5.6;
+const playerGravity = -15.8;
 const worldWidth = worldBounds.maxX - worldBounds.minX;
 const worldDepth = worldBounds.maxZ - worldBounds.minZ;
 const worldCenterX = (worldBounds.minX + worldBounds.maxX) / 2;
@@ -2572,6 +2575,8 @@ export function ThreeScene({ feedbackEvent, guidanceLocationId, mapLayout, state
     let cameraMode: CameraMode = "first";
     let debugVisible = false;
     let pitch = 0;
+    let verticalVelocity = 0;
+    let grounded = true;
     let lastTime = performance.now();
     let lastChunkVisibilityUpdate = 0;
     let lastPositionEmit = 0;
@@ -2606,6 +2611,16 @@ export function ThreeScene({ feedbackEvent, guidanceLocationId, mapLayout, state
         }
         event.preventDefault();
         return;
+      }
+
+      const eventTarget = event.target instanceof HTMLElement ? event.target : null;
+      const isUiControl = Boolean(eventTarget?.closest("input, textarea, select, button, [contenteditable='true']"));
+      if (event.code === "Space" && !isUiControl) {
+        event.preventDefault();
+        if (!event.repeat && grounded) {
+          verticalVelocity = playerJumpVelocity;
+          grounded = false;
+        }
       }
 
       keys.add(event.code);
@@ -2647,7 +2662,7 @@ export function ThreeScene({ feedbackEvent, guidanceLocationId, mapLayout, state
       const cameraWorld = new THREE.Vector3();
       camera.getWorldPosition(cameraWorld);
       const targetOrigin = cameraMode === "third"
-        ? new THREE.Vector3(yaw.position.x, 1.35, yaw.position.z)
+        ? new THREE.Vector3(yaw.position.x, yaw.position.y + 1.35, yaw.position.z)
         : cameraWorld;
       const forward = new THREE.Vector3();
       if (cameraMode === "third") {
@@ -2716,7 +2731,18 @@ export function ThreeScene({ feedbackEvent, guidanceLocationId, mapLayout, state
         const movement = direction.multiplyScalar(speed * delta);
         playerMoved = movePlayerWithCollision(yaw.position, movement, collisionBoxesForState(stateRef.current, mapLayout));
       }
-      updateNpcRig(playerAvatar, time, playerMoved ? speed / 4.2 : 1, playerMoved);
+
+      if (!grounded || verticalVelocity > 0) {
+        verticalVelocity += playerGravity * delta;
+        yaw.position.y += verticalVelocity * delta;
+        if (yaw.position.y <= playerGroundY) {
+          yaw.position.y = playerGroundY;
+          verticalVelocity = 0;
+          grounded = true;
+        }
+      }
+
+      updateNpcRig(playerAvatar, time, playerMoved ? speed / 4.2 : 1, playerMoved || !grounded);
 
       if (time - lastPositionEmit > 180) {
         lastPositionEmit = time;
