@@ -1,5 +1,6 @@
 import type { GameState, Vec2 } from "../game/core/types";
 import { activeVehicle, machineAtLocation } from "../game/core/selectors";
+import { worldBounds, worldRoads } from "../game/content/world";
 import type { SceneTarget } from "../render/three/SceneTargets";
 
 interface MinimapProps {
@@ -9,12 +10,7 @@ interface MinimapProps {
   target: SceneTarget | null;
 }
 
-const mapBounds = {
-  minX: -14,
-  maxX: 12,
-  minZ: -10,
-  maxZ: 10
-};
+const mapBounds = worldBounds;
 
 function toMapPoint(position: Vec2): { x: number; y: number } {
   const x = ((position.x - mapBounds.minX) / (mapBounds.maxX - mapBounds.minX)) * 100;
@@ -23,6 +19,17 @@ function toMapPoint(position: Vec2): { x: number; y: number } {
   return {
     x: Math.max(4, Math.min(96, x)),
     y: Math.max(4, Math.min(96, y))
+  };
+}
+
+function toMapRect(rect: { depth: number; width: number; x: number; z: number }): { height: number; width: number; x: number; y: number } {
+  const topLeft = toMapPoint({ x: rect.x - rect.width / 2, z: rect.z - rect.depth / 2 });
+  const bottomRight = toMapPoint({ x: rect.x + rect.width / 2, z: rect.z + rect.depth / 2 });
+  return {
+    x: topLeft.x,
+    y: topLeft.y,
+    width: Math.max(1, bottomRight.x - topLeft.x),
+    height: Math.max(1, bottomRight.y - topLeft.y)
   };
 }
 
@@ -35,10 +42,12 @@ export function Minimap({ state, playerPosition, guidanceLocationId, target }: M
 
   return (
     <aside className="minimap" aria-label="District map">
-      <svg viewBox="0 0 100 100" role="img" aria-label="Cinderblock Row map">
+      <svg viewBox="0 0 100 100" role="img" aria-label="District map">
         <rect className="map-ground" x="2" y="2" width="96" height="96" rx="5" />
-        <path className="map-road" d="M3 49 H97" />
-        <path className="map-road" d="M53 4 V96" />
+        {worldRoads.map((road) => {
+          const rect = toMapRect(road);
+          return <rect className="map-road-area" key={road.id} x={rect.x} y={rect.y} width={rect.width} height={rect.height} rx="1.2" />;
+        })}
         {Object.values(state.locations).map((location) => {
           const point = toMapPoint(location.position);
           const machine = machineAtLocation(state, location.id);

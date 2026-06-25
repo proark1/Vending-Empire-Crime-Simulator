@@ -41,10 +41,18 @@ function migrateGameState(parsed: GameState): GameState {
       ...baseline.products,
       ...parsed.products
     },
-    districts: {
-      ...baseline.districts,
-      ...parsed.districts
-    },
+    districts: Object.fromEntries(
+      Object.entries({
+        ...baseline.districts,
+        ...(parsed.districts ?? {})
+      }).map(([districtId, district]) => [
+        districtId,
+        {
+          ...(baseline.districts[districtId] ?? {}),
+          ...district
+        }
+      ])
+    ),
     locations: {
       ...baseline.locations,
       ...parsed.locations

@@ -1,4 +1,4 @@
-import { AlertTriangle, Boxes, ClipboardList, HandCoins, Map, Navigation, Package, PackagePlus, Route, ShieldAlert, Truck, UserPlus, Users, Wrench } from "lucide-react";
+import { AlertTriangle, Boxes, Building2, ClipboardList, HandCoins, Map, Navigation, Package, PackagePlus, Route, ShieldAlert, Truck, UserPlus, Users, Wrench } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { GameCommand, GameState } from "../game/core/types";
 import { employeeRoleList, employeeRoles } from "../game/content/employees";
@@ -17,6 +17,7 @@ import {
   garageStorageUnits,
   getMachineLocation,
   latestDayReport,
+  machineAtLocation,
   machineRoutePressure,
   machineStockUnits,
   ownedMachines,
@@ -27,7 +28,7 @@ import {
 } from "../game/core/selectors";
 import { estimateMachineSalesPerHour } from "../game/systems/economy";
 
-type DashboardTab = "machines" | "jobs" | "route" | "logistics" | "crew" | "rival" | "log";
+type DashboardTab = "machines" | "districts" | "jobs" | "route" | "logistics" | "crew" | "rival" | "log";
 
 interface DashboardProps {
   state: GameState;
@@ -60,6 +61,32 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
   const rival = state.factions.rival_redline;
   const vehicle = activeVehicle(state);
   const employees = useMemo(() => employeeList(state), [state]);
+  const districtSummaries = useMemo(
+    () =>
+      Object.values(state.districts)
+        .map((district) => {
+          const districtLocations = Object.values(state.locations).filter((location) => location.districtId === district.id && location.kind !== "garage" && location.kind !== "supplier");
+          const machines = districtLocations.map((location) => machineAtLocation(state, location.id)).filter(Boolean);
+          const openSites = districtLocations.filter((location) => !machineAtLocation(state, location.id));
+          const pressure = districtLocations.reduce((sum, location) => sum + location.rivalPressure, 0) / Math.max(1, districtLocations.length);
+          const traffic = districtLocations.reduce((sum, location) => sum + location.footTraffic, 0);
+          const nextCost = openSites.reduce((lowest, location) => Math.min(lowest, location.placementCost), Number.POSITIVE_INFINITY);
+          const playerCount = machines.filter((machine) => machine?.ownerFactionId === state.playerFactionId).length;
+          const rivalCount = machines.filter((machine) => machine && machine.ownerFactionId !== state.playerFactionId).length;
+          return {
+            district,
+            openSites: openSites.length,
+            pressure,
+            traffic,
+            nextCost: Number.isFinite(nextCost) ? nextCost : 0,
+            playerCount,
+            rivalCount,
+            totalSites: districtLocations.length
+          };
+        })
+        .sort((a, b) => a.district.name.localeCompare(b.district.name)),
+    [state]
+  );
   const tasks = useMemo(() => routeTasks(state), [state]);
   const selectedTask = selectedRouteTask(state);
   const contracts = useMemo(() => activeContracts(state), [state]);
@@ -71,6 +98,10 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
         <button className={tab === "machines" ? "tab active" : "tab"} onClick={() => setTab("machines")} type="button">
           <Map size={16} aria-hidden="true" />
           Machines
+        </button>
+        <button className={tab === "districts" ? "tab active" : "tab"} onClick={() => setTab("districts")} type="button">
+          <Building2 size={16} aria-hidden="true" />
+          Districts
         </button>
         <button className={tab === "jobs" ? "tab active" : "tab"} onClick={() => setTab("jobs")} type="button">
           <ClipboardList size={16} aria-hidden="true" />
@@ -123,6 +154,28 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
                   <span>{Math.round(machine.damage)}% damage</span>
                   <span>{(machine.upgrades ?? []).length} upgrades</span>
                 </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+
+      {tab === "districts" && (
+        <div className="panel-list">
+          {districtSummaries.map((summary) => {
+            const pressureTone = summary.pressure >= 0.45 ? "danger" : summary.pressure >= 0.28 ? "warning" : "good";
+            return (
+              <article className={`route-task ${pressureTone}`} key={summary.district.id}>
+                <div>
+                  <h3>{summary.district.name}</h3>
+                  <p>{summary.district.description}</p>
+                  <p>
+                    {summary.playerCount} yours · {summary.rivalCount} rival · {summary.openSites}/{summary.totalSites} open pads
+                  </p>
+                </div>
+                <strong>
+                  {summary.nextCost > 0 ? `$${summary.nextCost}` : "Full"} · {summary.traffic.toFixed(1)} traffic · {Math.round(summary.pressure * 100)} pressure
+                </strong>
               </article>
             );
           })}

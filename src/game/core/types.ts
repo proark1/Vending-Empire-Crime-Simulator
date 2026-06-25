@@ -13,6 +13,13 @@ export interface Vec2 {
   z: number;
 }
 
+export interface Bounds2 {
+  maxX: number;
+  maxZ: number;
+  minX: number;
+  minZ: number;
+}
+
 export interface Inventory {
   [productId: string]: number;
 }
@@ -107,11 +114,14 @@ export interface Location {
 }
 
 export interface District {
+  bounds: Bounds2;
+  description: string;
   id: DistrictId;
   name: string;
   heatTolerance: number;
   rentMultiplier: number;
   dominantTags: string[];
+  visualTheme: string;
 }
 
 export interface PlayerState {

@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import type { GameState, GameEventTone, Location, MachineUpgradeId, ProductId, StockCrate, StreetActivity } from "../../game/core/types";
 import { activeVehicle, garageStorageUnits, machineAtLocation, machineRoutePressure } from "../../game/core/selectors";
+import { districtLabels, machinePlacementAnchors, worldBounds, worldBuildings, worldRoads, type WorldRoad } from "../../game/content/world";
 import type { SceneFeedbackEvent, SceneTarget } from "./SceneTargets";
 import { createAsphaltMaterial, createAtmosphere, createBuilding, createNpcCharacter, createRoadMaterial, createSidewalkMaterial, createSkyDome, createStreetProps } from "./proceduralArt";
 
@@ -21,17 +22,6 @@ interface Interactable {
 }
 
 type CameraMode = "first" | "third";
-type BuildingStyle = Parameters<typeof createBuilding>[3];
-
-interface BuildingSpec {
-  depth: number;
-  height: number;
-  signText: string;
-  style: BuildingStyle;
-  width: number;
-  x: number;
-  z: number;
-}
 
 interface CollisionBox {
   maxX: number;
@@ -74,36 +64,10 @@ const productCrateColors: Record<ProductId, string> = {
 };
 
 const playerRadius = 0.36;
-const worldBounds = {
-  maxX: 27,
-  maxZ: 22,
-  minX: -27,
-  minZ: -22
-};
-
-const districtBuildings: BuildingSpec[] = [
-  { x: -9, z: 8.8, width: 5.5, depth: 3.5, height: 2.6, style: "garage", signText: "STORAGE" },
-  { x: 8.4, z: 8.7, width: 4.8, depth: 3.2, height: 2.4, style: "supplier", signText: "SUPPLY" },
-  { x: -5.2, z: -7.2, width: 5.8, depth: 2.9, height: 2.8, style: "laundromat", signText: "FOAM & FOLD" },
-  { x: 4.3, z: -8.1, width: 5.3, depth: 2.8, height: 3.1, style: "gym", signText: "IRON HABIT" },
-  { x: 9.6, z: -2.8, width: 3.4, depth: 4.6, height: 3.6, style: "arcade", signText: "PIXEL" },
-  { x: -11.6, z: -2.1, width: 2.8, depth: 5.3, height: 2.7, style: "transit", signText: "BUS STOP" },
-  { x: 1.5, z: 4.7, width: 4.2, depth: 3.4, height: 2.5, style: "rival", signText: "REDLINE" },
-  { x: -20.2, z: 8.6, width: 5.9, depth: 3.7, height: 3.2, style: "supplier", signText: "WAREHOUSE" },
-  { x: 19.6, z: 8.2, width: 5.4, depth: 3.4, height: 2.9, style: "laundromat", signText: "24H MART" },
-  { x: -20.4, z: -8.0, width: 4.9, depth: 3.1, height: 3.4, style: "gym", signText: "CLINIC" },
-  { x: 18.7, z: -8.6, width: 6.0, depth: 3.3, height: 3.8, style: "arcade", signText: "NIGHT MARKET" },
-  { x: -22.2, z: -1.8, width: 3.4, depth: 5.4, height: 2.9, style: "transit", signText: "DEPOT" },
-  { x: 22.2, z: -1.8, width: 3.6, depth: 5.2, height: 3.0, style: "rival", signText: "LOCKUP" }
-];
-
-const machinePlacementAnchors: Record<string, { x: number; z: number; rotationY: number }> = {
-  laundromat: { x: -5.2, z: -5.15, rotationY: Math.PI },
-  gym: { x: 4.25, z: -6.05, rotationY: Math.PI },
-  arcade: { x: 8.75, z: 0.05, rotationY: Math.PI },
-  transit: { x: -9.72, z: -1.1, rotationY: -Math.PI / 2 },
-  rival_corner: { x: 1.35, z: 2.38, rotationY: 0 }
-};
+const worldWidth = worldBounds.maxX - worldBounds.minX;
+const worldDepth = worldBounds.maxZ - worldBounds.minZ;
+const worldCenterX = (worldBounds.minX + worldBounds.maxX) / 2;
+const worldCenterZ = (worldBounds.minZ + worldBounds.maxZ) / 2;
 
 function machineFrontVector(rotationY: number): THREE.Vector3 {
   return new THREE.Vector3(-Math.sin(rotationY), 0, -Math.cos(rotationY));
@@ -149,7 +113,7 @@ function collisionBoxFromCenter(x: number, z: number, width: number, depth: numb
   };
 }
 
-const buildingCollisionBoxes = districtBuildings.map((building) =>
+const buildingCollisionBoxes = worldBuildings.map((building) =>
   collisionBoxFromCenter(building.x, building.z, building.width, building.depth)
 );
 
@@ -811,7 +775,7 @@ function createLabelSprite(text: string, color: string): THREE.Sprite {
   return sprite;
 }
 
-function addLabel(group: THREE.Group, text: string, color: string, position: THREE.Vector3, height: number): void {
+function addLabel(group: THREE.Object3D, text: string, color: string, position: THREE.Vector3, height: number): void {
   const label = createLabelSprite(text, color);
   label.position.set(position.x, height, position.z);
   group.add(label);
@@ -1312,6 +1276,23 @@ function addBuilding(scene: THREE.Scene, x: number, z: number, width: number, de
   scene.add(building);
 }
 
+function sidewalkStripsForRoad(road: WorldRoad): Array<{ depth: number; width: number; x: number; z: number }> {
+  const sidewalkWidth = 1.9;
+  if (road.width >= road.depth) {
+    const offset = road.depth / 2 + sidewalkWidth / 2;
+    return [
+      { x: road.x, z: road.z - offset, width: road.width, depth: sidewalkWidth },
+      { x: road.x, z: road.z + offset, width: road.width, depth: sidewalkWidth }
+    ];
+  }
+
+  const offset = road.width / 2 + sidewalkWidth / 2;
+  return [
+    { x: road.x - offset, z: road.z, width: sidewalkWidth, depth: road.depth },
+    { x: road.x + offset, z: road.z, width: sidewalkWidth, depth: road.depth }
+  ];
+}
+
 function createDebugBox(box: CollisionBox): THREE.Mesh {
   const mesh = new THREE.Mesh(
     new THREE.BoxGeometry(box.maxX - box.minX, 1.8, box.maxZ - box.minZ),
@@ -1551,9 +1532,9 @@ export function ThreeScene({ feedbackEvent, guidanceLocationId, state, onPlayerP
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color("#0f172a");
-    scene.fog = new THREE.Fog("#18243a", 26, 72);
+    scene.fog = new THREE.Fog("#18243a", 34, 112);
 
-    const camera = new THREE.PerspectiveCamera(70, mount.clientWidth / mount.clientHeight, 0.1, 120);
+    const camera = new THREE.PerspectiveCamera(70, mount.clientWidth / mount.clientHeight, 0.1, 170);
     camera.position.set(0, 1.65, 0);
     camera.rotation.order = "YXZ";
 
@@ -1597,37 +1578,22 @@ export function ThreeScene({ feedbackEvent, guidanceLocationId, state, onPlayerP
     keyLight.shadow.mapSize.set(1024, 1024);
     scene.add(keyLight);
 
-    const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(64, 52),
-      createAsphaltMaterial()
-    );
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(worldWidth + 10, worldDepth + 10), createAsphaltMaterial());
     ground.rotation.x = -Math.PI / 2;
+    ground.position.set(worldCenterX, 0, worldCenterZ);
     ground.receiveShadow = true;
     scene.add(ground);
 
-    const road = new THREE.Mesh(
-      new THREE.BoxGeometry(58, 0.03, 4.4),
-      createRoadMaterial()
-    );
-    road.position.set(0, 0.02, 0);
-    road.receiveShadow = true;
-    scene.add(road);
-
-    const crossRoad = new THREE.Mesh(
-      new THREE.BoxGeometry(4.4, 0.035, 46),
-      createRoadMaterial()
-    );
-    crossRoad.position.set(0, 0.025, 0);
-    crossRoad.receiveShadow = true;
-    scene.add(crossRoad);
-
+    const roadMaterial = createRoadMaterial();
     const sidewalkMaterial = createSidewalkMaterial();
-    const sidewalks = [
-      { x: 0, z: -3.55, width: 58, depth: 1.9 },
-      { x: 0, z: 3.55, width: 58, depth: 1.9 },
-      { x: -3.55, z: 0, width: 1.9, depth: 46 },
-      { x: 3.55, z: 0, width: 1.9, depth: 46 }
-    ];
+    const sidewalks = worldRoads.flatMap(sidewalkStripsForRoad);
+
+    for (const road of worldRoads) {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(road.width, 0.035, road.depth), roadMaterial);
+      mesh.position.set(road.x, 0.025, road.z);
+      mesh.receiveShadow = true;
+      scene.add(mesh);
+    }
 
     for (const sidewalk of sidewalks) {
       const mesh = new THREE.Mesh(new THREE.BoxGeometry(sidewalk.width, 0.04, sidewalk.depth), sidewalkMaterial);
@@ -1636,9 +1602,17 @@ export function ThreeScene({ feedbackEvent, guidanceLocationId, state, onPlayerP
       scene.add(mesh);
     }
 
-    for (const building of districtBuildings) {
+    for (const building of worldBuildings) {
       addBuilding(scene, building.x, building.z, building.width, building.depth, building.height, building.style, building.signText);
     }
+
+    for (const label of districtLabels) {
+      const district = stateRef.current.districts[label.districtId];
+      if (district) {
+        addLabel(scene, district.name, label.color, new THREE.Vector3(label.x, 0, label.z), 1.35);
+      }
+    }
+
     const streetProps = createStreetProps();
     const animatedProps: THREE.Object3D[] = [];
     streetProps.traverse((object) => {

@@ -853,7 +853,14 @@ export function createStreetProps(): THREE.Group {
     { kind: "trash", x: -2.8, z: 2.2, y: 0.38, w: 0.9, h: 0.65 },
     { kind: "trash", x: 7.3, z: -4.2, y: 0.38, w: 0.85, h: 0.6 },
     { kind: "pallet", x: 7.0, z: 5.6, y: 0.5, w: 1.2, h: 0.9 },
-    { kind: "graffiti", x: 1.5, z: 3.08, y: 1.25, w: 1.4, h: 0.9 }
+    { kind: "graffiti", x: 1.5, z: 3.08, y: 1.25, w: 1.4, h: 0.9 },
+    { kind: "pallet", x: -36.8, z: 4.6, y: 0.5, w: 1.25, h: 0.9 },
+    { kind: "trash", x: -29.4, z: 11.7, y: 0.38, w: 0.9, h: 0.62 },
+    { kind: "graffiti", x: -33.6, z: 8.0, y: 1.25, w: 1.4, h: 0.9 },
+    { kind: "poster", x: 28.6, z: -9.6, y: 1.18, w: 0.85, h: 1.15 },
+    { kind: "trash", x: 24.3, z: 7.8, y: 0.38, w: 0.86, h: 0.6 },
+    { kind: "poster", x: 13.4, z: -24.6, y: 1.05, w: 0.85, h: 1.15 },
+    { kind: "graffiti", x: 21.2, z: -25.9, y: 1.22, w: 1.5, h: 0.95 }
   ];
 
   for (const prop of props) {
@@ -916,6 +923,54 @@ export function createStreetProps(): THREE.Group {
       rotation: 0.15,
       speed: 0.36,
       variant: "scout"
+    },
+    {
+      action: "carry",
+      path: [
+        [-34.8, 5.55],
+        [-28.9, 5.55],
+        [-28.9, 12.2],
+        [-34.8, 12.2]
+      ],
+      rotation: -0.4,
+      speed: 0.3,
+      variant: "worker"
+    },
+    {
+      action: "walk",
+      path: [
+        [24.2, -9.6],
+        [24.2, 7.8],
+        [28.8, 7.8],
+        [28.8, -9.6]
+      ],
+      rotation: 0.1,
+      speed: 0.48,
+      variant: "customer"
+    },
+    {
+      action: "pace",
+      path: [
+        [13.2, -24.8],
+        [22.8, -24.8],
+        [22.8, -20.2],
+        [13.2, -20.2]
+      ],
+      rotation: Math.PI,
+      speed: 0.36,
+      variant: "rival"
+    },
+    {
+      action: "scan",
+      path: [
+        [27.2, -26.2],
+        [32.4, -26.2],
+        [32.4, -22.4],
+        [27.2, -22.4]
+      ],
+      rotation: -0.2,
+      speed: 0.34,
+      variant: "scout"
     }
   ];
 
@@ -966,7 +1021,10 @@ export function createStreetProps(): THREE.Group {
   for (const [x, z, color] of [
     [5.8, 4.6, "#0ea5e9"],
     [6.25, 4.62, "#f97316"],
-    [-6.7, 2.75, "#22c55e"]
+    [-6.7, 2.75, "#22c55e"],
+    [-28.6, 16.3, "#f97316"],
+    [24.1, 10.2, "#0ea5e9"],
+    [26.0, -19.4, "#e879f9"]
   ] as Array<[number, number, string]>) {
     const box = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.72, 0.34), utilityMaterial);
     box.position.set(x, 0.36, z);
@@ -983,7 +1041,12 @@ export function createStreetProps(): THREE.Group {
   for (const [x, z] of [
     [-4.1, -3.75],
     [3.35, -4.55],
-    [8.1, 1.35]
+    [8.1, 1.35],
+    [-28.9, -4.35],
+    [-24.8, 15.25],
+    [24.0, -4.8],
+    [12.4, -19.3],
+    [28.8, -20.0]
   ] as Array<[number, number]>) {
     const planter = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.26, 0.34), planterMaterial);
     planter.position.set(x, 0.13, z);
@@ -1002,7 +1065,13 @@ export function createStreetProps(): THREE.Group {
     [-2.85, -3.35],
     [2.85, 3.35],
     [3.25, 3.35],
-    [8.55, -0.78]
+    [8.55, -0.78],
+    [-28.9, -0.25],
+    [-28.9, 8.4],
+    [24.0, -7.4],
+    [24.0, 5.2],
+    [7.0, -20.0],
+    [18.0, -20.0]
   ] as Array<[number, number]>) {
     const bollard = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.065, 0.54, 12), metalMaterial);
     bollard.position.set(x, 0.27, z);
@@ -1018,7 +1087,13 @@ export function createStreetProps(): THREE.Group {
   for (const position of [
     new THREE.Vector3(-7.2, 0, 0.9),
     new THREE.Vector3(5.4, 0, -1.0),
-    new THREE.Vector3(-1.1, 0, -6.5)
+    new THREE.Vector3(-1.1, 0, -6.5),
+    new THREE.Vector3(-28.9, 0, -4.8),
+    new THREE.Vector3(-28.9, 0, 14.4),
+    new THREE.Vector3(24.0, 0, -9.4),
+    new THREE.Vector3(24.0, 0, 11.2),
+    new THREE.Vector3(8.4, 0, -20.0),
+    new THREE.Vector3(29.6, 0, -20.1)
   ]) {
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 3.4, 10), lampMaterial);
     pole.position.copy(position).add(new THREE.Vector3(0, 1.7, 0));
