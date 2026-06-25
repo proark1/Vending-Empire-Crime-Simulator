@@ -5,6 +5,7 @@ import { employeeRoleList, employeeRoles } from "../game/content/employees";
 import { getMachineUpgradeEffects } from "../game/core/machineStats";
 import {
   activeContracts,
+  activeLawInspections,
   activeVehicle,
   assignedEmployeesForMachine,
   carriedCrateUnits,
@@ -19,6 +20,7 @@ import {
   formatClock,
   garageStorageUnits,
   getMachineLocation,
+  installedMachines,
   installableLocation,
   latestDayReport,
   machineAtLocation,
@@ -33,7 +35,7 @@ import {
 } from "../game/core/selectors";
 import { estimateMachineSalesPerHour } from "../game/systems/economy";
 
-type DashboardTab = "machines" | "districts" | "jobs" | "route" | "logistics" | "crew" | "rival" | "debug" | "log";
+type DashboardTab = "machines" | "districts" | "jobs" | "route" | "logistics" | "crew" | "law" | "rival" | "debug" | "log";
 
 interface DashboardProps {
   state: GameState;
@@ -63,6 +65,7 @@ function roleIcon(role: string): React.ReactNode {
 export function Dashboard({ state, onCommand }: DashboardProps) {
   const [tab, setTab] = useState<DashboardTab>("machines");
   const playerMachines = useMemo(() => ownedMachines(state, state.playerFactionId), [state]);
+  const installedPlayerMachines = useMemo(() => installedMachines(state, state.playerFactionId), [state]);
   const rival = state.factions.rival_redline;
   const vehicle = activeVehicle(state);
   const employees = useMemo(() => employeeList(state), [state]);
@@ -99,6 +102,7 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
   const tasks = useMemo(() => routeTasks(state), [state]);
   const selectedTask = selectedRouteTask(state);
   const contracts = useMemo(() => activeContracts(state), [state]);
+  const inspections = useMemo(() => activeLawInspections(state), [state]);
   const dayReport = latestDayReport(state);
 
   return (
@@ -128,6 +132,10 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
           <Users size={16} aria-hidden="true" />
           Crew
         </button>
+        <button className={tab === "law" ? "tab active" : "tab"} onClick={() => setTab("law")} type="button">
+          <ShieldAlert size={16} aria-hidden="true" />
+          Law
+        </button>
         <button className={tab === "rival" ? "tab active" : "tab"} onClick={() => setTab("rival")} type="button">
           <ShieldAlert size={16} aria-hidden="true" />
           Rival
@@ -149,16 +157,19 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
             const stock = machineStockUnits(machine);
             const effects = getMachineUpgradeEffects(machine);
             const hourlySales = estimateMachineSalesPerHour(state, machine).reduce((sum, slot) => sum + slot.unitsPerHour, 0);
-            const pressure = machineRoutePressure(state, machine);
+            const installed = (machine.placementStatus ?? "installed") === "installed";
+            const pressure = installed ? machineRoutePressure(state, machine) : undefined;
             const assignedCrew = assignedEmployeesForMachine(state, machine.id);
             return (
               <article className="machine-card" key={machine.id}>
                 <div>
                   <h3>{machine.name}</h3>
-                  <p>{location?.name ?? "Unknown location"}</p>
+                  <p>
+                    {location?.name ?? "Unknown location"} · {installed ? machine.placementMethod.replace("_", " ") : "Stored"}
+                  </p>
                   {effects.remoteMonitoring && <p className="remote-chip">Remote monitor online</p>}
                   {assignedCrew.length > 0 && <p className="remote-chip">Crew: {assignedCrew.map((employee) => employee.name).join(", ")}</p>}
-                  {pressure.reasons.length > 0 && <p className={`route-chip ${pressure.tone}`}>{pressure.reasons.join(" · ")}</p>}
+                  {pressure && pressure.reasons.length > 0 && <p className={`route-chip ${pressure.tone}`}>{pressure.reasons.join(" · ")}</p>}
                 </div>
                 <div className="machine-metrics">
                   <span>${Math.round(machine.revenueStored)}</span>
@@ -463,7 +474,7 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
                     </p>
                   </div>
                   <div className="route-actions">
-                    {playerMachines.map((machine) => {
+                    {installedPlayerMachines.map((machine) => {
                       const assigned = employee.assignedMachineIds.includes(machine.id);
                       return (
                         <MiniButton
@@ -482,6 +493,78 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
                         </MiniButton>
                       );
                     })}
+                  </div>
+                </article>
+              );
+            })
+          )}
+        </div>
+      )}
+
+      {tab === "law" && (
+        <div className="panel-list">
+          <article className="cargo-summary">
+            <ShieldAlert size={18} aria-hidden="true" />
+            <span>
+              {Math.round(state.factions[state.playerFactionId].heat)} heat · {state.law.inspectionsToday} inspections today · ${Math.round(state.law.finesToday)} fines
+            </span>
+          </article>
+
+          <article className="vehicle-card">
+            <div className="vehicle-heading">
+              <ShieldAlert size={18} aria-hidden="true" />
+              <div>
+                <h3>Law pressure</h3>
+                <p>
+                  Next inspection window {formatClock(state.law.nextInspectionHour)} · {state.law.confiscatedUnitsToday} stock confiscated today
+                </p>
+              </div>
+            </div>
+            <div className="report-grid">
+              <span>Legal</span>
+              <strong>low heat</strong>
+              <span>Bribe</span>
+              <strong>medium heat</strong>
+              <span>Illegal</span>
+              <strong>high seizure</strong>
+              <span>Hidden</span>
+              <strong>low sales</strong>
+            </div>
+          </article>
+
+          {inspections.length === 0 ? (
+            <article className="inventory-row">
+              <div>
+                <h3>No active inspections</h3>
+                <p>Placement method, grey stock, heat, and police presence decide the next check.</p>
+              </div>
+              <strong>0</strong>
+            </article>
+          ) : (
+            inspections.map((inspection) => {
+              const machine = state.machines[inspection.machineId];
+              const location = state.locations[inspection.locationId];
+              return (
+                <article className="route-task danger" key={inspection.id}>
+                  <div>
+                    <h3>{machine?.name ?? "Machine"} inspection</h3>
+                    <p>
+                      {location?.name ?? "Unknown stop"} · {inspection.reason} · due {formatClock(inspection.deadlineHour)}
+                    </p>
+                    <p>
+                      ${inspection.fine} fine risk · {inspection.confiscatedUnits} stock at risk
+                    </p>
+                  </div>
+                  <div className="route-actions">
+                    <MiniButton onClick={() => onCommand({ type: "resolve_inspection", actorId: state.playerFactionId, inspectionId: inspection.id, resolution: "show_permit" })}>
+                      Show permit
+                    </MiniButton>
+                    <MiniButton onClick={() => onCommand({ type: "resolve_inspection", actorId: state.playerFactionId, inspectionId: inspection.id, resolution: "pay_fine" })}>
+                      Pay fine
+                    </MiniButton>
+                    <MiniButton onClick={() => onCommand({ type: "resolve_inspection", actorId: state.playerFactionId, inspectionId: inspection.id, resolution: "bribe" })}>
+                      Bribe
+                    </MiniButton>
                   </div>
                 </article>
               );

@@ -7,17 +7,20 @@ import type {
   FactionId,
   GameState,
   Inventory,
+  LawInspection,
   Location,
   LocationId,
   MachineAlarm,
   MachineId,
+  PlacementMethod,
+  PlacementQuote,
   ProductId,
   RouteVehicle,
   ServiceContract,
   VendingMachine
 } from "./types";
 
-export type RouteTaskType = "supplier" | "garage" | "stock" | "collect" | "repair" | "pressure" | "contract" | "alarm";
+export type RouteTaskType = "supplier" | "garage" | "placement" | "stock" | "collect" | "repair" | "pressure" | "contract" | "alarm" | "inspection";
 
 export interface RouteTask {
   id: string;
@@ -29,6 +32,7 @@ export interface RouteTask {
   contractId?: string;
   productId?: ProductId;
   alarmId?: string;
+  inspectionId?: string;
   priority: number;
   tone: "good" | "warning" | "danger";
 }
@@ -44,6 +48,18 @@ export function ownedMachines(state: GameState, factionId: FactionId): VendingMa
   return Object.values(state.machines).filter((machine) => machine.ownerFactionId === factionId);
 }
 
+export function isMachineInstalled(machine: VendingMachine): boolean {
+  return (machine.placementStatus ?? "installed") === "installed";
+}
+
+export function installedMachines(state: GameState, factionId?: FactionId): VendingMachine[] {
+  return Object.values(state.machines).filter((machine) => isMachineInstalled(machine) && (!factionId || machine.ownerFactionId === factionId));
+}
+
+export function storedPlayerMachines(state: GameState): VendingMachine[] {
+  return ownedMachines(state, state.playerFactionId).filter((machine) => !isMachineInstalled(machine));
+}
+
 export function employeeList(state: GameState): Employee[] {
   return Object.values(state.employees).sort((a, b) => a.employeeNumber - b.employeeNumber);
 }
@@ -57,7 +73,7 @@ export function dailyEmployeeWages(state: GameState): number {
 }
 
 export function machineAtLocation(state: GameState, locationId: LocationId): VendingMachine | undefined {
-  return Object.values(state.machines).find((machine) => machine.locationId === locationId);
+  return Object.values(state.machines).find((machine) => isMachineInstalled(machine) && machine.locationId === locationId);
 }
 
 export function installableLocation(location: Location): boolean {
@@ -88,6 +104,102 @@ export function isDistrictUnlockedForPlacement(state: GameState, districtId: Dis
 export function placementCostForLocation(state: GameState, location: Location): number {
   const district = state.districts[location.districtId];
   return Math.round(location.placementCost * (district?.rentMultiplier ?? 1));
+}
+
+const placementLabels: Record<PlacementMethod, string> = {
+  legal_contract: "Legal contract",
+  bribe: "Bribe",
+  illegal: "Illegal drop",
+  hidden: "Hidden alcove",
+  rival_territory: "Rival territory"
+};
+
+export function placementQuoteForLocation(state: GameState, location: Location, method: PlacementMethod): PlacementQuote {
+  const baseCost = placementCostForLocation(state, location);
+  const rivalPressure = location.rivalPressure;
+  const policePressure = location.policePresence;
+
+  if (method === "bribe") {
+    return {
+      method,
+      label: placementLabels[method],
+      cost: Math.max(12, Math.round(baseCost * 0.58 + policePressure * 28)),
+      heatDelta: 4,
+      visibilityDelta: 0,
+      securityDelta: 0,
+      publicReputationDelta: -0.4,
+      streetReputationDelta: 1,
+      rivalPressureDelta: 0.04,
+      inspectionRiskLabel: "medium",
+      description: "Cheaper paperwork, but every inspection has leverage over you."
+    };
+  }
+
+  if (method === "illegal") {
+    return {
+      method,
+      label: placementLabels[method],
+      cost: Math.max(0, Math.round(baseCost * 0.18)),
+      heatDelta: 8,
+      visibilityDelta: 0.08,
+      securityDelta: -0.04,
+      publicReputationDelta: -1,
+      streetReputationDelta: 2,
+      rivalPressureDelta: 0.08,
+      inspectionRiskLabel: "high",
+      description: "Fast and cheap with strong sales, heavy fines, and confiscation risk."
+    };
+  }
+
+  if (method === "hidden") {
+    return {
+      method,
+      label: placementLabels[method],
+      cost: Math.max(10, Math.round(baseCost * 0.72 + 10)),
+      heatDelta: 1,
+      visibilityDelta: -0.22,
+      securityDelta: 0.05,
+      publicReputationDelta: 0,
+      streetReputationDelta: 0,
+      rivalPressureDelta: -0.01,
+      inspectionRiskLabel: "low",
+      description: "Low profile and safer from inspections, but fewer customers notice it."
+    };
+  }
+
+  if (method === "rival_territory") {
+    return {
+      method,
+      label: placementLabels[method],
+      cost: Math.max(15, Math.round(baseCost * 0.45 + rivalPressure * 35)),
+      heatDelta: 6,
+      visibilityDelta: 0.02,
+      securityDelta: -0.05,
+      publicReputationDelta: -0.6,
+      streetReputationDelta: 3,
+      rivalPressureDelta: 0.18,
+      inspectionRiskLabel: rivalPressure >= 0.45 ? "extreme" : "high",
+      description: "A direct challenge to Redline. Good street rep, fast retaliation."
+    };
+  }
+
+  return {
+    method,
+    label: placementLabels[method],
+    cost: baseCost,
+    heatDelta: 0,
+    visibilityDelta: 0.03,
+    securityDelta: 0.03,
+    publicReputationDelta: 0.6,
+    streetReputationDelta: 0,
+    rivalPressureDelta: -0.02,
+    inspectionRiskLabel: "low",
+    description: "Permitted placement with the cleanest inspections and lowest heat."
+  };
+}
+
+export function placementQuotesForLocation(state: GameState, location: Location): PlacementQuote[] {
+  return (["legal_contract", "bribe", "illegal", "hidden", "rival_territory"] as PlacementMethod[]).map((method) => placementQuoteForLocation(state, location, method));
 }
 
 export function districtMachineCounts(
@@ -133,7 +245,7 @@ export function districtUnlockRequirements(state: GameState, districtId: Distric
   }
 
   const requirements: string[] = [];
-  const ownedCount = ownedMachines(state, state.playerFactionId).length;
+  const ownedCount = installedMachines(state, state.playerFactionId).length;
   const completedTotal = state.progression.contractsCompletedTotal ?? state.progression.contractsCompletedToday ?? 0;
   const streetReputation = state.factions[state.playerFactionId]?.streetReputation ?? 0;
 
@@ -256,7 +368,7 @@ export function activeContracts(state: GameState): ServiceContract[] {
 
 export function activeMachineAlarms(state: GameState): MachineAlarm[] {
   return Object.values(state.machineAlarms ?? {})
-    .filter((alarm) => !alarm.resolved && alarm.expiresHour > state.worldTimeHours && Boolean(state.machines[alarm.machineId]))
+    .filter((alarm) => !alarm.resolved && alarm.expiresHour > state.worldTimeHours && Boolean(state.machines[alarm.machineId]) && isMachineInstalled(state.machines[alarm.machineId]))
     .sort((a, b) => a.expiresHour - b.expiresHour);
 }
 
@@ -314,12 +426,26 @@ export function contractTone(state: GameState, contract: ServiceContract): "good
 }
 
 export function missionProgress(state: GameState): { ownedCount: number; profitableCount: number; target: number } {
-  const playerMachines = ownedMachines(state, state.playerFactionId);
+  const playerMachines = installedMachines(state, state.playerFactionId);
   return {
     ownedCount: playerMachines.length,
     profitableCount: playerMachines.filter((machine) => machine.revenueStored >= 20 || machine.slots.some((slot) => slot.quantity > 0)).length,
     target: 3
   };
+}
+
+export function activeLawInspections(state: GameState): LawInspection[] {
+  return Object.values(state.law?.activeInspections ?? {})
+    .filter((inspection) => inspection.status === "active" && Boolean(state.machines[inspection.machineId]))
+    .sort((a, b) => a.deadlineHour - b.deadlineHour);
+}
+
+export function activeInspectionForMachine(state: GameState, machineId: MachineId): LawInspection | undefined {
+  return activeLawInspections(state).find((inspection) => inspection.machineId === machineId);
+}
+
+export function repairCostForMachine(machine: VendingMachine): number {
+  return Math.ceil(10 + Math.min(35, machine.damage) * 0.45);
 }
 
 export function machineStockUnits(machine: VendingMachine): number {
@@ -374,6 +500,22 @@ export function routeTasks(state: GameState): RouteTask[] {
   const vehicle = activeVehicle(state);
   const player = state.factions[state.playerFactionId];
 
+  for (const inspection of activeLawInspections(state)) {
+    const machine = state.machines[inspection.machineId];
+    const minutesLeft = Math.max(1, Math.ceil((inspection.deadlineHour - state.worldTimeHours) * 60));
+    tasks.push({
+      id: `inspection:${inspection.id}`,
+      type: "inspection",
+      title: `Inspection at ${machine?.name ?? "machine"}`,
+      detail: `$${inspection.fine} fine risk · ${inspection.confiscatedUnits} stock at risk · ${minutesLeft}m to answer`,
+      locationId: inspection.locationId,
+      machineId: inspection.machineId,
+      inspectionId: inspection.id,
+      priority: 28,
+      tone: "danger"
+    });
+  }
+
   for (const alarm of activeMachineAlarms(state)) {
     const machine = state.machines[alarm.machineId];
     const intruder = state.factions[alarm.intruderFactionId];
@@ -393,6 +535,32 @@ export function routeTasks(state: GameState): RouteTask[] {
 
   if (!vehicle) {
     return tasks;
+  }
+
+  for (const machine of storedPlayerMachines(state)) {
+    if (machine.damage > 0) {
+      tasks.push({
+        id: `stored:${machine.id}:repair`,
+        type: "repair",
+        title: `Repair ${machine.name}`,
+        detail: `${Math.round(machine.damage)}% damage in garage before placement`,
+        locationId: "garage",
+        machineId: machine.id,
+        priority: 18,
+        tone: machine.damage >= 60 ? "danger" : "warning"
+      });
+    } else {
+      tasks.push({
+        id: `stored:${machine.id}:place`,
+        type: "placement",
+        title: `Place ${machine.name}`,
+        detail: "Foam & Fold is ready for the starter machine.",
+        locationId: "laundromat",
+        machineId: machine.id,
+        priority: 17,
+        tone: "good"
+      });
+    }
   }
 
   const garageUnits = garageStorageUnits(state);
@@ -440,7 +608,7 @@ export function routeTasks(state: GameState): RouteTask[] {
       title: `Deliver ${remaining}x ${product?.name ?? "stock"}`,
       detail: `${contract.title} · due by ${formatClock(contract.deadlineHour)} · ${Math.max(0, Math.ceil(hoursLeft))}h left`,
       locationId: contract.locationId,
-      machineId: Object.values(state.machines).find((machine) => machine.ownerFactionId === state.playerFactionId && machine.locationId === contract.locationId)?.id,
+      machineId: machineAtLocation(state, contract.locationId)?.id,
       contractId: contract.id,
       productId: contract.productId,
       priority: tone === "danger" ? 12 : tone === "warning" ? 9 : 5,
@@ -448,7 +616,7 @@ export function routeTasks(state: GameState): RouteTask[] {
     });
   }
 
-  for (const machine of ownedMachines(state, state.playerFactionId)) {
+  for (const machine of installedMachines(state, state.playerFactionId)) {
     const location = state.locations[machine.locationId];
     const pressure = machineRoutePressure(state, machine);
     const stock = machineStockUnits(machine);

@@ -8,7 +8,27 @@ function visit(locationId: LocationId): GameCommand {
   return { type: "set_player_location", actorId: "player", locationId };
 }
 
+function withInstalledStarter() {
+  const state = createInitialState();
+  state.machines.machine_player_1.locationId = "laundromat";
+  state.machines.machine_player_1.placementStatus = "installed";
+  state.machines.machine_player_1.placementMethod = "legal_contract";
+  state.machines.machine_player_1.damage = 0;
+  state.progression.starterMachinePlaced = true;
+  return state;
+}
+
 describe("primary interactions", () => {
+  it("starts with garage repair as the base primary action", () => {
+    const action = getPrimaryInteraction(createInitialState(), { type: "base", id: "garage", label: "Storage Garage" });
+
+    expect(action?.kind).toBe("command");
+    expect(action?.label).toBe("Repair Rusty Starter");
+    if (action?.kind === "command") {
+      expect(action.command.type).toBe("repair_machine");
+    }
+  });
+
   it("recommends buying supplier stock", () => {
     const state = createInitialState();
     const action = getPrimaryInteraction(state, { type: "supplier", id: "supplier", label: "Backdoor Supplier" });
@@ -18,7 +38,7 @@ describe("primary interactions", () => {
   });
 
   it("prioritizes stocking an owned machine when cargo is available", () => {
-    const state = reduceCommands(createInitialState(), [
+    const state = reduceCommands(withInstalledStarter(), [
       visit("supplier"),
       { type: "buy_product", actorId: "player", productId: "soda", quantity: 5 }
     ]).state;
@@ -46,7 +66,7 @@ describe("primary interactions", () => {
   });
 
   it("loads stored garage crates when hands are free", () => {
-    const state = reduceCommands(createInitialState(), [
+    const state = reduceCommands(withInstalledStarter(), [
       visit("supplier"),
       { type: "buy_product", actorId: "player", productId: "soda", quantity: 5 },
       visit("garage"),
@@ -62,7 +82,7 @@ describe("primary interactions", () => {
   });
 
   it("uses nearby van stock as a machine primary action when hands are free", () => {
-    const state = reduceCommands(createInitialState(), [
+    const state = reduceCommands(withInstalledStarter(), [
       visit("supplier"),
       { type: "buy_product", actorId: "player", productId: "soda", quantity: 10 },
       visit("garage"),
@@ -103,7 +123,9 @@ describe("primary interactions", () => {
   });
 
   it("repairs a stocked damaged machine before adding leftover cargo", () => {
-    const state = reduceCommands(createInitialState(), [
+    const initial = withInstalledStarter();
+    initial.machines.machine_player_1.damage = 35;
+    const state = reduceCommands(initial, [
       visit("supplier"),
       { type: "buy_product", actorId: "player", productId: "soda", quantity: 10 },
       visit("laundromat"),

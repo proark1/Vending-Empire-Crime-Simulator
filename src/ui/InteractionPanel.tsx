@@ -19,7 +19,9 @@ import {
   machineAtLocation,
   machineRoutePressure,
   machineStockUnits,
-  placementCostForLocation,
+  placementQuotesForLocation,
+  repairCostForMachine,
+  storedPlayerMachines,
   vehicleInventoryUnits,
   vehicleSpaceRemaining
 } from "../game/core/selectors";
@@ -106,6 +108,7 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
     const storageRemaining = garageStorageSpaceRemaining(state);
     const vehicle = activeVehicle(state);
     const contractNeeds = contractNeedByProduct(state);
+    const storedMachines = storedPlayerMachines(state);
 
     return (
       <section className="interaction-panel">
@@ -114,6 +117,37 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
           <div className="primary-hint">
             <kbd>E</kbd>
             <span>{primaryInteraction.label}</span>
+          </div>
+        )}
+        {storedMachines.length > 0 && (
+          <div className="machine-section">
+            <div className="section-title">
+              <Wrench size={16} aria-hidden="true" />
+              <span>Garage machines</span>
+              <em>{storedMachines.length}</em>
+            </div>
+            <div className="storage-list">
+              {storedMachines.map((machine) => {
+                const cost = repairCostForMachine(machine);
+                return (
+                  <article className="inventory-row" key={machine.id}>
+                    <div>
+                      <h3>{machine.name}</h3>
+                      <p>
+                        Stored for placement · {Math.round(machine.damage)}% damage · {machine.damage > 0 ? `$${cost} repair` : "ready for Foam & Fold"}
+                      </p>
+                    </div>
+                    <ActionButton
+                      disabled={machine.damage <= 0 || player.money < cost}
+                      icon={<Wrench size={17} aria-hidden="true" />}
+                      onClick={() => onCommand({ type: "repair_machine", actorId: state.playerFactionId, machineId: machine.id })}
+                    >
+                      Repair
+                    </ActionButton>
+                  </article>
+                );
+              })}
+            </div>
           </div>
         )}
         <div className="machine-section">
@@ -283,8 +317,10 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
     const unlocked = isDistrictUnlockedForPlacement(state, location.districtId);
     const district = state.districts[location.districtId];
     const unlockInfo = districtUnlockInfo(state, location.districtId);
-    const placementCost = placementCostForLocation(state, location);
     const unmetRequirements = unlockInfo.unmetRequirements.join(" · ");
+    const placementQuotes = placementQuotesForLocation(state, location);
+    const storedMachine = storedPlayerMachines(state)[0];
+    const storedBlocked = Boolean(storedMachine && storedMachine.damage > 0);
     return (
       <section className="interaction-panel">
         <h2>{location.name}</h2>
@@ -320,15 +356,42 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
             </ActionButton>
           )}
           {unlocked && (
-            <ActionButton
-              disabled={occupied || player.money < placementCost}
-              icon={<PackagePlus size={17} aria-hidden="true" />}
-              onClick={() => onCommand({ type: "place_machine", actorId: state.playerFactionId, locationId: location.id })}
-            >
-              Install ${placementCost}
-            </ActionButton>
+            placementQuotes.map((quote) => (
+              <ActionButton
+                disabled={occupied || player.money < quote.cost || storedBlocked}
+                icon={<PackagePlus size={17} aria-hidden="true" />}
+                key={quote.method}
+                onClick={() =>
+                  onCommand({
+                    type: "place_machine",
+                    actorId: state.playerFactionId,
+                    locationId: location.id,
+                    method: quote.method,
+                    machineId: storedMachine?.id
+                  })
+                }
+              >
+                {quote.label} ${quote.cost}
+              </ActionButton>
+            ))
           )}
         </div>
+        {unlocked && (
+          <div className="placement-method-list">
+            {placementQuotes.map((quote) => (
+              <article className={`placement-method ${quote.inspectionRiskLabel}`} key={quote.method}>
+                <div>
+                  <h3>{quote.label}</h3>
+                  <p>{quote.description}</p>
+                </div>
+                <strong>
+                  {quote.heatDelta > 0 ? `+${quote.heatDelta} heat` : "clean"} · {quote.inspectionRiskLabel} risk
+                </strong>
+              </article>
+            ))}
+          </div>
+        )}
+        {storedBlocked && <p className="empty-note">Repair {storedMachine?.name} at the garage before placing it.</p>}
         {!unlocked && <p className="empty-note">{unmetRequirements ? `Needs ${unmetRequirements}.` : "Scout and open this area before installing machines."}</p>}
       </section>
     );

@@ -1,24 +1,30 @@
 import type { GameState, LocationId, Vec2 } from "./types";
 import {
+  activeAlarmForMachine,
   carriedCrateUnits,
   districtUnlockInfo,
   garageStorageUnits,
+  installedMachines,
   installableLocation,
   isDistrictUnlockedForPlacement,
   machineAtLocation,
   missionProgress,
-  ownedMachines,
   placementCostForLocation,
   totalOwnedStockUnits
 } from "./selectors";
 
 export type MissionStepId =
+  | "repair_starter"
+  | "install_laundromat"
   | "buy_stock"
   | "deposit_stock"
   | "load_crate"
   | "stock_machine"
   | "repair_machine"
   | "collect_cash"
+  | "answer_undercut"
+  | "answer_retaliation"
+  | "respond_undercut"
   | "install_second"
   | "install_third"
   | "scout_industrial"
@@ -76,23 +82,25 @@ function hasAffordableOpenPlacement(state: GameState): boolean {
 }
 
 function playerOwnsMachineInDistrict(state: GameState, districtId: string): boolean {
-  return ownedMachines(state, state.playerFactionId).some((machine) => state.locations[machine.locationId]?.districtId === districtId);
+  return installedMachines(state, state.playerFactionId).some((machine) => state.locations[machine.locationId]?.districtId === districtId);
 }
 
 function highestStoredRevenueLocation(state: GameState): LocationId | undefined {
-  return ownedMachines(state, state.playerFactionId)
+  return installedMachines(state, state.playerFactionId)
     .slice()
     .sort((a, b) => b.revenueStored - a.revenueStored)[0]?.locationId;
 }
 
 export function getStarterMissionStep(state: GameState, playerPosition: Vec2): MissionStep {
   const firstMachine = state.machines.machine_player_1;
-  const playerMachines = ownedMachines(state, state.playerFactionId);
+  const playerMachines = installedMachines(state, state.playerFactionId);
   const carriedUnits = carriedCrateUnits(state);
   const storageUnits = garageStorageUnits(state);
   const stockUnits = totalOwnedStockUnits(state);
   const starterStock = firstMachine.slots.reduce((sum, slot) => sum + slot.quantity, 0);
   const starterHasEverBeenStocked = firstMachine.slots.length > 0;
+  const starterInstalled = (firstMachine.placementStatus ?? "installed") === "installed";
+  const starterAlarm = activeAlarmForMachine(state, firstMachine.id);
   const progress = missionProgress(state);
   const industrialInfo = districtUnlockInfo(state, "industrial_yards");
   const freightDepot = state.locations.freight_depot;
@@ -183,6 +191,66 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
     };
   }
 
+  if (!starterInstalled && firstMachine.damage > 0) {
+    return {
+      id: "repair_starter",
+      title: "Repair Rusty Starter",
+      objective: "Fix the machine in your garage before placing it.",
+      guidance: "Face Storage Garage and press E to repair the starter machine.",
+      targetLocationId: "garage",
+      progressLabel: "Step 1 / 10",
+      progressRatio: 1 / 10
+    };
+  }
+
+  if (!starterInstalled) {
+    return {
+      id: "install_laundromat",
+      title: "Place at Foam & Fold",
+      objective: "Install Rusty Starter at the laundromat.",
+      guidance: "Follow the green ping to Foam & Fold and choose a placement method.",
+      targetLocationId: "laundromat",
+      progressLabel: "Step 2 / 10",
+      progressRatio: 2 / 10
+    };
+  }
+
+  if (starterAlarm?.kind === "undercut") {
+    return {
+      id: "answer_undercut",
+      title: "Stop Redline's undercut",
+      objective: "Confront the undercut crew before the laundromat route loses ground.",
+      guidance: "Get to Foam & Fold and press E at Rusty Starter before the alarm expires.",
+      targetLocationId: firstMachine.locationId,
+      progressLabel: "Step 8 / 10",
+      progressRatio: 8 / 10
+    };
+  }
+
+  if (starterAlarm?.kind === "sabotage") {
+    return {
+      id: "answer_retaliation",
+      title: "Survive retaliation",
+      objective: "Stop Redline's retaliation at Rusty Starter.",
+      guidance: "Get to Foam & Fold and press E to fight the intruder.",
+      targetLocationId: firstMachine.locationId,
+      progressLabel: "Step 9 / 10",
+      progressRatio: 9 / 10
+    };
+  }
+
+  if (state.progression.firstUndercutTriggered && !state.progression.firstRetaliationTriggered) {
+    return {
+      id: "respond_undercut",
+      title: "Retaliate or hold legal",
+      objective: "Answer Redline's price pressure without losing the route.",
+      guidance: "Hit Redline's corner unit for street rep, or keep the laundromat clean and wait out the pressure.",
+      targetLocationId: "rival_corner",
+      progressLabel: "Step 8 / 10",
+      progressRatio: 8 / 10
+    };
+  }
+
   if (stockUnits === 0 && !starterHasEverBeenStocked) {
     return {
       id: "buy_stock",
@@ -190,8 +258,8 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
       objective: "Pick up a starter crate from Backdoor Supplier.",
       guidance: "Follow the yellow ping to the supplier and press E to buy one crate.",
       targetLocationId: "supplier",
-      progressLabel: "Step 1 / 8",
-      progressRatio: 1 / 8
+      progressLabel: "Step 3 / 10",
+      progressRatio: 3 / 10
     };
   }
 
@@ -202,8 +270,8 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
       objective: "Store the supplier crate at your garage.",
       guidance: "Carry the crate to Storage Garage and press E to stash it.",
       targetLocationId: "garage",
-      progressLabel: "Step 2 / 8",
-      progressRatio: 2 / 8
+      progressLabel: "Step 4 / 10",
+      progressRatio: 4 / 10
     };
   }
 
@@ -214,8 +282,8 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
       objective: "Take one crate from garage storage.",
       guidance: "Face Storage Garage and press E to carry a crate for the route.",
       targetLocationId: "garage",
-      progressLabel: "Step 3 / 8",
-      progressRatio: 3 / 8
+      progressLabel: "Step 5 / 10",
+      progressRatio: 5 / 10
     };
   }
 
@@ -226,8 +294,8 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
       objective: "Stock your first vending machine at Foam & Fold.",
       guidance: "Carry the crate to Rusty Starter and press E to load it.",
       targetLocationId: firstMachine.locationId,
-      progressLabel: "Step 4 / 8",
-      progressRatio: 4 / 8
+      progressLabel: "Step 6 / 10",
+      progressRatio: 6 / 10
     };
   }
 
@@ -238,8 +306,8 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
       objective: "Repair Rusty Starter before rivals exploit it.",
       guidance: "Face the machine and press E to spend cash on repairs.",
       targetLocationId: firstMachine.locationId,
-      progressLabel: "Step 5 / 8",
-      progressRatio: 5 / 8
+      progressLabel: "Step 7 / 10",
+      progressRatio: 7 / 10
     };
   }
 
@@ -250,8 +318,8 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
       objective: "Install a second machine at an open placement.",
       guidance: "Follow the green ping to a placement pad and press E.",
       targetLocationId: nearestOpenPlacement(state, playerPosition),
-      progressLabel: "Step 7 / 8",
-      progressRatio: 7 / 8
+      progressLabel: "Step 10 / 10",
+      progressRatio: 0.9
     };
   }
 
@@ -263,7 +331,7 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
       guidance: "Stay close to the machine or scout the block while revenue builds.",
       targetLocationId: firstMachine.locationId,
       progressLabel: `$${Math.round(firstMachine.revenueStored)} / $25 stored`,
-      progressRatio: Math.min(6 / 8, 5 / 8 + firstMachine.revenueStored / 200)
+      progressRatio: Math.min(7.5 / 10, 7 / 10 + firstMachine.revenueStored / 250)
     };
   }
 
@@ -274,8 +342,8 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
       objective: "Install a second machine at an open placement.",
       guidance: "Follow the green ping to a placement pad and press E.",
       targetLocationId: nearestOpenPlacement(state, playerPosition),
-      progressLabel: "Step 7 / 8",
-      progressRatio: 7 / 8
+      progressLabel: "Step 10 / 10",
+      progressRatio: 0.9
     };
   }
 

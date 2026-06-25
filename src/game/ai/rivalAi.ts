@@ -1,6 +1,6 @@
 import type { GameCommand, GameState } from "../core/types";
 import { effectiveMachineSecurity, getMachineUpgradeEffects } from "../core/machineStats";
-import { districtProgress, installableLocation, isDistrictUnlockedForPlacement, machineAtLocation, ownedMachines, placementCostForLocation } from "../core/selectors";
+import { districtProgress, installedMachines, installableLocation, isDistrictUnlockedForPlacement, machineAtLocation, placementCostForLocation } from "../core/selectors";
 import { mostProfitablePlayerMachine } from "../systems/reducer";
 
 function hasExpansionSignal(state: GameState): boolean {
@@ -42,8 +42,8 @@ export function planNpcCommands(state: GameState): GameCommand[] {
       .filter((location) => !machineAtLocation(state, location.id))
       .sort((a, b) => b.footTraffic + b.rivalPressure + expansionScore(state, b.districtId) - (a.footTraffic + a.rivalPressure + expansionScore(state, a.districtId)))[0];
 
-    const playerMachineCount = ownedMachines(state, state.playerFactionId).length;
-    const rivalMachineCount = ownedMachines(state, faction.id).length;
+    const playerMachineCount = installedMachines(state, state.playerFactionId).length;
+    const rivalMachineCount = installedMachines(state, faction.id).length;
 
     const targetEffects = target ? getMachineUpgradeEffects(target) : undefined;
     const targetSecurity = target ? effectiveMachineSecurity(target) : 0;

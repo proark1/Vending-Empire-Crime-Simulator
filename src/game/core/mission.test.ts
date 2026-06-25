@@ -10,16 +10,36 @@ function visit(locationId: LocationId): GameCommand {
   return { type: "set_player_location", actorId: "player", locationId };
 }
 
+function placeStarterState() {
+  return reduceCommands(createInitialState(), [
+    visit("garage"),
+    { type: "repair_machine", actorId: "player", machineId: "machine_player_1" },
+    visit("laundromat"),
+    { type: "place_machine", actorId: "player", locationId: "laundromat", machineId: "machine_player_1", method: "legal_contract" }
+  ]).state;
+}
+
 describe("starter mission flow", () => {
-  it("starts by guiding the player to the supplier", () => {
+  it("starts by guiding the player to repair the garage machine", () => {
     const step = getStarterMissionStep(createInitialState(), startPosition);
 
-    expect(step.id).toBe("buy_stock");
-    expect(step.targetLocationId).toBe("supplier");
+    expect(step.id).toBe("repair_starter");
+    expect(step.targetLocationId).toBe("garage");
+  });
+
+  it("guides the repaired starter to Foam & Fold", () => {
+    const state = reduceCommands(createInitialState(), [
+      visit("garage"),
+      { type: "repair_machine", actorId: "player", machineId: "machine_player_1" }
+    ]).state;
+    const step = getStarterMissionStep(state, startPosition);
+
+    expect(step.id).toBe("install_laundromat");
+    expect(step.targetLocationId).toBe("laundromat");
   });
 
   it("guides supplier crates to the garage first", () => {
-    const state = reduceCommands(createInitialState(), [
+    const state = reduceCommands(placeStarterState(), [
       visit("supplier"),
       { type: "buy_product", actorId: "player", productId: "soda", quantity: 5 }
     ]).state;
@@ -30,7 +50,7 @@ describe("starter mission flow", () => {
   });
 
   it("guides stored stock into a carried route crate", () => {
-    const state = reduceCommands(createInitialState(), [
+    const state = reduceCommands(placeStarterState(), [
       visit("supplier"),
       { type: "buy_product", actorId: "player", productId: "soda", quantity: 5 },
       visit("garage"),
@@ -43,7 +63,7 @@ describe("starter mission flow", () => {
   });
 
   it("guides garage-loaded crates to the first machine", () => {
-    const state = reduceCommands(createInitialState(), [
+    const state = reduceCommands(placeStarterState(), [
       visit("supplier"),
       { type: "buy_product", actorId: "player", productId: "soda", quantity: 5 },
       visit("garage"),
@@ -56,8 +76,8 @@ describe("starter mission flow", () => {
     expect(step.targetLocationId).toBe("laundromat");
   });
 
-  it("progresses to repair after the starter machine has stock", () => {
-    const state = reduceCommands(createInitialState(), [
+  it("progresses to first cash after the repaired starter has stock", () => {
+    const state = reduceCommands(placeStarterState(), [
       visit("supplier"),
       { type: "buy_product", actorId: "player", productId: "soda", quantity: 5 },
       visit("laundromat"),
@@ -65,25 +85,23 @@ describe("starter mission flow", () => {
     ]).state;
     const step = getStarterMissionStep(state, startPosition);
 
-    expect(step.id).toBe("repair_machine");
+    expect(step.id).toBe("collect_cash");
   });
 
-  it("targets an affordable second placement after the first cash run", () => {
-    const state = reduceCommands(createInitialState(), [
+  it("surfaces Redline undercut after the first cash run", () => {
+    const state = reduceCommands(placeStarterState(), [
       visit("supplier"),
       { type: "buy_product", actorId: "player", productId: "soda", quantity: 10 },
       visit("laundromat"),
       { type: "stock_machine", actorId: "player", machineId: "machine_player_1", productId: "soda", quantity: 10 },
-      { type: "repair_machine", actorId: "player", machineId: "machine_player_1" },
       { type: "advance_time", actorId: "player", hours: 10 },
       { type: "collect_revenue", actorId: "player", machineId: "machine_player_1" }
     ]).state;
 
     const step = getStarterMissionStep(state, { x: -5, z: -5 });
 
-    expect(step.id).toBe("install_second");
-    expect(step.targetLocationId).toBe("gym");
-    expect(state.factions.player.money).toBeGreaterThanOrEqual(state.locations.gym.placementCost);
+    expect(["answer_undercut", "answer_retaliation"]).toContain(step.id);
+    expect(step.targetLocationId).toBe("laundromat");
   });
 
   it("guides a claimed starter route toward scouting Iron Yard", () => {
@@ -106,8 +124,13 @@ describe("starter mission flow", () => {
       ...state.machines.machine_player_1,
       id: "machine_player_2",
       name: "Second Starter",
-      locationId: "gym"
+      locationId: "gym",
+      placementStatus: "installed",
+      placementMethod: "legal_contract"
     };
+    state.machines.machine_player_1.locationId = "laundromat";
+    state.machines.machine_player_1.placementStatus = "installed";
+    state.machines.machine_player_1.placementMethod = "legal_contract";
     state.districtProgress.industrial_yards = {
       access: "scouted",
       districtId: "industrial_yards",

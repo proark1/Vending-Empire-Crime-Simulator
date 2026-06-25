@@ -1061,6 +1061,52 @@ kbd {
   gap: 7px;
 }
 
+.placement-method-list {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.placement-method {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 9px;
+  border: 1px solid rgba(226, 232, 240, 0.12);
+  border-radius: 8px;
+  background: rgba(30, 41, 59, 0.66);
+}
+
+.placement-method h3 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.placement-method p {
+  margin-top: 3px;
+  font-size: 12px;
+}
+
+.placement-method strong {
+  color: #bae6fd;
+  font-size: 11px;
+  line-height: 1.2;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.placement-method.medium,
+.placement-method.high {
+  border-color: rgba(251, 191, 36, 0.3);
+}
+
+.placement-method.extreme {
+  border-color: rgba(251, 113, 133, 0.38);
+}
+
 .storage-list .inventory-row {
   align-items: center;
 }

@@ -7,9 +7,11 @@ import type {
   GameEvent,
   GameEventTone,
   GameState,
+  LawInspection,
   Location,
   MachineSlot,
   MachineAlarmKind,
+  PlacementMethod,
   ProductId,
   ServiceContract,
   StreetActivity,
@@ -19,17 +21,23 @@ import type {
 import {
   activeContracts,
   activeAlarmForMachine,
+  activeLawInspections,
   cargoSpaceRemaining,
   contractRemainingQuantity,
   districtUnlockInfo,
   garageStorageSpaceRemaining,
   inventoryUnits,
+  installedMachines,
+  isMachineInstalled,
   isDistrictUnlockedForPlacement,
   machineAtLocation,
   machineStockUnits,
   missionProgress,
   ownedMachines,
+  placementQuoteForLocation,
   placementCostForLocation,
+  repairCostForMachine,
+  storedPlayerMachines,
   vehicleSpaceRemaining
 } from "../core/selectors";
 import { machineUpgrades } from "../content/machineUpgrades";
@@ -38,6 +46,9 @@ import { machineHasUpgrade, sabotageDamage } from "../core/machineStats";
 import { runMachineSales } from "./economy";
 
 const MACHINE_ALARM_RESPONSE_HOURS = 0.85;
+const INSPECTION_RESPONSE_HOURS = 1.1;
+const STARTER_MACHINE_ID = "machine_player_1";
+const STARTER_LOCATION_ID = "laundromat";
 
 function cloneState(state: GameState): GameState {
   return structuredClone(state) as GameState;
@@ -61,6 +72,29 @@ function ensureStreetLifeState(state: GameState): void {
     recentActivities: []
   };
   state.streetLife.recentActivities ??= [];
+}
+
+function ensureLawState(state: GameState): void {
+  state.law ??= {
+    inspectionSequence: 1,
+    nextInspectionHour: state.worldTimeHours + 4,
+    activeInspections: {},
+    inspectionsToday: 0,
+    finesToday: 0,
+    confiscatedUnitsToday: 0,
+    lastInspectionHour: 0
+  };
+  state.law.activeInspections ??= {};
+  state.law.inspectionSequence ??= 1;
+  state.law.nextInspectionHour ??= state.worldTimeHours + 4;
+  state.law.inspectionsToday ??= 0;
+  state.law.finesToday ??= 0;
+  state.law.confiscatedUnitsToday ??= 0;
+  state.law.lastInspectionHour ??= 0;
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
 }
 
 function logStreetActivity(state: GameState, events: GameEvent[], activity: Omit<StreetActivity, "hour" | "id">): void {
@@ -133,7 +167,7 @@ function getOrCreateSlot(machine: VendingMachine, productId: ProductId, basePric
   return slot;
 }
 
-function createMachine(state: GameState, ownerFactionId: FactionId, locationId: string): VendingMachine {
+function createMachine(state: GameState, ownerFactionId: FactionId, locationId: string, placementMethod: PlacementMethod = "legal_contract"): VendingMachine {
   const id = `machine_${ownerFactionId}_${state.nextMachineNumber++}`;
   const location = state.locations[locationId];
   const machine: VendingMachine = {
@@ -141,6 +175,8 @@ function createMachine(state: GameState, ownerFactionId: FactionId, locationId: 
     name: ownerFactionId === state.playerFactionId ? `Street Unit ${state.nextMachineNumber - 1}` : `Redline Unit ${state.nextMachineNumber - 1}`,
     ownerFactionId,
     locationId,
+    placementStatus: "installed",
+    placementMethod,
     slots: [],
     maxSlots: 3,
     revenueStored: 0,
@@ -312,6 +348,9 @@ function expireMachineAlarm(state: GameState, events: GameEvent[], alarmId: stri
   alarm.resolvedHour = state.worldTimeHours;
   alarm.outcome = "missed";
   log(state, events, `Alarm missed: ${intruder?.name ?? "The intruder"} finished the job on ${machine.name}.`, "danger");
+  if (alarm.kind === "undercut" && machine.id === STARTER_MACHINE_ID) {
+    triggerStarterRetaliation(state, events, "Redline saw the laundromat route go unanswered");
+  }
 }
 
 function resolveExpiredMachineAlarms(state: GameState, events: GameEvent[]): void {
@@ -320,6 +359,242 @@ function resolveExpiredMachineAlarms(state: GameState, events: GameEvent[]): voi
       expireMachineAlarm(state, events, alarm.id);
     }
   }
+}
+
+function removeStockUnitsFromMachine(machine: VendingMachine, units: number): number {
+  let remaining = Math.max(0, Math.round(units));
+  let removed = 0;
+  const sortedSlots = machine.slots.slice().sort((a, b) => b.quantity - a.quantity);
+
+  for (const slot of sortedSlots) {
+    if (remaining <= 0) {
+      break;
+    }
+
+    const taken = Math.min(slot.quantity, remaining);
+    slot.quantity -= taken;
+    remaining -= taken;
+    removed += taken;
+  }
+
+  machine.slots = machine.slots.filter((slot) => slot.quantity > 0);
+  return removed;
+}
+
+function finishInspection(
+  state: GameState,
+  events: GameEvent[],
+  inspection: LawInspection,
+  status: "resolved" | "missed",
+  message: string,
+  tone: GameEventTone = "warning"
+): void {
+  inspection.status = status;
+  inspection.resolvedHour = state.worldTimeHours;
+  state.law.lastInspectionHour = state.worldTimeHours;
+  log(state, events, message, tone);
+}
+
+function missInspection(state: GameState, events: GameEvent[], inspection: LawInspection): void {
+  if (inspection.status !== "active") {
+    return;
+  }
+
+  const player = state.factions[state.playerFactionId];
+  const machine = state.machines[inspection.machineId];
+  const location = state.locations[inspection.locationId];
+  const paid = Math.min(player.money, inspection.fine);
+  player.money -= paid;
+  player.heat += inspection.severity * 1.8;
+  player.publicReputation = Math.max(0, player.publicReputation - 1);
+  state.law.finesToday += inspection.fine;
+
+  let confiscated = 0;
+  if (machine) {
+    confiscated = removeStockUnitsFromMachine(machine, inspection.confiscatedUnits);
+    machine.heat = Math.max(0, machine.heat - inspection.severity * 0.25);
+    machine.lastInspectedHour = state.worldTimeHours;
+  }
+
+  state.law.confiscatedUnitsToday += confiscated;
+  if (location) {
+    location.rivalPressure = Math.min(1, location.rivalPressure + 0.05);
+  }
+
+  finishInspection(
+    state,
+    events,
+    inspection,
+    "missed",
+    `Inspection missed: $${inspection.fine} fine posted and ${confiscated} stock confiscated.`,
+    "danger"
+  );
+}
+
+function resolveExpiredInspections(state: GameState, events: GameEvent[]): void {
+  ensureLawState(state);
+  for (const inspection of activeLawInspections(state)) {
+    if (inspection.deadlineHour <= state.worldTimeHours) {
+      missInspection(state, events, inspection);
+    }
+  }
+}
+
+function placementRiskScore(method: PlacementMethod): number {
+  if (method === "legal_contract") {
+    return 0.2;
+  }
+
+  if (method === "hidden") {
+    return 0.45;
+  }
+
+  if (method === "bribe") {
+    return 1.25;
+  }
+
+  if (method === "rival_territory") {
+    return 1.75;
+  }
+
+  return 2.2;
+}
+
+function inspectionRiskScore(state: GameState, machine: VendingMachine): number {
+  const location = state.locations[machine.locationId];
+  if (!location || !isMachineInstalled(machine)) {
+    return 0;
+  }
+
+  const stockRisk = machine.slots.reduce((sum, slot) => {
+    const product = state.products[slot.productId];
+    return sum + (product?.legality ?? 0) * 1.3 + (product?.heat ?? 0) * 0.22;
+  }, 0);
+  const heatRisk = machine.heat * 0.38 + (state.factions[machine.ownerFactionId]?.heat ?? 0) * 0.08;
+  const policingRisk = location.policePresence * 5 + Math.max(0, 1 - location.safety) * 1.5;
+  const visibilityRisk = Math.max(0.2, machine.visibility) * 0.55;
+
+  return stockRisk + heatRisk + policingRisk + visibilityRisk + placementRiskScore(machine.placementMethod ?? "legal_contract");
+}
+
+function inspectionReason(machine: VendingMachine): string {
+  if (machine.placementMethod === "illegal") {
+    return "unpermitted placement";
+  }
+
+  if (machine.placementMethod === "bribe") {
+    return "paperwork mismatch";
+  }
+
+  if (machine.placementMethod === "rival_territory") {
+    return "territory complaint";
+  }
+
+  if (machine.placementMethod === "hidden") {
+    return "concealed alcove check";
+  }
+
+  return "routine permit check";
+}
+
+function chooseInspectionTarget(state: GameState): VendingMachine | undefined {
+  return installedMachines(state, state.playerFactionId)
+    .filter((machine) => !activeLawInspections(state).some((inspection) => inspection.machineId === machine.id))
+    .map((machine) => ({ machine, score: inspectionRiskScore(state, machine) }))
+    .filter(({ score }) => score >= 2.5)
+    .sort((a, b) => b.score - a.score)[0]?.machine;
+}
+
+function createInspection(state: GameState, events: GameEvent[], machine: VendingMachine): void {
+  ensureLawState(state);
+  const location = state.locations[machine.locationId];
+  const severity = Math.max(1, Math.min(5, Math.ceil(inspectionRiskScore(state, machine) / 2.5)));
+  const inspection: LawInspection = {
+    id: `inspection_${state.law.inspectionSequence++}`,
+    machineId: machine.id,
+    locationId: machine.locationId,
+    startedHour: state.worldTimeHours,
+    deadlineHour: state.worldTimeHours + INSPECTION_RESPONSE_HOURS,
+    severity,
+    status: "active",
+    fine: Math.round(14 + severity * 11 + location.policePresence * 18),
+    confiscatedUnits: Math.min(machineStockUnits(machine), Math.max(1, Math.round(2 + severity * 1.5))),
+    reason: inspectionReason(machine)
+  };
+  state.law.activeInspections[inspection.id] = inspection;
+  state.law.inspectionsToday += 1;
+  machine.lastInspectedHour = state.worldTimeHours;
+  log(state, events, `Inspection notice at ${machine.name}: ${inspection.reason}. Answer before fines and confiscation.`, "warning");
+}
+
+function scheduleNextInspection(state: GameState): void {
+  const playerHeat = state.factions[state.playerFactionId]?.heat ?? 0;
+  const heatCompression = Math.min(2.2, playerHeat * 0.08);
+  const sequenceOffset = (state.law.inspectionSequence % 4) * 0.35;
+  state.law.nextInspectionHour = state.worldTimeHours + Math.max(1.6, 4.8 - heatCompression + sequenceOffset);
+}
+
+function applyLawInspections(state: GameState, events: GameEvent[]): void {
+  ensureLawState(state);
+  resolveExpiredInspections(state, events);
+
+  if (state.law.nextInspectionHour > state.worldTimeHours) {
+    return;
+  }
+
+  const target = chooseInspectionTarget(state);
+  if (target) {
+    createInspection(state, events, target);
+  }
+
+  scheduleNextInspection(state);
+}
+
+function starterMachine(state: GameState): VendingMachine | undefined {
+  return state.machines[STARTER_MACHINE_ID];
+}
+
+function triggerStarterRetaliation(state: GameState, events: GameEvent[], reason: string): void {
+  if (state.progression.firstRetaliationTriggered) {
+    return;
+  }
+
+  const machine = starterMachine(state);
+  if (!machine || !isMachineInstalled(machine)) {
+    return;
+  }
+
+  state.progression.firstRetaliationTriggered = true;
+  log(state, events, `Redline retaliation triggered: ${reason}.`, "danger");
+  createMachineAlarm(state, events, machine, "rival_redline", "sabotage", 22);
+}
+
+function maybeTriggerStarterUndercut(state: GameState, events: GameEvent[], playerEarned = 0): void {
+  if (state.progression.firstUndercutTriggered) {
+    return;
+  }
+
+  const machine = starterMachine(state);
+  if (!machine || !isMachineInstalled(machine) || machine.locationId !== STARTER_LOCATION_ID) {
+    return;
+  }
+
+  const hasFirstCashSignal = machine.revenueStored >= 18 || state.progression.revenueCollectedToday >= 18 || playerEarned >= 18 || state.progression.contractsCompletedToday > 0;
+  if (!hasFirstCashSignal) {
+    return;
+  }
+
+  const rival = state.factions.rival_redline;
+  const location = state.locations[machine.locationId];
+  state.progression.firstUndercutTriggered = true;
+  if (location) {
+    location.rivalPressure = Math.min(1, location.rivalPressure + 0.28);
+  }
+  if (rival) {
+    rival.money = Math.max(0, rival.money - 12);
+  }
+  log(state, events, "Redline undercut your laundromat route with cut-rate stickers and supplier rumors.", "warning");
+  createMachineAlarm(state, events, machine, "rival_redline", "undercut", 12);
 }
 
 function travelHoursBetweenLocations(state: GameState, fromLocationId: string, toLocationId: string, speed: number): number {
@@ -379,7 +654,7 @@ function sortMachinesByTraffic(state: GameState, machines: VendingMachine[]): Ve
 function customerPurchase(state: GameState, events: GameEvent[]): boolean {
   const machines = sortMachinesByTraffic(
     state,
-    ownedMachines(state, state.playerFactionId).filter((machine) => machine.damage < 92 && machine.slots.some((slot) => slot.quantity > 0))
+    installedMachines(state, state.playerFactionId).filter((machine) => machine.damage < 92 && machine.slots.some((slot) => slot.quantity > 0))
   );
   const machine = machines[(state.streetLife.activitySequence - 1) % Math.max(1, machines.length)];
   if (!machine) {
@@ -412,7 +687,7 @@ function customerPurchase(state: GameState, events: GameEvent[]): boolean {
 }
 
 function customerComplaint(state: GameState, events: GameEvent[]): boolean {
-  const machines = ownedMachines(state, state.playerFactionId)
+  const machines = installedMachines(state, state.playerFactionId)
     .map((machine) => {
       const stock = machineStockUnits(machine);
       const score = (stock === 0 ? 4 : 0) + (machine.damage >= 65 ? 3 : machine.damage >= 35 ? 1 : 0);
@@ -476,7 +751,7 @@ function workerSupply(state: GameState, events: GameEvent[]): boolean {
     return false;
   }
 
-  const machine = ownedMachines(state, rival.id)
+  const machine = installedMachines(state, rival.id)
     .filter((candidate) => candidate.slots.length > 0)
     .sort((a, b) => machineStockUnits(a) - machineStockUnits(b))[0];
   const slot = machine?.slots.slice().sort((a, b) => a.quantity / a.capacity - b.quantity / b.capacity)[0];
@@ -539,7 +814,27 @@ function createServiceContract(state: GameState, location: Location, productId: 
   const district = state.districts[location.districtId];
   const rentMultiplier = district?.rentMultiplier ?? 1;
   const heatMultiplier = district ? Math.max(0.75, 1.35 - district.heatTolerance / 80) : 1;
+  const contractNumber = state.progression.nextContractNumber;
   const id = `contract_${state.progression.nextContractNumber++}`;
+  if (contractNumber === 1 && location.id === STARTER_LOCATION_ID && productId === "soda") {
+    return {
+      id,
+      title: "Foam & Fold soda promise",
+      locationId: location.id,
+      productId,
+      requiredQuantity: 6,
+      deliveredQuantity: 0,
+      issuedHour: state.worldTimeHours,
+      deadlineHour,
+      rewardMoney: 36,
+      rewardPublicReputation: 2,
+      rewardStreetReputation: 1,
+      failureHeat: 3,
+      failureRivalPressure: 0.12,
+      status: "active"
+    };
+  }
+
   return {
     id,
     title: contractTitle(location, product.name),
@@ -572,7 +867,7 @@ function issueDailyContracts(state: GameState, events: GameEvent[]): void {
     deadlineHour += 24;
   }
 
-  const candidates = ownedMachines(state, state.playerFactionId)
+  const candidates = installedMachines(state, state.playerFactionId)
     .map((machine) => state.locations[machine.locationId])
     .filter((location): location is Location => Boolean(location))
     .filter((location) => isDistrictUnlockedForPlacement(state, location.districtId))
@@ -581,7 +876,7 @@ function issueDailyContracts(state: GameState, events: GameEvent[]): void {
   let issued = 0;
   for (const location of candidates) {
     const options = contractProductOptions(location);
-    const productId = options[(state.progression.nextContractNumber + issued) % options.length];
+    const productId = options[(state.progression.nextContractNumber + issued - 1) % options.length];
     const key = `${location.id}:${productId}`;
     if (activeKeys.has(key)) {
       continue;
@@ -652,7 +947,7 @@ function machineCapacity(machine: VendingMachine): number {
 function assignedPlayerMachines(state: GameState, employee: Employee): VendingMachine[] {
   return employee.assignedMachineIds
     .map((machineId) => state.machines[machineId])
-    .filter((machine): machine is VendingMachine => Boolean(machine) && machine.ownerFactionId === state.playerFactionId);
+    .filter((machine): machine is VendingMachine => Boolean(machine) && machine.ownerFactionId === state.playerFactionId && isMachineInstalled(machine));
 }
 
 function employeeWorkInterval(employee: Employee): number {
@@ -848,7 +1143,7 @@ function failExpiredContracts(state: GameState, events: GameEvent[]): void {
 }
 
 function createDayReport(state: GameState, day: number): void {
-  const machineRevenueStored = ownedMachines(state, state.playerFactionId).reduce((sum, machine) => sum + machine.revenueStored, 0);
+  const machineRevenueStored = installedMachines(state, state.playerFactionId).reduce((sum, machine) => sum + machine.revenueStored, 0);
   const report = {
     id: `day_report_${day}`,
     day,
@@ -882,6 +1177,10 @@ function resetDailyProgression(state: GameState, day: number): void {
   state.progression.contractsCompletedToday = 0;
   state.progression.contractsFailedToday = 0;
   state.progression.rivalActionsToday = 0;
+  ensureLawState(state);
+  state.law.inspectionsToday = 0;
+  state.law.finesToday = 0;
+  state.law.confiscatedUnitsToday = 0;
 }
 
 function processDayBoundaries(state: GameState, events: GameEvent[], previousHour: number): void {
@@ -921,6 +1220,10 @@ function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number):
 
   let playerEarned = 0;
   for (const machine of Object.values(state.machines)) {
+    if (!isMachineInstalled(machine)) {
+      continue;
+    }
+
     const previousStock = machineStockUnits(machine);
     const earned = runMachineSales(state, machine, hours);
     const stockSold = Math.max(0, previousStock - machineStockUnits(machine));
@@ -943,6 +1246,9 @@ function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number):
     log(state, events, `Machines generated $${Math.round(playerEarned)} in stored revenue.`, "good");
   }
 
+  maybeTriggerStarterUndercut(state, events, playerEarned);
+  applyLawInspections(state, events);
+
   applyEmployeeAutomation(state, events);
 
   let streetActivities = 0;
@@ -962,6 +1268,8 @@ function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number):
 export function reduceGameState(currentState: GameState, command: GameCommand): CommandResult {
   const state = cloneState(currentState);
   const events: GameEvent[] = [];
+  ensureLawState(state);
+  ensureStreetLifeState(state);
   const actor = getFactionOrThrow(state, command.actorId);
 
   switch (command.type) {
@@ -1398,7 +1706,7 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
 
       const employee = state.employees[command.employeeId];
       const machine = state.machines[command.machineId];
-      if (!employee || !machine || machine.ownerFactionId !== actor.id) {
+      if (!employee || !machine || machine.ownerFactionId !== actor.id || !isMachineInstalled(machine)) {
         break;
       }
 
@@ -1429,6 +1737,11 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
         break;
       }
 
+      if (!isMachineInstalled(machine)) {
+        log(state, events, `${machine.name} needs to be placed before it can be stocked.`, "warning");
+        break;
+      }
+
       if (!requirePlayerAtMachine(state, events, machine, "stock this machine")) {
         break;
       }
@@ -1453,12 +1766,13 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       machine.lastServicedHour = state.worldTimeHours;
       log(state, events, `Loaded ${quantity}x ${product.name} into ${machine.name}.`, "good");
       applyContractDelivery(state, events, machine, product.id, quantity);
+      maybeTriggerStarterUndercut(state, events);
       break;
     }
 
     case "collect_revenue": {
       const machine = state.machines[command.machineId];
-      if (!machine || machine.ownerFactionId !== actor.id || machine.revenueStored <= 0) {
+      if (!machine || machine.ownerFactionId !== actor.id || !isMachineInstalled(machine) || machine.revenueStored <= 0) {
         break;
       }
 
@@ -1472,6 +1786,7 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       machine.lastServicedHour = state.worldTimeHours;
       if (actor.id === state.playerFactionId) {
         state.progression.revenueCollectedToday += amount;
+        maybeTriggerStarterUndercut(state, events, amount);
       }
       log(state, events, `Collected $${amount} from ${machine.name}.`, "good");
       break;
@@ -1488,7 +1803,7 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       }
 
       const repairAmount = Math.min(35, machine.damage);
-      const cost = Math.ceil(10 + repairAmount * 0.45);
+      const cost = repairCostForMachine(machine);
       if (actor.money < cost) {
         log(state, events, `Repairs need $${cost}.`, "warning");
         break;
@@ -1522,17 +1837,49 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
         break;
       }
 
-      const placementCost = placementCostForLocation(state, location);
-      if (actor.money < placementCost) {
-        log(state, events, `${location.name} needs $${placementCost} to install a machine.`, "warning");
+      const method = command.method ?? (actor.id === state.playerFactionId ? "legal_contract" : "rival_territory");
+      const quote = placementQuoteForLocation(state, location, method);
+      if (actor.money < quote.cost) {
+        log(state, events, `${location.name} needs $${quote.cost} for ${quote.label.toLowerCase()} placement.`, "warning");
         break;
       }
 
-      actor.money -= placementCost;
-      const machine = createMachine(state, actor.id, location.id);
-      log(state, events, `${machine.name} installed at ${location.name}.`, actor.id === state.playerFactionId ? "good" : "danger");
+      const storedMachine = command.machineId ? state.machines[command.machineId] : actor.id === state.playerFactionId ? storedPlayerMachines(state)[0] : undefined;
+      if (storedMachine && (storedMachine.ownerFactionId !== actor.id || isMachineInstalled(storedMachine))) {
+        log(state, events, `${storedMachine.name} is not available for placement.`, "warning");
+        break;
+      }
+
+      if (storedMachine && storedMachine.damage > 0) {
+        log(state, events, `Repair ${storedMachine.name} in the garage before placing it.`, "warning");
+        break;
+      }
+
+      actor.money -= quote.cost;
+      actor.heat += quote.heatDelta;
+      actor.publicReputation = Math.max(0, actor.publicReputation + quote.publicReputationDelta);
+      actor.streetReputation = Math.max(0, actor.streetReputation + quote.streetReputationDelta);
+
+      const machine = storedMachine ?? createMachine(state, actor.id, location.id, method);
+      machine.locationId = location.id;
+      machine.placementStatus = "installed";
+      machine.placementMethod = method;
+      machine.visibility = clamp01(machine.visibility + quote.visibilityDelta);
+      machine.security = clamp01(machine.security + quote.securityDelta);
+      machine.heat += Math.max(0, quote.heatDelta * 0.2);
+      machine.lastServicedHour = state.worldTimeHours;
+      location.rivalPressure = clamp01(location.rivalPressure + quote.rivalPressureDelta);
+
+      if (machine.id === STARTER_MACHINE_ID && actor.id === state.playerFactionId) {
+        state.progression.starterMachinePlaced = true;
+      }
+
+      log(state, events, `${machine.name} installed at ${location.name} via ${quote.label.toLowerCase()}.`, actor.id === state.playerFactionId ? "good" : "danger");
       if (actor.id === state.playerFactionId) {
         issueDailyContracts(state, events);
+        if (method === "rival_territory") {
+          triggerStarterRetaliation(state, events, "you planted a machine on contested turf");
+        }
       }
       break;
     }
@@ -1599,7 +1946,7 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
 
     case "sabotage_machine": {
       const machine = state.machines[command.machineId];
-      if (!machine || machine.ownerFactionId === actor.id) {
+      if (!machine || machine.ownerFactionId === actor.id || !isMachineInstalled(machine)) {
         break;
       }
 
@@ -1619,6 +1966,9 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       const location = state.locations[machine.locationId];
       location.rivalPressure = Math.max(0, location.rivalPressure - 0.15);
       log(state, events, `${machine.name}'s display is jammed. Heat rises.`, "danger");
+      if (actor.id === state.playerFactionId && state.progression.firstUndercutTriggered) {
+        triggerStarterRetaliation(state, events, "you hit a Redline machine");
+      }
       break;
     }
 
@@ -1658,6 +2008,95 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
         location.rivalPressure = Math.max(0, location.rivalPressure - 0.06);
       }
       log(state, events, `You confronted ${intruder?.name ?? "the intruder"} at ${machine.name}. They ran before finishing the job.`, "good");
+      if (alarm.kind === "undercut") {
+        triggerStarterRetaliation(state, events, "you pushed back on the undercut crew");
+      }
+      break;
+    }
+
+    case "resolve_inspection": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      const inspection = state.law.activeInspections[command.inspectionId];
+      const machine = inspection ? state.machines[inspection.machineId] : undefined;
+      if (!inspection || !machine || inspection.status !== "active") {
+        break;
+      }
+
+      if (inspection.deadlineHour <= state.worldTimeHours) {
+        missInspection(state, events, inspection);
+        break;
+      }
+
+      if (!requirePlayerAtMachine(state, events, machine, "answer the inspection")) {
+        break;
+      }
+
+      const legalPlacement = machine.placementMethod === "legal_contract";
+      const hiddenPlacement = machine.placementMethod === "hidden";
+      if (command.resolution === "show_permit") {
+        if (legalPlacement) {
+          inspection.resolution = "show_permit";
+          actor.heat = Math.max(0, actor.heat - 1);
+          finishInspection(state, events, inspection, "resolved", `${machine.name} passed inspection on clean paperwork.`, "good");
+          break;
+        }
+
+        const fine = hiddenPlacement ? Math.ceil(inspection.fine * 0.25) : inspection.fine;
+        if (actor.money < fine) {
+          log(state, events, `Permit answer needs $${fine} to settle the citation.`, "warning");
+          break;
+        }
+
+        actor.money -= fine;
+        actor.heat += hiddenPlacement ? 0.5 : 2;
+        state.law.finesToday += fine;
+        inspection.resolution = "show_permit";
+        const confiscated = hiddenPlacement ? 0 : removeStockUnitsFromMachine(machine, Math.ceil(inspection.confiscatedUnits * 0.5));
+        state.law.confiscatedUnitsToday += confiscated;
+        finishInspection(
+          state,
+          events,
+          inspection,
+          "resolved",
+          hiddenPlacement
+            ? `${machine.name} passed after a minor hidden-placement citation.`
+            : `${machine.name} paperwork failed. $${fine} paid and ${confiscated} stock seized.`,
+          hiddenPlacement ? "warning" : "danger"
+        );
+        break;
+      }
+
+      if (command.resolution === "pay_fine") {
+        if (actor.money < inspection.fine) {
+          log(state, events, `Fine payment needs $${inspection.fine}.`, "warning");
+          break;
+        }
+
+        actor.money -= inspection.fine;
+        actor.heat = Math.max(0, actor.heat - 0.5);
+        actor.publicReputation = Math.max(0, actor.publicReputation - 0.2);
+        state.law.finesToday += inspection.fine;
+        inspection.resolution = "pay_fine";
+        const confiscated = removeStockUnitsFromMachine(machine, Math.ceil(inspection.confiscatedUnits * 0.35));
+        state.law.confiscatedUnitsToday += confiscated;
+        finishInspection(state, events, inspection, "resolved", `$${inspection.fine} fine paid for ${machine.name}; ${confiscated} stock surrendered.`, "warning");
+        break;
+      }
+
+      const bribeCost = Math.ceil(inspection.fine * 0.55);
+      if (actor.money < bribeCost) {
+        log(state, events, `Inspection bribe needs $${bribeCost}.`, "warning");
+        break;
+      }
+
+      actor.money -= bribeCost;
+      actor.heat += 3;
+      actor.streetReputation += 1;
+      inspection.resolution = "bribe";
+      finishInspection(state, events, inspection, "resolved", `Inspector took $${bribeCost} to walk away from ${machine.name}. Heat rises.`, "danger");
       break;
     }
 
@@ -1672,7 +2111,7 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
 
       if (command.action === "sabotage" && command.targetMachineId) {
         const target = state.machines[command.targetMachineId];
-        if (target && target.ownerFactionId !== actor.id) {
+        if (target && target.ownerFactionId !== actor.id && isMachineInstalled(target)) {
           const baseDamage = 18 + Math.round((controller?.aggression ?? 0) * 8);
           if (target.ownerFactionId === state.playerFactionId) {
             createMachineAlarm(state, events, target, actor.id, "sabotage", baseDamage);
@@ -1687,10 +2126,14 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
 
       if (command.action === "undercut" && command.targetMachineId) {
         const target = state.machines[command.targetMachineId];
-        if (target) {
+        if (target && isMachineInstalled(target)) {
           const location = state.locations[target.locationId];
           location.rivalPressure = Math.min(1, location.rivalPressure + 0.22);
           actor.money = Math.max(0, actor.money - 12);
+          if (target.id === STARTER_MACHINE_ID && target.ownerFactionId === state.playerFactionId) {
+            state.progression.firstUndercutTriggered = true;
+            createMachineAlarm(state, events, target, actor.id, "undercut", 12);
+          }
           log(state, events, `${actor.name} is undercutting prices near ${location.name}.`, "warning");
         }
       }
@@ -1703,7 +2146,7 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
             break;
           }
 
-          createMachine(state, actor.id, location.id);
+          createMachine(state, actor.id, location.id, "rival_territory");
           actor.money = Math.max(0, actor.money - cost);
           log(state, events, `${actor.name} dropped a new machine at ${location.name}.`, "danger");
         }
@@ -1731,7 +2174,7 @@ export function reduceCommands(state: GameState, commands: GameCommand[]): Comma
 }
 
 export function mostProfitablePlayerMachine(state: GameState): VendingMachine | undefined {
-  return ownedMachines(state, state.playerFactionId)
+  return installedMachines(state, state.playerFactionId)
     .slice()
     .sort((a, b) => b.revenueStored + b.slots.length * 4 - (a.revenueStored + a.slots.length * 4))[0];
 }

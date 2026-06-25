@@ -43,6 +43,10 @@ function timeOfDayMultiplier(worldTimeHours: number, product: Product): number {
 }
 
 export function runMachineSales(state: GameState, machine: VendingMachine, hours: number): number {
+  if ((machine.placementStatus ?? "installed") !== "installed") {
+    return 0;
+  }
+
   const slotSalesRate = estimateMachineSalesPerHour(state, machine);
   let earned = 0;
 
@@ -73,7 +77,7 @@ export function runMachineSales(state: GameState, machine: VendingMachine, hours
 
 export function estimateMachineSalesPerHour(state: GameState, machine: VendingMachine): Array<{ productId: string; unitsPerHour: number; heatMultiplier: number }> {
   const location = state.locations[machine.locationId];
-  if (!location || machine.damage >= 100) {
+  if (!location || machine.damage >= 100 || (machine.placementStatus ?? "installed") !== "installed") {
     return [];
   }
 

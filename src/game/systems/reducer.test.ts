@@ -1,11 +1,30 @@
 import { describe, expect, it } from "vitest";
 import { createInitialState } from "../content/initialState";
-import { districtUnlockInfo, machineAtLocation, routeTasks, selectedRouteTask } from "../core/selectors";
+import { districtUnlockInfo, machineAtLocation, machineStockUnits, routeTasks, selectedRouteTask } from "../core/selectors";
 import type { GameCommand, LocationId } from "../core/types";
 import { reduceCommands, reduceGameState } from "./reducer";
 
 function visit(locationId: LocationId): GameCommand {
   return { type: "set_player_location", actorId: "player", locationId };
+}
+
+function withInstalledStarter() {
+  const state = createInitialState();
+  state.machines.machine_player_1.locationId = "laundromat";
+  state.machines.machine_player_1.placementStatus = "installed";
+  state.machines.machine_player_1.placementMethod = "legal_contract";
+  state.machines.machine_player_1.damage = 0;
+  state.progression.starterMachinePlaced = true;
+  return state;
+}
+
+function placeStarterWithContract() {
+  return reduceCommands(createInitialState(), [
+    visit("garage"),
+    { type: "repair_machine", actorId: "player", machineId: "machine_player_1" },
+    visit("laundromat"),
+    { type: "place_machine", actorId: "player", locationId: "laundromat", machineId: "machine_player_1", method: "legal_contract" }
+  ]).state;
 }
 
 describe("game reducer", () => {
@@ -22,7 +41,7 @@ describe("game reducer", () => {
   });
 
   it("stocks an owned machine from the carried crate", () => {
-    const state = createInitialState();
+    const state = withInstalledStarter();
     const result = reduceCommands(state, [
       visit("supplier"),
       { type: "buy_product", actorId: "player", productId: "chips", quantity: 5 },
@@ -102,7 +121,7 @@ describe("game reducer", () => {
 
   it("selects a derived route task for guidance", () => {
     const initial = createInitialState();
-    const stockTask = routeTasks(initial).find((task) => task.id === "machine:machine_player_1:stock");
+    const stockTask = routeTasks(initial).find((task) => task.id === "stored:machine_player_1:repair");
     expect(stockTask).toBeDefined();
 
     const state = reduceGameState(initial, { type: "select_route_task", actorId: "player", taskId: stockTask!.id }).state;
@@ -110,7 +129,7 @@ describe("game reducer", () => {
   });
 
   it("hires and assigns a restocker that moves garage stock onto the route", () => {
-    const hired = reduceGameState(createInitialState(), { type: "hire_employee", actorId: "player", role: "restocker" }).state;
+    const hired = reduceGameState(withInstalledStarter(), { type: "hire_employee", actorId: "player", role: "restocker" }).state;
     const employee = Object.values(hired.employees)[0]!;
     hired.player.garageStorage.soda = 12;
 
@@ -131,7 +150,7 @@ describe("game reducer", () => {
   });
 
   it("lets restockers use empty machine bays even when one slot is full", () => {
-    const hired = reduceGameState(createInitialState(), { type: "hire_employee", actorId: "player", role: "restocker" }).state;
+    const hired = reduceGameState(withInstalledStarter(), { type: "hire_employee", actorId: "player", role: "restocker" }).state;
     const employee = Object.values(hired.employees)[0]!;
     hired.player.garageStorage.chips = 8;
     hired.machines.machine_player_1.slots = [{ productId: "soda", quantity: 24, capacity: 24, price: 4, salesAccumulator: 0 }];
@@ -149,7 +168,7 @@ describe("game reducer", () => {
   });
 
   it("lets an assigned collector pull cash from player machines", () => {
-    const hired = reduceGameState(createInitialState(), { type: "hire_employee", actorId: "player", role: "collector" }).state;
+    const hired = reduceGameState(withInstalledStarter(), { type: "hire_employee", actorId: "player", role: "collector" }).state;
     const employee = Object.values(hired.employees)[0]!;
     hired.machines.machine_player_1.revenueStored = 30;
 
@@ -169,7 +188,7 @@ describe("game reducer", () => {
   });
 
   it("lets an assigned technician repair damaged machines for parts cost", () => {
-    const hired = reduceGameState(createInitialState(), { type: "hire_employee", actorId: "player", role: "technician" }).state;
+    const hired = reduceGameState(withInstalledStarter(), { type: "hire_employee", actorId: "player", role: "technician" }).state;
     const employee = Object.values(hired.employees)[0]!;
     hired.factions.player.money = 80;
     hired.machines.machine_player_1.damage = 70;
@@ -202,7 +221,7 @@ describe("game reducer", () => {
   });
 
   it("surfaces active service contracts as route tasks", () => {
-    const state = createInitialState();
+    const state = placeStarterWithContract();
     const task = routeTasks(state).find((candidate) => candidate.id === "contract:contract_1");
 
     expect(task).toMatchObject({
@@ -214,7 +233,7 @@ describe("game reducer", () => {
   });
 
   it("completes a matching service contract when stocking a machine", () => {
-    const state = reduceCommands(createInitialState(), [
+    const state = reduceCommands(placeStarterWithContract(), [
       visit("supplier"),
       { type: "buy_product", actorId: "player", productId: "soda", quantity: 6 },
       visit("laundromat"),
@@ -223,7 +242,7 @@ describe("game reducer", () => {
 
     expect(state.contracts.contract_1.status).toBe("completed");
     expect(state.contracts.contract_1.deliveredQuantity).toBe(6);
-    expect(state.factions.player.money).toBe(144);
+    expect(state.factions.player.money).toBe(118);
     expect(state.progression.contractRewardsToday).toBe(36);
     expect(state.progression.contractsCompletedToday).toBe(1);
     expect(state.progression.contractsCompletedTotal).toBe(1);
@@ -242,8 +261,51 @@ describe("game reducer", () => {
     expect(result.events.some((event) => event.message.includes("locked"))).toBe(true);
   });
 
-  it("scouts and opens districts after requirements are met", () => {
+  it("starts with the starter stored, then repairs and places it at the laundromat", () => {
     const initial = createInitialState();
+    expect(initial.machines.machine_player_1).toMatchObject({
+      locationId: "garage",
+      placementStatus: "stored"
+    });
+    expect(machineAtLocation(initial, "laundromat")).toBeUndefined();
+
+    const result = reduceCommands(initial, [
+      visit("garage"),
+      { type: "repair_machine", actorId: "player", machineId: "machine_player_1" },
+      visit("laundromat"),
+      { type: "place_machine", actorId: "player", locationId: "laundromat", machineId: "machine_player_1", method: "legal_contract" }
+    ]);
+
+    expect(machineAtLocation(result.state, "laundromat")).toMatchObject({
+      id: "machine_player_1",
+      placementStatus: "installed",
+      placementMethod: "legal_contract"
+    });
+    expect(result.state.progression.starterMachinePlaced).toBe(true);
+    expect(result.state.contracts.contract_1).toMatchObject({ locationId: "laundromat", productId: "soda", status: "active" });
+  });
+
+  it("applies placement method tradeoffs when installing a new machine", () => {
+    const initial = withInstalledStarter();
+    initial.factions.player.money = 200;
+    const result = reduceCommands(initial, [
+      visit("gym"),
+      { type: "place_machine", actorId: "player", locationId: "gym", method: "illegal" }
+    ]);
+    const machine = machineAtLocation(result.state, "gym");
+
+    expect(machine).toMatchObject({
+      ownerFactionId: "player",
+      placementMethod: "illegal",
+      placementStatus: "installed"
+    });
+    expect(result.state.factions.player.heat).toBeGreaterThan(initial.factions.player.heat);
+    expect(result.state.factions.player.publicReputation).toBeLessThan(initial.factions.player.publicReputation);
+    expect(result.state.locations.gym.rivalPressure).toBeGreaterThan(initial.locations.gym.rivalPressure);
+  });
+
+  it("scouts and opens districts after requirements are met", () => {
+    const initial = withInstalledStarter();
     initial.factions.player.money = 400;
     initial.factions.player.streetReputation = 1;
     initial.progression.contractsCompletedTotal = 1;
@@ -291,7 +353,7 @@ describe("game reducer", () => {
   });
 
   it("spawns visible street activity from debug controls", () => {
-    const initial = createInitialState();
+    const initial = withInstalledStarter();
     initial.machines.machine_player_1.slots = [{ productId: "soda", quantity: 4, capacity: 24, price: 5, salesAccumulator: 0 }];
 
     const result = reduceGameState(initial, { type: "debug_spawn_activity", actorId: "player", activity: "customer_purchase" });
@@ -303,7 +365,7 @@ describe("game reducer", () => {
   });
 
   it("fails expired service contracts and files a day report", () => {
-    const state = reduceGameState(createInitialState(), { type: "advance_time", actorId: "player", hours: 17 }).state;
+    const state = reduceGameState(placeStarterWithContract(), { type: "advance_time", actorId: "player", hours: 17 }).state;
 
     expect(state.contracts.contract_1.status).toBe("failed");
     expect(state.dayReports[0]).toMatchObject({
@@ -313,8 +375,50 @@ describe("game reducer", () => {
     expect(state.factions.player.heat).toBeGreaterThan(0);
   });
 
+  it("creates inspections and applies fines with confiscation when missed", () => {
+    const initial = withInstalledStarter();
+    initial.factions.player.heat = 14;
+    initial.law.nextInspectionHour = initial.worldTimeHours + 0.05;
+    initial.machines.machine_player_1.placementMethod = "illegal";
+    initial.machines.machine_player_1.slots = [{ productId: "mystery_capsules", quantity: 10, capacity: 24, price: 16, salesAccumulator: 0 }];
+
+    const noticed = reduceGameState(initial, { type: "advance_time", actorId: "player", hours: 0.1 }).state;
+    const inspection = Object.values(noticed.law.activeInspections)[0]!;
+    expect(inspection).toMatchObject({
+      machineId: "machine_player_1",
+      status: "active"
+    });
+
+    const missed = reduceGameState(noticed, { type: "advance_time", actorId: "player", hours: 2 }).state;
+    expect(missed.law.activeInspections[inspection.id]).toMatchObject({ status: "missed" });
+    expect(missed.law.finesToday).toBeGreaterThan(0);
+    expect(missed.law.confiscatedUnitsToday).toBeGreaterThan(0);
+    expect(machineStockUnits(missed.machines.machine_player_1)).toBeLessThan(10);
+  });
+
+  it("lets legal placements clear inspections by showing a permit", () => {
+    const initial = withInstalledStarter();
+    initial.factions.player.heat = 20;
+    initial.law.nextInspectionHour = initial.worldTimeHours + 0.05;
+    initial.machines.machine_player_1.slots = [{ productId: "mystery_capsules", quantity: 5, capacity: 24, price: 16, salesAccumulator: 0 }];
+
+    const noticed = reduceCommands(initial, [
+      { type: "advance_time", actorId: "player", hours: 0.1 },
+      visit("laundromat")
+    ]).state;
+    const inspection = Object.values(noticed.law.activeInspections)[0]!;
+    const resolved = reduceGameState(noticed, { type: "resolve_inspection", actorId: "player", inspectionId: inspection.id, resolution: "show_permit" }).state;
+
+    expect(resolved.law.activeInspections[inspection.id]).toMatchObject({
+      status: "resolved",
+      resolution: "show_permit"
+    });
+    expect(resolved.law.finesToday).toBe(0);
+    expect(machineStockUnits(resolved.machines.machine_player_1)).toBe(5);
+  });
+
   it("stores revenue over time and lets the player collect it", () => {
-    const stocked = reduceCommands(createInitialState(), [
+    const stocked = reduceCommands(withInstalledStarter(), [
       visit("supplier"),
       { type: "buy_product", actorId: "player", productId: "soda", quantity: 10 },
       visit("laundromat"),
@@ -331,7 +435,7 @@ describe("game reducer", () => {
   });
 
   it("runs street customer purchases through stock, revenue, and activity feedback", () => {
-    const state = reduceCommands(createInitialState(), [
+    const state = reduceCommands(withInstalledStarter(), [
       visit("supplier"),
       { type: "buy_product", actorId: "player", productId: "soda", quantity: 6 },
       visit("laundromat"),
@@ -355,7 +459,7 @@ describe("game reducer", () => {
   });
 
   it("turns bad machine conditions into customer complaints and local pressure", () => {
-    const state = createInitialState();
+    const state = withInstalledStarter();
     state.streetLife.activitySequence = 2;
     state.streetLife.nextActivityHour = state.worldTimeHours + 0.01;
     const initialPressure = state.locations.laundromat.rivalPressure;
@@ -372,7 +476,7 @@ describe("game reducer", () => {
   });
 
   it("keeps NPC actions command-based", () => {
-    const state = createInitialState();
+    const state = withInstalledStarter();
     const result = reduceGameState(state, {
       type: "rival_action",
       actorId: "rival_redline",
@@ -385,7 +489,7 @@ describe("game reducer", () => {
   });
 
   it("turns NPC sabotage into an active machine alarm route task", () => {
-    const state = createInitialState();
+    const state = withInstalledStarter();
     const damageBefore = state.machines.machine_player_1.damage;
 
     const result = reduceGameState(state, {
@@ -412,7 +516,7 @@ describe("game reducer", () => {
   });
 
   it("requires the player to reach the alarmed machine before fighting the intruder", () => {
-    const alarmed = reduceGameState(createInitialState(), {
+    const alarmed = reduceGameState(withInstalledStarter(), {
       type: "sabotage_machine",
       actorId: "rival_redline",
       machineId: "machine_player_1"
@@ -437,7 +541,7 @@ describe("game reducer", () => {
   });
 
   it("applies sabotage damage when an alarm is missed", () => {
-    const alarmed = reduceGameState(createInitialState(), {
+    const alarmed = reduceGameState(withInstalledStarter(), {
       type: "sabotage_machine",
       actorId: "rival_redline",
       machineId: "machine_player_1"
@@ -456,7 +560,7 @@ describe("game reducer", () => {
   });
 
   it("updates product slot prices on owned machines", () => {
-    const state = reduceCommands(createInitialState(), [
+    const state = reduceCommands(withInstalledStarter(), [
       visit("supplier"),
       { type: "buy_product", actorId: "player", productId: "soda", quantity: 5 },
       visit("laundromat"),
@@ -468,7 +572,7 @@ describe("game reducer", () => {
   });
 
   it("installs upgrades on owned machines", () => {
-    const result = reduceCommands(createInitialState(), [
+    const result = reduceCommands(withInstalledStarter(), [
       visit("laundromat"),
       {
         type: "install_upgrade",
@@ -483,13 +587,13 @@ describe("game reducer", () => {
   });
 
   it("reduces sabotage damage with machine protection", () => {
-    const baselineAlarmed = reduceGameState(createInitialState(), {
+    const baselineAlarmed = reduceGameState(withInstalledStarter(), {
       type: "sabotage_machine",
       actorId: "rival_redline",
       machineId: "machine_player_1"
     }).state;
     const baseline = reduceGameState(baselineAlarmed, { type: "advance_time", actorId: "player", hours: 1 }).state;
-    const upgradedAlarmed = reduceCommands(createInitialState(), [
+    const upgradedAlarmed = reduceCommands(withInstalledStarter(), [
       visit("laundromat"),
       { type: "install_upgrade", actorId: "player", machineId: "machine_player_1", upgradeId: "reinforced_glass" },
       { type: "install_upgrade", actorId: "player", machineId: "machine_player_1", upgradeId: "smart_lock" },

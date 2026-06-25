@@ -1789,6 +1789,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
   }
 
   Object.values(currentState.machines)
+    .filter((machine) => (machine.placementStatus ?? "installed") === "installed")
     .filter((machine) => machine.damage < 96)
     .filter((machine) => !activeAlarmByMachine.has(machine.id))
     .sort((a, b) => {
@@ -1916,7 +1917,8 @@ export function ThreeScene({ feedbackEvent, guidanceLocationId, state, onPlayerP
     camera.rotation.order = "YXZ";
 
     const yaw = new THREE.Object3D();
-    yaw.position.set(-8, 0, 1.4);
+    yaw.position.set(-9, 0, 5.9);
+    yaw.rotation.y = Math.PI;
     yaw.add(camera);
     scene.add(yaw);
 

@@ -135,8 +135,8 @@ export function App() {
   const { state, sendCommand, advanceWorld, save, reload, restart } = useGame();
   const [target, setTarget] = useState<SceneTarget | null>(null);
   const [entered, setEntered] = useState(false);
-  const [playerPosition, setPlayerPosition] = useState<Vec2>({ x: -8, z: 1.4 });
-  const [playerHeadingDegrees, setPlayerHeadingDegrees] = useState(0);
+  const [playerPosition, setPlayerPosition] = useState<Vec2>({ x: -9, z: 5.9 });
+  const [playerHeadingDegrees, setPlayerHeadingDegrees] = useState(-180);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [visibleReport, setVisibleReport] = useState<DayReport | null>(null);
   const [sceneFeedback, setSceneFeedback] = useState<SceneFeedbackEvent | null>(null);

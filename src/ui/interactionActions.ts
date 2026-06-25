@@ -9,7 +9,9 @@ import {
   inventoryUnits,
   isDistrictUnlockedForPlacement,
   machineAtLocation,
-  placementCostForLocation
+  placementQuoteForLocation,
+  repairCostForMachine,
+  storedPlayerMachines
 } from "../game/core/selectors";
 import type { SceneTarget } from "../render/three/SceneTargets";
 
@@ -86,6 +88,16 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
       return { kind: "command", label: "Store crate", command: { type: "deposit_crate", actorId } };
     }
 
+    const storedMachine = storedPlayerMachines(state).find((machine) => machine.damage > 0);
+    if (storedMachine) {
+      return {
+        kind: "command",
+        label: `Repair ${storedMachine.name}`,
+        disabled: player.money < repairCostForMachine(storedMachine),
+        command: { type: "repair_machine", actorId, machineId: storedMachine.id }
+      };
+    }
+
     const stored = firstGarageStorageProduct(state);
     if (stored) {
       const product = state.products[stored.productId];
@@ -124,7 +136,8 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     const district = state.districts[location.districtId];
     const districtInfo = districtUnlockInfo(state, location.districtId);
     const unlocked = isDistrictUnlockedForPlacement(state, location.districtId);
-    const placementCost = placementCostForLocation(state, location);
+    const placementQuote = placementQuoteForLocation(state, location, "legal_contract");
+    const storedMachine = storedPlayerMachines(state)[0];
     if (!unlocked) {
       if (districtInfo.progress.access === "locked") {
         return {
@@ -145,9 +158,9 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
 
     return {
       kind: "command",
-      label: "Install machine",
-      disabled: occupied || player.money < placementCost,
-      command: { type: "place_machine", actorId, locationId: location.id }
+      label: storedMachine ? `Install ${storedMachine.name}` : "Legal install",
+      disabled: occupied || player.money < placementQuote.cost || Boolean(storedMachine && storedMachine.damage > 0),
+      command: { type: "place_machine", actorId, locationId: location.id, method: "legal_contract", machineId: storedMachine?.id }
     };
   }
 

@@ -1,4 +1,4 @@
-import type { DistrictProgress, Faction, GameState, RouteVehicle, ServiceContract, VendingMachine } from "../core/types";
+import type { DistrictProgress, Faction, GameState, RouteVehicle, VendingMachine } from "../core/types";
 import { products } from "./products";
 import { districts, locations } from "./world";
 
@@ -29,7 +29,9 @@ const playerMachine: VendingMachine = {
   id: "machine_player_1",
   name: "Rusty Starter",
   ownerFactionId: "player",
-  locationId: "laundromat",
+  locationId: "garage",
+  placementStatus: "stored",
+  placementMethod: "legal_contract",
   slots: [],
   maxSlots: 3,
   revenueStored: 0,
@@ -46,6 +48,8 @@ const rivalMachine: VendingMachine = {
   name: "Redline Basic",
   ownerFactionId: "rival_redline",
   locationId: "rival_corner",
+  placementStatus: "installed",
+  placementMethod: "rival_territory",
   slots: [
     { productId: "soda", quantity: 12, capacity: 24, price: 4, salesAccumulator: 0 },
     { productId: "energy", quantity: 10, capacity: 18, price: 8, salesAccumulator: 0 }
@@ -68,23 +72,6 @@ const starterVehicle: RouteVehicle = {
   capacity: 36,
   security: 0.15,
   speed: 1
-};
-
-const starterContract: ServiceContract = {
-  id: "contract_1",
-  title: "Foam & Fold soda promise",
-  locationId: "laundromat",
-  productId: "soda",
-  requiredQuantity: 6,
-  deliveredQuantity: 0,
-  issuedHour: 8,
-  deadlineHour: 24,
-  rewardMoney: 36,
-  rewardPublicReputation: 2,
-  rewardStreetReputation: 1,
-  failureHeat: 3,
-  failureRivalPressure: 0.12,
-  status: "active"
 };
 
 function cloneContent<T>(value: T): T {
@@ -135,9 +122,7 @@ export function createInitialState(): GameState {
       [starterVehicle.id]: cloneContent(starterVehicle)
     },
     employees: {},
-    contracts: {
-      [starterContract.id]: cloneContent(starterContract)
-    },
+    contracts: {},
     npcControllers: {
       rival_redline: {
         factionId: "rival_redline",
@@ -147,12 +132,21 @@ export function createInitialState(): GameState {
       }
     },
     machineAlarms: {},
+    law: {
+      inspectionSequence: 1,
+      nextInspectionHour: 14.25,
+      activeInspections: {},
+      inspectionsToday: 0,
+      finesToday: 0,
+      confiscatedUnitsToday: 0,
+      lastInspectionHour: 0
+    },
     eventLog: [
       {
         id: "intro_1",
         hour: 8,
         tone: "neutral",
-        message: "Your first battered machine is sitting outside Foam & Fold. It needs stock and attention."
+        message: "Your first battered machine is in the garage. Repair it, then place it at Foam & Fold."
       }
     ],
     streetLife: {
@@ -162,7 +156,7 @@ export function createInitialState(): GameState {
     },
     mission: {
       id: "starter_takeover",
-      title: "Control three profitable machines in Cinderblock Row",
+      title: "Launch Foam & Fold and survive Redline retaliation",
       completed: false
     },
     routePlan: {
@@ -171,7 +165,7 @@ export function createInitialState(): GameState {
     dayReports: [],
     progression: {
       contractsCompletedTotal: 0,
-      nextContractNumber: 2,
+      nextContractNumber: 1,
       lastReportDay: 0,
       revenueCollectedToday: 0,
       contractRewardsToday: 0,
@@ -179,7 +173,10 @@ export function createInitialState(): GameState {
       stockSoldToday: 0,
       contractsCompletedToday: 0,
       contractsFailedToday: 0,
-      rivalActionsToday: 0
+      rivalActionsToday: 0,
+      starterMachinePlaced: false,
+      firstUndercutTriggered: false,
+      firstRetaliationTriggered: false
     }
   };
 }

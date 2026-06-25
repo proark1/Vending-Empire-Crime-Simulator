@@ -7,6 +7,8 @@ export type EmployeeId = string;
 export type ContractId = string;
 export type LocationId = string;
 export type DistrictId = string;
+export type PlacementMethod = "legal_contract" | "bribe" | "illegal" | "hidden" | "rival_territory";
+export type MachinePlacementStatus = "stored" | "installed";
 
 export interface Vec2 {
   x: number;
@@ -87,6 +89,8 @@ export interface VendingMachine {
   name: string;
   ownerFactionId: FactionId;
   locationId: LocationId;
+  placementStatus: MachinePlacementStatus;
+  placementMethod: PlacementMethod;
   slots: MachineSlot[];
   maxSlots: number;
   revenueStored: number;
@@ -95,6 +99,7 @@ export interface VendingMachine {
   visibility: number;
   heat: number;
   lastServicedHour: number;
+  lastInspectedHour?: number;
   upgrades: MachineUpgradeId[];
 }
 
@@ -216,6 +221,9 @@ export interface ProgressionState {
   contractsCompletedToday: number;
   contractsFailedToday: number;
   rivalActionsToday: number;
+  starterMachinePlaced: boolean;
+  firstUndercutTriggered: boolean;
+  firstRetaliationTriggered: boolean;
 }
 
 export interface NpcController {
@@ -240,6 +248,48 @@ export interface MachineAlarm {
   resolved: boolean;
   resolvedHour?: number;
   outcome?: MachineAlarmOutcome;
+}
+
+export type LawInspectionStatus = "active" | "resolved" | "missed";
+export type LawInspectionResolution = "show_permit" | "pay_fine" | "bribe";
+
+export interface LawInspection {
+  id: string;
+  machineId: MachineId;
+  locationId: LocationId;
+  startedHour: number;
+  deadlineHour: number;
+  severity: number;
+  status: LawInspectionStatus;
+  fine: number;
+  confiscatedUnits: number;
+  reason: string;
+  resolvedHour?: number;
+  resolution?: LawInspectionResolution;
+}
+
+export interface LawState {
+  inspectionSequence: number;
+  nextInspectionHour: number;
+  activeInspections: Record<string, LawInspection>;
+  inspectionsToday: number;
+  finesToday: number;
+  confiscatedUnitsToday: number;
+  lastInspectionHour: number;
+}
+
+export interface PlacementQuote {
+  method: PlacementMethod;
+  label: string;
+  cost: number;
+  heatDelta: number;
+  visibilityDelta: number;
+  securityDelta: number;
+  publicReputationDelta: number;
+  streetReputationDelta: number;
+  rivalPressureDelta: number;
+  inspectionRiskLabel: "low" | "medium" | "high" | "extreme";
+  description: string;
 }
 
 export type EmployeeRole = "restocker" | "collector" | "technician";
@@ -319,6 +369,7 @@ export interface GameState {
   contracts: Record<ContractId, ServiceContract>;
   npcControllers: Record<FactionId, NpcController>;
   machineAlarms: Record<string, MachineAlarm>;
+  law: LawState;
   eventLog: GameEvent[];
   streetLife: StreetLifeState;
   mission: MissionState;
@@ -345,11 +396,12 @@ export type GameCommand =
   | { type: "stock_machine"; actorId: FactionId; machineId: MachineId; productId: ProductId; quantity: number }
   | { type: "collect_revenue"; actorId: FactionId; machineId: MachineId }
   | { type: "repair_machine"; actorId: FactionId; machineId: MachineId }
-  | { type: "place_machine"; actorId: FactionId; locationId: LocationId }
+  | { type: "place_machine"; actorId: FactionId; locationId: LocationId; method?: PlacementMethod; machineId?: MachineId }
   | { type: "set_slot_price"; actorId: FactionId; machineId: MachineId; productId: ProductId; price: number }
   | { type: "install_upgrade"; actorId: FactionId; machineId: MachineId; upgradeId: MachineUpgradeId }
   | { type: "sabotage_machine"; actorId: FactionId; machineId: MachineId }
   | { type: "confront_alarm"; actorId: FactionId; alarmId: string }
+  | { type: "resolve_inspection"; actorId: FactionId; inspectionId: string; resolution: LawInspectionResolution }
   | { type: "debug_grant_cash"; actorId: FactionId; amount: number }
   | { type: "debug_complete_requirements"; actorId: FactionId }
   | { type: "debug_set_district_access"; actorId: FactionId; districtId: DistrictId; access: DistrictAccess }

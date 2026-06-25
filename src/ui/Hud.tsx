@@ -1,6 +1,6 @@
 import { Flame, HandCoins, Package, Trophy } from "lucide-react";
 import type { GameState } from "../game/core/types";
-import { carriedCrateUnits, formatClock, missionProgress } from "../game/core/selectors";
+import { activeLawInspections, carriedCrateUnits, formatClock, missionProgress } from "../game/core/selectors";
 
 interface HudProps {
   state: GameState;
@@ -11,6 +11,7 @@ export function Hud({ state }: HudProps) {
   const cargoUnits = carriedCrateUnits(state);
   const crate = state.player.carriedCrate;
   const progress = missionProgress(state);
+  const inspections = activeLawInspections(state);
 
   return (
     <header className="hud">
@@ -25,7 +26,7 @@ export function Hud({ state }: HudProps) {
         </div>
         <div className="stat-pill">
           <Flame size={17} aria-hidden="true" />
-          <span>{Math.round(player.heat)} heat</span>
+          <span>{inspections.length > 0 ? `${inspections.length} inspection` : `${Math.round(player.heat)} heat`}</span>
         </div>
         <div className="stat-pill">
           <Package size={17} aria-hidden="true" />

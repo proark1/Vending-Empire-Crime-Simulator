@@ -90,6 +90,11 @@ function migrateGameState(parsed: GameState): GameState {
       ...parsed.npcControllers
     },
     machineAlarms: parsed.machineAlarms ?? baseline.machineAlarms,
+    law: {
+      ...baseline.law,
+      ...(parsed.law ?? {}),
+      activeInspections: parsed.law?.activeInspections ?? baseline.law.activeInspections
+    },
     streetLife: {
       ...baseline.streetLife,
       ...(parsed.streetLife ?? {}),
@@ -100,6 +105,8 @@ function migrateGameState(parsed: GameState): GameState {
         machineId,
         {
           ...machine,
+          placementStatus: machine.placementStatus ?? "installed",
+          placementMethod: machine.placementMethod ?? "legal_contract",
           upgrades: Array.isArray(machine.upgrades) ? machine.upgrades : []
         }
       ])
@@ -129,7 +136,10 @@ function migrateGameState(parsed: GameState): GameState {
     progression: {
       ...baseline.progression,
       ...(parsed.progression ?? {}),
-      contractsCompletedTotal: parsed.progression?.contractsCompletedTotal ?? parsed.progression?.contractsCompletedToday ?? baseline.progression.contractsCompletedTotal
+      contractsCompletedTotal: parsed.progression?.contractsCompletedTotal ?? parsed.progression?.contractsCompletedToday ?? baseline.progression.contractsCompletedTotal,
+      starterMachinePlaced: parsed.progression?.starterMachinePlaced ?? baseline.progression.starterMachinePlaced,
+      firstUndercutTriggered: parsed.progression?.firstUndercutTriggered ?? baseline.progression.firstUndercutTriggered,
+      firstRetaliationTriggered: parsed.progression?.firstRetaliationTriggered ?? baseline.progression.firstRetaliationTriggered
     }
   };
 }
