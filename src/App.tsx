@@ -8,19 +8,21 @@ import { InteractionPanel } from "./ui/InteractionPanel";
 import { Minimap } from "./ui/Minimap";
 import { MissionTracker } from "./ui/MissionTracker";
 import { GuidanceArrow } from "./ui/GuidanceArrow";
+import { ClipboardList, MousePointer2, X } from "lucide-react";
 import { AdminMapEditor } from "./ui/AdminMapEditor";
 import { getStarterMissionStep } from "./game/core/mission";
 import { activeConflictEvents, activeMachineAlarms, latestDayReport, selectedRouteTask } from "./game/core/selectors";
 import { executePrimaryInteraction, getPrimaryInteraction } from "./ui/interactionActions";
 import { useGame } from "./hooks/useGame";
 import { ToastStack, type ToastMessage } from "./ui/ToastStack";
-import type { DayReport, GameCommand, GameState, LocationId, Vec2 } from "./game/core/types";
+import type { GameCommand, GameState, LocationId, Vec2 } from "./game/core/types";
+import { createDefaultAudioConfig, normalizeAudioConfig, type AudioConfig } from "./game/content/audioConfig";
 import type { WorldMapLayout } from "./game/content/world";
 import { clearWorldMapLayout, loadWorldMapLayout, saveWorldMapLayout } from "./game/world/mapLayoutStorage";
-import { clearStoredGameSession, loadRemoteGame, loadRemoteMapLayout, loadStoredGameSession, loginGame, registerGame, type GameSession } from "./game/save/api";
+import { clearStoredGameSession, loadRemoteAudioConfig, loadRemoteGame, loadRemoteMapLayout, loadStoredGameSession, loginGame, registerGame, type GameSession } from "./game/save/api";
 import { loadGame } from "./game/save/storage";
 import { createInitialState } from "./game/content/initialState";
-import { playEventCue, playFeedbackCue, startGameAmbience, unlockGameAudio, updateGameAmbience } from "./ui/audio";
+import { configureGameAudio, playEventCue, playFeedbackCue, startGameAmbience, unlockGameAudio, updateGameAmbience } from "./ui/audio";
 
 function targetLocationId(target: SceneTarget | null, state: GameState): LocationId | null {
   if (!target) {
@@ -114,44 +116,6 @@ function createSceneFeedback(command: GameCommand, target: SceneTarget | null, s
   }
 }
 
-function DayReportModal({ report, onClose }: { report: DayReport; onClose: () => void }) {
-  return (
-    <aside className="day-report-modal" aria-label={`Day ${report.day} report`}>
-      <div>
-        <span>Day {report.day} report</span>
-        <button aria-label="Close day report" onClick={onClose} type="button">
-          Close
-        </button>
-      </div>
-      <h2>{report.summary}</h2>
-      <dl>
-        <div>
-          <dt>Cash collected</dt>
-          <dd>${Math.round(report.revenueCollected)}</dd>
-        </div>
-        <div>
-          <dt>Stored revenue</dt>
-          <dd>${Math.round(report.machineRevenueStored)}</dd>
-        </div>
-        <div>
-          <dt>Contracts</dt>
-          <dd>
-            {report.contractsCompleted} done / {report.contractsFailed} missed
-          </dd>
-        </div>
-        <div>
-          <dt>Stock sold</dt>
-          <dd>{report.stockSold}</dd>
-        </div>
-        <div>
-          <dt>Rival moves</dt>
-          <dd>{report.rivalActions}</dd>
-        </div>
-      </dl>
-    </aside>
-  );
-}
-
 interface GameAppProps {
   initialState: GameState;
   mapLayout: WorldMapLayout;
@@ -162,10 +126,10 @@ function GameApp({ initialState, mapLayout, session }: GameAppProps) {
   const { state, sendCommand, advanceWorld, save, reload, restart } = useGame({ initialState, session });
   const [target, setTarget] = useState<SceneTarget | null>(null);
   const [entered, setEntered] = useState(false);
+  const [dashboardOpen, setDashboardOpen] = useState(false);
   const [playerPosition, setPlayerPosition] = useState<Vec2>({ x: -9, z: 5.9 });
   const [playerHeadingDegrees, setPlayerHeadingDegrees] = useState(-180);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
-  const [visibleReport, setVisibleReport] = useState<DayReport | null>(null);
   const [sceneFeedback, setSceneFeedback] = useState<SceneFeedbackEvent | null>(null);
   const [graphicsQuality, setGraphicsQualityState] = useState<GraphicsQuality>(() => loadGraphicsQuality());
   const lastEventIdRef = useRef(state.eventLog[0]?.id ?? null);
@@ -181,6 +145,7 @@ function GameApp({ initialState, mapLayout, session }: GameAppProps) {
   const guidanceLocationId = activeAlarm?.locationId ?? routeTask?.locationId ?? missionStep.targetLocationId;
   const guidanceLabel = activeAlarm ? "Machine alarm" : routeTask?.title;
   const report = latestDayReport(state);
+  const showDebugTools = useMemo(() => new URLSearchParams(window.location.search).has("debug"), []);
 
   const addToast = useCallback((toast: Omit<ToastMessage, "id">) => {
     const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -252,7 +217,6 @@ function GameApp({ initialState, mapLayout, session }: GameAppProps) {
     }
 
     lastReportIdRef.current = report.id;
-    setVisibleReport(report);
     addToast({
       title: `Day ${report.day} report`,
       message: report.summary,
@@ -327,7 +291,23 @@ function GameApp({ initialState, mapLayout, session }: GameAppProps) {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.code !== "KeyE" || event.repeat || !entered) {
+      if (!entered || event.repeat) {
+        return;
+      }
+
+      const eventTarget = event.target instanceof HTMLElement ? event.target : null;
+      const isUiControl = Boolean(eventTarget?.closest("input, textarea, select, button, [contenteditable='true']"));
+      if (isUiControl) {
+        return;
+      }
+
+      if (event.code === "KeyM") {
+        event.preventDefault();
+        setDashboardOpen((current) => !current);
+        return;
+      }
+
+      if (event.code !== "KeyE") {
         return;
       }
 
@@ -368,15 +348,54 @@ function GameApp({ initialState, mapLayout, session }: GameAppProps) {
       )}
       {!entered && (
         <div className="entry-overlay">
-          <button className="entry-button" onClick={handleEnterDistrict} type="button">
-            Enter District
-          </button>
+          <div className="entry-start">
+            <button className="entry-button" onClick={handleEnterDistrict} type="button">
+              Enter District
+            </button>
+            <div className="entry-controls" aria-label="Basic controls">
+              <span>
+                <kbd>WASD</kbd>
+                Move
+              </span>
+              <span>
+                <MousePointer2 size={15} aria-hidden="true" />
+                Look
+              </span>
+              <span>
+                <kbd>E</kbd>
+                Act
+              </span>
+              <span>
+                <kbd>M</kbd>
+                Ops
+              </span>
+            </div>
+          </div>
         </div>
       )}
-      <Dashboard graphicsQuality={graphicsQuality} state={state} onCommand={sendCommandWithFeedback} onGraphicsQualityChange={setGraphicsQuality} />
-      <Minimap state={state} playerPosition={playerPosition} guidanceLocationId={guidanceLocationId} target={activeTarget} />
-      <InteractionPanel state={state} target={activeTarget} onCommand={sendCommandAtActiveTarget} onSave={save} onReload={reload} onRestart={handleRestart} />
-      {visibleReport && <DayReportModal report={visibleReport} onClose={() => setVisibleReport(null)} />}
+      {entered && (
+        <button
+          aria-label={dashboardOpen ? "Close operations dashboard" : "Open operations dashboard"}
+          aria-pressed={dashboardOpen}
+          className={dashboardOpen ? "dashboard-toggle active" : "dashboard-toggle"}
+          onClick={() => setDashboardOpen((current) => !current)}
+          type="button"
+        >
+          {dashboardOpen ? <X size={17} aria-hidden="true" /> : <ClipboardList size={17} aria-hidden="true" />}
+          <span>{dashboardOpen ? "Close" : "Ops"}</span>
+        </button>
+      )}
+      {dashboardOpen && (
+        <Dashboard
+          graphicsQuality={graphicsQuality}
+          state={state}
+          onCommand={sendCommandWithFeedback}
+          onGraphicsQualityChange={setGraphicsQuality}
+          showDebug={showDebugTools}
+        />
+      )}
+      {entered && <Minimap state={state} playerPosition={playerPosition} guidanceLocationId={guidanceLocationId} target={activeTarget} />}
+      {entered && <InteractionPanel state={state} target={activeTarget} onCommand={sendCommandAtActiveTarget} onSave={save} onReload={reload} onRestart={handleRestart} />}
       <ToastStack messages={toasts} />
     </main>
   );
@@ -516,6 +535,7 @@ function GameAccessGate({ mapLayout }: { mapLayout: WorldMapLayout }) {
 
 export function App() {
   const [mapLayout, setMapLayout] = useState<WorldMapLayout>(() => loadWorldMapLayout());
+  const [audioConfig, setAudioConfig] = useState<AudioConfig>(() => createDefaultAudioConfig());
   const isAdminRoute = window.location.pathname === "/admin";
 
   useEffect(() => {
@@ -536,6 +556,27 @@ export function App() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    loadRemoteAudioConfig()
+      .then((remote) => {
+        if (!cancelled) {
+          setAudioConfig(normalizeAudioConfig(remote.config));
+        }
+      })
+      .catch(() => {
+        // Authored fallback audio remains available if the API is unreachable.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    configureGameAudio(audioConfig);
+  }, [audioConfig]);
+
   const handleSaveMapLayout = useCallback((layout: WorldMapLayout) => {
     saveWorldMapLayout(layout);
     setMapLayout(loadWorldMapLayout());
@@ -547,7 +588,16 @@ export function App() {
   }, []);
 
   if (isAdminRoute) {
-    return <AdminMapEditor initialLayout={mapLayout} onSave={handleSaveMapLayout} onReset={handleResetMapLayout} />;
+    return (
+      <AdminMapEditor
+        initialAudioConfig={audioConfig}
+        initialLayout={mapLayout}
+        onAudioSave={setAudioConfig}
+        onAudioReset={setAudioConfig}
+        onSave={handleSaveMapLayout}
+        onReset={handleResetMapLayout}
+      />
+    );
   }
 
   return <GameAccessGate mapLayout={mapLayout} />;

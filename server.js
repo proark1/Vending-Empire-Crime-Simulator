@@ -24,6 +24,9 @@ const metrics = {
   adminFailedLogins: 0,
   adminLogins: 0,
   apiRequests: 0,
+  audioRestores: 0,
+  audioRevisions: 0,
+  audioSaves: 0,
   dbFailures: 0,
   expiredSessions: 0,
   failedWrites: 0,
@@ -199,9 +202,32 @@ async function ensureDatabase() {
 
         CREATE INDEX IF NOT EXISTS map_layout_revisions_layout_id_idx ON map_layout_revisions(layout_id);
         CREATE INDEX IF NOT EXISTS map_layout_revisions_created_at_idx ON map_layout_revisions(created_at);
+
+        CREATE TABLE IF NOT EXISTS audio_configs (
+          id TEXT PRIMARY KEY,
+          config JSONB NOT NULL,
+          revision INTEGER NOT NULL DEFAULT 1,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          updated_by TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS audio_config_revisions (
+          id TEXT PRIMARY KEY,
+          config_id TEXT NOT NULL,
+          revision INTEGER NOT NULL,
+          config JSONB NOT NULL,
+          action TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          created_by TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS audio_config_revisions_config_id_idx ON audio_config_revisions(config_id);
+        CREATE INDEX IF NOT EXISTS audio_config_revisions_created_at_idx ON audio_config_revisions(created_at);
       `);
       await db.query("ALTER TABLE game_saves ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1");
       await db.query("ALTER TABLE map_layouts ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1");
+      await db.query("ALTER TABLE audio_configs ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1");
       await ensureSeededAdminUser(db);
       recordEvent("info", "database_ready", "Database schema is ready.");
     })();
@@ -659,6 +685,168 @@ async function handleMapLayoutRestore(request, response, body) {
   }
 }
 
+async function handleAudioConfigRead(response) {
+  await ensureDatabase();
+  const result = await getPool().query("SELECT config, updated_at, updated_by, revision FROM audio_configs WHERE id = 'default'");
+  jsonResponse(response, 200, {
+    config: result.rows[0]?.config ?? null,
+    updatedAt: result.rows[0]?.updated_at ?? null,
+    updatedBy: result.rows[0]?.updated_by ?? null,
+    revision: result.rows[0]?.revision ?? null
+  });
+}
+
+async function handleAudioConfigSave(request, response, body) {
+  const admin = await requireAdmin(request);
+  if (!body?.config || typeof body.config !== "object") {
+    jsonResponse(response, 400, { error: "Missing audio config." });
+    return;
+  }
+
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const saved = await client.query(
+      `INSERT INTO audio_configs (id, config, revision, updated_at, updated_by)
+       VALUES ('default', $1, 1, now(), $2)
+       ON CONFLICT (id)
+       DO UPDATE SET
+         config = EXCLUDED.config,
+         revision = audio_configs.revision + 1,
+         updated_at = now(),
+         updated_by = EXCLUDED.updated_by
+       RETURNING config, updated_at, updated_by, revision`,
+      [body.config, admin.name]
+    );
+    const row = saved.rows[0];
+    await client.query(
+      `INSERT INTO audio_config_revisions (id, config_id, revision, config, action, created_by)
+       VALUES ($1, 'default', $2, $3, 'save', $4)`,
+      [randomUUID(), row.revision, row.config, admin.name]
+    );
+    await client.query("COMMIT");
+    metrics.audioSaves += 1;
+    metrics.audioRevisions += 1;
+    recordEvent("info", "audio_config_saved", "Audio config saved.", { revision: row.revision, updatedBy: admin.name });
+    jsonResponse(response, 200, { ok: true, updatedAt: row.updated_at, updatedBy: row.updated_by, revision: row.revision });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    metrics.failedWrites += 1;
+    recordEvent("error", "audio_config_save_failed", "Audio config save failed.", { error: error.message });
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function handleAudioConfigReset(request, response) {
+  const admin = await requireAdmin(request);
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const current = await client.query("SELECT config, revision FROM audio_configs WHERE id = 'default'");
+    if (current.rows[0]) {
+      await client.query(
+        `INSERT INTO audio_config_revisions (id, config_id, revision, config, action, created_by)
+         VALUES ($1, 'default', $2, $3, 'reset_backup', $4)`,
+        [randomUUID(), current.rows[0].revision + 1, current.rows[0].config, admin.name]
+      );
+      metrics.audioRevisions += 1;
+    }
+    await client.query("DELETE FROM audio_configs WHERE id = 'default'");
+    await client.query("COMMIT");
+    recordEvent("warning", "audio_config_reset", "Audio config reset to authored default.", { by: admin.name });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    metrics.failedWrites += 1;
+    recordEvent("error", "audio_config_reset_failed", "Audio config reset failed.", { error: error.message });
+    throw error;
+  } finally {
+    client.release();
+  }
+  emptyResponse(response);
+}
+
+async function handleAudioConfigRevisionsRead(request, response) {
+  await requireAdmin(request);
+  const result = await getPool().query(
+    `SELECT id, revision, action, created_at, created_by
+       FROM audio_config_revisions
+      WHERE config_id = 'default'
+      ORDER BY created_at DESC
+      LIMIT 30`
+  );
+  jsonResponse(response, 200, {
+    revisions: result.rows.map((row) => ({
+      id: row.id,
+      revision: row.revision,
+      action: row.action,
+      createdAt: row.created_at,
+      createdBy: row.created_by
+    }))
+  });
+}
+
+async function handleAudioConfigRestore(request, response, body) {
+  const admin = await requireAdmin(request);
+  const revisionId = String(body?.revisionId ?? "").trim();
+  if (!revisionId) {
+    jsonResponse(response, 400, { error: "Missing revision id." });
+    return;
+  }
+
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const revision = await client.query("SELECT config, revision FROM audio_config_revisions WHERE id = $1 AND config_id = 'default'", [revisionId]);
+    if (!revision.rows[0]) {
+      await client.query("ROLLBACK");
+      jsonResponse(response, 404, { error: "Audio config revision not found." });
+      return;
+    }
+
+    const restored = await client.query(
+      `INSERT INTO audio_configs (id, config, revision, updated_at, updated_by)
+       VALUES ('default', $1, 1, now(), $2)
+       ON CONFLICT (id)
+       DO UPDATE SET
+         config = EXCLUDED.config,
+         revision = audio_configs.revision + 1,
+         updated_at = now(),
+         updated_by = EXCLUDED.updated_by
+       RETURNING config, updated_at, updated_by, revision`,
+      [revision.rows[0].config, admin.name]
+    );
+    const row = restored.rows[0];
+    await client.query(
+      `INSERT INTO audio_config_revisions (id, config_id, revision, config, action, created_by)
+       VALUES ($1, 'default', $2, $3, 'restore', $4)`,
+      [randomUUID(), row.revision, row.config, admin.name]
+    );
+    await client.query("COMMIT");
+    metrics.audioRestores += 1;
+    metrics.audioRevisions += 1;
+    recordEvent("warning", "audio_config_restored", "Audio config restored from revision.", {
+      restoredFromRevision: revision.rows[0].revision,
+      revision: row.revision,
+      by: admin.name
+    });
+    jsonResponse(response, 200, {
+      config: row.config,
+      updatedAt: row.updated_at,
+      updatedBy: row.updated_by,
+      revision: row.revision
+    });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    metrics.failedWrites += 1;
+    recordEvent("error", "audio_config_restore_failed", "Audio config restore failed.", { error: error.message });
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function handleAdminMonitoring(request, response) {
   await requireAdmin(request);
   let database = { ok: false, latencyMs: null };
@@ -734,6 +922,11 @@ async function routeApi(request, response, url) {
       return true;
     }
 
+    if (url.pathname === "/api/audio-config" && request.method === "GET") {
+      await handleAudioConfigRead(response);
+      return true;
+    }
+
     if (url.pathname === "/api/admin/map-layout" && request.method === "POST") {
       await handleMapLayoutSave(request, response, body);
       return true;
@@ -751,6 +944,26 @@ async function routeApi(request, response, url) {
 
     if (url.pathname === "/api/admin/map-layout/restore" && request.method === "POST") {
       await handleMapLayoutRestore(request, response, body);
+      return true;
+    }
+
+    if (url.pathname === "/api/admin/audio-config" && request.method === "POST") {
+      await handleAudioConfigSave(request, response, body);
+      return true;
+    }
+
+    if (url.pathname === "/api/admin/audio-config" && request.method === "DELETE") {
+      await handleAudioConfigReset(request, response);
+      return true;
+    }
+
+    if (url.pathname === "/api/admin/audio-config/revisions" && request.method === "GET") {
+      await handleAudioConfigRevisionsRead(request, response);
+      return true;
+    }
+
+    if (url.pathname === "/api/admin/audio-config/restore" && request.method === "POST") {
+      await handleAudioConfigRestore(request, response, body);
       return true;
     }
 

@@ -1,0 +1,231 @@
+export type AudioCategory = "sound" | "music" | "voice";
+
+export interface AudioAsset {
+  category: AudioCategory;
+  id: string;
+  label: string;
+  loop: boolean;
+  url: string;
+  volume: number;
+}
+
+export interface AudioCue {
+  assetId: string;
+  category: AudioCategory;
+  cooldownMs: number;
+  duckMusic: boolean;
+  enabled: boolean;
+  id: string;
+  label: string;
+  priority: number;
+  speaker: string;
+  subtitle: string;
+  trigger: string;
+}
+
+export interface AudioMixerSettings {
+  masterVolume: number;
+  musicVolume: number;
+  muted: boolean;
+  soundVolume: number;
+  voiceDucking: number;
+  voiceVolume: number;
+}
+
+export interface AudioConfig {
+  assets: AudioAsset[];
+  cues: AudioCue[];
+  mixer: AudioMixerSettings;
+  version: 1;
+}
+
+export interface AudioValidationIssue {
+  message: string;
+  severity: "error" | "warning";
+}
+
+export const audioTriggerOptions: Array<{ category: AudioCategory; label: string; trigger: string }> = [
+  { category: "music", trigger: "music.ambient", label: "Ambient loop" },
+  { category: "music", trigger: "music.heat", label: "High heat loop" },
+  { category: "music", trigger: "music.conflict", label: "Conflict loop" },
+  { category: "sound", trigger: "feedback.cash", label: "Cash collected" },
+  { category: "sound", trigger: "feedback.pickup", label: "Picked up crate" },
+  { category: "sound", trigger: "feedback.store", label: "Stored crate" },
+  { category: "sound", trigger: "feedback.stock", label: "Stocked machine" },
+  { category: "sound", trigger: "feedback.vehicle", label: "Vehicle cargo" },
+  { category: "sound", trigger: "feedback.repair", label: "Machine repaired" },
+  { category: "sound", trigger: "feedback.upgrade", label: "Upgrade installed" },
+  { category: "sound", trigger: "feedback.install", label: "Machine placed" },
+  { category: "sound", trigger: "feedback.sabotage", label: "Sabotage" },
+  { category: "sound", trigger: "feedback.fight", label: "Fight" },
+  { category: "sound", trigger: "feedback.melee", label: "Melee conflict" },
+  { category: "sound", trigger: "feedback.escape", label: "Escape" },
+  { category: "sound", trigger: "feedback.lockdown", label: "Remote lockdown" },
+  { category: "sound", trigger: "feedback.scout", label: "District scouted" },
+  { category: "sound", trigger: "feedback.district", label: "District unlocked" },
+  { category: "sound", trigger: "event.good", label: "Good event" },
+  { category: "sound", trigger: "event.warning", label: "Warning event" },
+  { category: "sound", trigger: "event.danger", label: "Danger event" },
+  { category: "sound", trigger: "event.neutral", label: "Neutral event" },
+  { category: "voice", trigger: "voice.district_entry", label: "District entry voice" },
+  { category: "voice", trigger: "voice.heat_warning", label: "Heat warning voice" },
+  { category: "voice", trigger: "voice.rival_attack", label: "Rival attack voice" },
+  { category: "voice", trigger: "voice.mission_complete", label: "Mission complete voice" }
+];
+
+const defaultMixer: AudioMixerSettings = {
+  masterVolume: 0.8,
+  musicVolume: 0.65,
+  muted: false,
+  soundVolume: 0.8,
+  voiceDucking: 0.45,
+  voiceVolume: 0.9
+};
+
+function cloneConfig(config: AudioConfig): AudioConfig {
+  return JSON.parse(JSON.stringify(config)) as AudioConfig;
+}
+
+function clamp(value: unknown, fallback: number, min = 0, max = 1): number {
+  const numberValue = typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  return Math.min(max, Math.max(min, numberValue));
+}
+
+function stringValue(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value.trim() : fallback;
+}
+
+function categoryValue(value: unknown, fallback: AudioCategory): AudioCategory {
+  return value === "sound" || value === "music" || value === "voice" ? value : fallback;
+}
+
+function booleanValue(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function integerValue(value: unknown, fallback: number, min: number, max: number): number {
+  const numberValue = typeof value === "number" && Number.isFinite(value) ? Math.round(value) : fallback;
+  return Math.min(max, Math.max(min, numberValue));
+}
+
+function idFromLabel(label: string, fallback: string): string {
+  const id = label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return id || fallback;
+}
+
+export function createDefaultAudioConfig(): AudioConfig {
+  return cloneConfig({
+    assets: [],
+    cues: [],
+    mixer: defaultMixer,
+    version: 1
+  });
+}
+
+export function normalizeAudioConfig(candidate: unknown): AudioConfig {
+  const input = typeof candidate === "object" && candidate !== null ? candidate as Partial<AudioConfig> : {};
+  const mixerInput = typeof input.mixer === "object" && input.mixer !== null ? input.mixer as Partial<AudioMixerSettings> : {};
+  const assetsInput = Array.isArray(input.assets) ? input.assets : [];
+  const cuesInput = Array.isArray(input.cues) ? input.cues : [];
+
+  const assets = assetsInput.map((assetInput, index) => {
+    const asset = typeof assetInput === "object" && assetInput !== null ? assetInput as Partial<AudioAsset> : {};
+    const label = stringValue(asset.label, `Asset ${index + 1}`);
+    const category = categoryValue(asset.category, "sound");
+    return {
+      category,
+      id: stringValue(asset.id, idFromLabel(label, `asset_${index + 1}`)),
+      label,
+      loop: booleanValue(asset.loop, category === "music"),
+      url: stringValue(asset.url),
+      volume: clamp(asset.volume, 0.8)
+    };
+  });
+
+  const cues = cuesInput.map((cueInput, index) => {
+    const cue = typeof cueInput === "object" && cueInput !== null ? cueInput as Partial<AudioCue> : {};
+    const trigger = stringValue(cue.trigger, audioTriggerOptions[index % audioTriggerOptions.length]?.trigger ?? "feedback.cash");
+    const triggerMeta = audioTriggerOptions.find((option) => option.trigger === trigger);
+    const category = categoryValue(cue.category, triggerMeta?.category ?? "sound");
+    const label = stringValue(cue.label, triggerMeta?.label ?? `Cue ${index + 1}`);
+    return {
+      assetId: stringValue(cue.assetId),
+      category,
+      cooldownMs: integerValue(cue.cooldownMs, 0, 0, 300000),
+      duckMusic: booleanValue(cue.duckMusic, category === "voice"),
+      enabled: booleanValue(cue.enabled, true),
+      id: stringValue(cue.id, idFromLabel(label, `cue_${index + 1}`)),
+      label,
+      priority: integerValue(cue.priority, 0, -100, 100),
+      speaker: stringValue(cue.speaker),
+      subtitle: stringValue(cue.subtitle),
+      trigger
+    };
+  });
+
+  return {
+    assets,
+    cues,
+    mixer: {
+      masterVolume: clamp(mixerInput.masterVolume, defaultMixer.masterVolume),
+      musicVolume: clamp(mixerInput.musicVolume, defaultMixer.musicVolume),
+      muted: booleanValue(mixerInput.muted, defaultMixer.muted),
+      soundVolume: clamp(mixerInput.soundVolume, defaultMixer.soundVolume),
+      voiceDucking: clamp(mixerInput.voiceDucking, defaultMixer.voiceDucking),
+      voiceVolume: clamp(mixerInput.voiceVolume, defaultMixer.voiceVolume)
+    },
+    version: 1
+  };
+}
+
+export function validateAudioConfig(config: AudioConfig): AudioValidationIssue[] {
+  const issues: AudioValidationIssue[] = [];
+  const assetIds = new Set<string>();
+  const cueIds = new Set<string>();
+
+  for (const asset of config.assets) {
+    if (!asset.id) {
+      issues.push({ severity: "error", message: "An audio asset is missing an id." });
+    } else if (assetIds.has(asset.id)) {
+      issues.push({ severity: "error", message: `Audio asset id "${asset.id}" is duplicated.` });
+    }
+    assetIds.add(asset.id);
+
+    if (!asset.label) {
+      issues.push({ severity: "warning", message: `Audio asset "${asset.id || "unknown"}" is missing a label.` });
+    }
+
+    if (!asset.url) {
+      issues.push({ severity: "error", message: `Audio asset "${asset.id || asset.label}" is missing a URL.` });
+    }
+  }
+
+  for (const cue of config.cues) {
+    if (!cue.id) {
+      issues.push({ severity: "error", message: "An audio cue is missing an id." });
+    } else if (cueIds.has(cue.id)) {
+      issues.push({ severity: "error", message: `Audio cue id "${cue.id}" is duplicated.` });
+    }
+    cueIds.add(cue.id);
+
+    if (!cue.trigger) {
+      issues.push({ severity: "error", message: `Audio cue "${cue.id || cue.label}" is missing a trigger.` });
+    }
+
+    if (cue.enabled && !cue.assetId) {
+      issues.push({ severity: "warning", message: `Audio cue "${cue.label || cue.id}" has no asset and will use procedural fallback when available.` });
+    } else if (cue.assetId && !assetIds.has(cue.assetId)) {
+      issues.push({ severity: "error", message: `Audio cue "${cue.label || cue.id}" references missing asset "${cue.assetId}".` });
+    }
+
+    const asset = config.assets.find((candidate) => candidate.id === cue.assetId);
+    if (asset && asset.category !== cue.category) {
+      issues.push({ severity: "warning", message: `Audio cue "${cue.label || cue.id}" is ${cue.category}, but its asset is ${asset.category}.` });
+    }
+  }
+
+  return issues;
+}

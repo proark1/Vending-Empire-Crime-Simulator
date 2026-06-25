@@ -1,4 +1,5 @@
 import type { GameState } from "../core/types";
+import type { AudioConfig } from "../content/audioConfig";
 import type { WorldMapLayout } from "../content/world";
 import { migrateGameState } from "./storage";
 
@@ -46,7 +47,22 @@ interface RemoteMapLayoutResponse {
   updatedBy: string | null;
 }
 
+interface RemoteAudioConfigResponse {
+  config: AudioConfig | null;
+  revision: number | null;
+  updatedAt: string | null;
+  updatedBy: string | null;
+}
+
 export interface RemoteMapRevision {
+  action: string;
+  createdAt: string;
+  createdBy: string | null;
+  id: string;
+  revision: number;
+}
+
+export interface RemoteAudioConfigRevision {
   action: string;
   createdAt: string;
   createdBy: string | null;
@@ -238,11 +254,25 @@ export async function loadRemoteMapLayout(): Promise<RemoteMapLayoutResponse> {
   });
 }
 
+export async function loadRemoteAudioConfig(): Promise<RemoteAudioConfigResponse> {
+  return requestJson<RemoteAudioConfigResponse>("/api/audio-config", {
+    method: "GET"
+  });
+}
+
 export async function saveRemoteMapLayout(session: AdminSession, layout: WorldMapLayout): Promise<{ revision: number; updatedAt: string; updatedBy: string }> {
   return requestJson<{ ok: true; revision: number; updatedAt: string; updatedBy: string }>("/api/admin/map-layout", {
     method: "POST",
     headers: authHeaders(session.token),
     body: JSON.stringify({ layout })
+  });
+}
+
+export async function saveRemoteAudioConfig(session: AdminSession, config: AudioConfig): Promise<{ revision: number; updatedAt: string; updatedBy: string }> {
+  return requestJson<{ ok: true; revision: number; updatedAt: string; updatedBy: string }>("/api/admin/audio-config", {
+    method: "POST",
+    headers: authHeaders(session.token),
+    body: JSON.stringify({ config })
   });
 }
 
@@ -254,8 +284,24 @@ export async function loadRemoteMapRevisions(session: AdminSession): Promise<Rem
   return response.revisions;
 }
 
+export async function loadRemoteAudioConfigRevisions(session: AdminSession): Promise<RemoteAudioConfigRevision[]> {
+  const response = await requestJson<{ revisions: RemoteAudioConfigRevision[] }>("/api/admin/audio-config/revisions", {
+    method: "GET",
+    headers: authHeaders(session.token)
+  });
+  return response.revisions;
+}
+
 export async function restoreRemoteMapRevision(session: AdminSession, revisionId: string): Promise<RemoteMapLayoutResponse> {
   return requestJson<RemoteMapLayoutResponse>("/api/admin/map-layout/restore", {
+    method: "POST",
+    headers: authHeaders(session.token),
+    body: JSON.stringify({ revisionId })
+  });
+}
+
+export async function restoreRemoteAudioConfigRevision(session: AdminSession, revisionId: string): Promise<RemoteAudioConfigResponse> {
+  return requestJson<RemoteAudioConfigResponse>("/api/admin/audio-config/restore", {
     method: "POST",
     headers: authHeaders(session.token),
     body: JSON.stringify({ revisionId })
@@ -271,6 +317,18 @@ export async function loadAdminMonitoring(session: AdminSession): Promise<AdminM
 
 export async function resetRemoteMapLayout(session: AdminSession): Promise<void> {
   const response = await fetch("/api/admin/map-layout", {
+    headers: authHeaders(session.token),
+    method: "DELETE"
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(typeof payload.error === "string" ? payload.error : "Reset failed.");
+  }
+}
+
+export async function resetRemoteAudioConfig(session: AdminSession): Promise<void> {
+  const response = await fetch("/api/admin/audio-config", {
     headers: authHeaders(session.token),
     method: "DELETE"
   });

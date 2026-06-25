@@ -1,7 +1,8 @@
-import { AlertTriangle, Building2, CircleDot, Copy, Eye, Gauge, History, Map, Plus, Redo2, RotateCcw, RotateCw, Route, Save, Square, Trash2, Trees, Undo2 } from "lucide-react";
+import { AlertTriangle, Building2, CircleDot, Copy, Eye, Gauge, History, Map, Music, Plus, Redo2, RotateCcw, RotateCw, Route, Save, Square, Trash2, Trees, Undo2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import * as THREE from "three";
+import type { AudioConfig } from "../game/content/audioConfig";
 import { districts, machinePlacementAnchors, worldBounds, type BuildingVisualStyle, type WorldDecorationKind, type WorldMapLayout } from "../game/content/world";
 import { createDefaultWorldMapLayout, validateWorldMapLayout } from "../game/world/mapLayoutStorage";
 import {
@@ -18,12 +19,17 @@ import {
   type RemoteMapRevision
 } from "../game/save/api";
 import { createBuilding } from "../render/three/proceduralArt";
+import { AdminAudioEditor } from "./AdminAudioEditor";
 
 type EditableLayer = "roads" | "buildings" | "backdropBuildings" | "decorations" | "patrolZones";
 type AdminViewMode = "2d" | "3d";
+type AdminTab = "map" | "audio";
 
 interface AdminMapEditorProps {
+  initialAudioConfig: AudioConfig;
   initialLayout: WorldMapLayout;
+  onAudioReset: (config: AudioConfig) => void;
+  onAudioSave: (config: AudioConfig) => void;
   onReset: () => void;
   onSave: (layout: WorldMapLayout) => void;
 }
@@ -816,13 +822,14 @@ function AdminThreeMapEditor({ activeLayer, layout, onEditStart, onMove, onSelec
   );
 }
 
-export function AdminMapEditor({ initialLayout, onReset, onSave }: AdminMapEditorProps) {
+export function AdminMapEditor({ initialAudioConfig, initialLayout, onAudioReset, onAudioSave, onReset, onSave }: AdminMapEditorProps) {
   const [adminSession, setAdminSession] = useState<AdminSession | null>(() => loadStoredAdminSession());
   const [credentials, setCredentials] = useState({ username: "", password: "" });
   const [loginError, setLoginError] = useState("");
   const [saving, setSaving] = useState(false);
   const [layout, setLayout] = useState<WorldMapLayout>(() => cloneLayout(initialLayout));
   const [activeLayer, setActiveLayer] = useState<EditableLayer>("buildings");
+  const [activeAdminTab, setActiveAdminTab] = useState<AdminTab>("map");
   const [selection, setSelection] = useState<Selection>({ layer: "buildings", index: 0 });
   const [viewMode, setViewMode] = useState<AdminViewMode>("2d");
   const [snapEnabled, setSnapEnabled] = useState(true);
@@ -1210,36 +1217,56 @@ export function AdminMapEditor({ initialLayout, onReset, onSave }: AdminMapEdito
     <main className="admin-shell">
       <header className="admin-header">
         <div>
-          <Map size={20} aria-hidden="true" />
+          {activeAdminTab === "audio" ? <Music size={20} aria-hidden="true" /> : <Map size={20} aria-hidden="true" />}
           <div>
-            <h1>Map Editor</h1>
-            <span>{blockingIssues.length === 0 ? "Layout valid" : `${blockingIssues.length} blocking issue${blockingIssues.length === 1 ? "" : "s"}`}</span>
+            <h1>Admin Console</h1>
+            <span>
+              {activeAdminTab === "audio"
+                ? "Sound, music, and voice controls"
+                : blockingIssues.length === 0 ? "Layout valid" : `${blockingIssues.length} blocking issue${blockingIssues.length === 1 ? "" : "s"}`}
+            </span>
           </div>
         </div>
         <div className="admin-actions">
-          <button disabled={history.past.length === 0 || saving} onClick={handleUndo} type="button">
-            <Undo2 size={16} aria-hidden="true" />
-            Undo
-          </button>
-          <button disabled={history.future.length === 0 || saving} onClick={handleRedo} type="button">
-            <Redo2 size={16} aria-hidden="true" />
-            Redo
-          </button>
           <button onClick={() => window.location.assign("/")} type="button">
             <Undo2 size={16} aria-hidden="true" />
             Game
           </button>
-          <button disabled={saving} onClick={handleReset} type="button">
-            <RotateCcw size={16} aria-hidden="true" />
-            Reset
-          </button>
-          <button className="primary" disabled={blockingIssues.length > 0 || saving} onClick={handleSave} type="button">
-            <Save size={16} aria-hidden="true" />
-            {saving ? "Saving" : "Save"}
-          </button>
+          {activeAdminTab === "map" && (
+            <>
+              <button disabled={history.past.length === 0 || saving} onClick={handleUndo} type="button">
+                <Undo2 size={16} aria-hidden="true" />
+                Undo
+              </button>
+              <button disabled={history.future.length === 0 || saving} onClick={handleRedo} type="button">
+                <Redo2 size={16} aria-hidden="true" />
+                Redo
+              </button>
+              <button disabled={saving} onClick={handleReset} type="button">
+                <RotateCcw size={16} aria-hidden="true" />
+                Reset
+              </button>
+              <button className="primary" disabled={blockingIssues.length > 0 || saving} onClick={handleSave} type="button">
+                <Save size={16} aria-hidden="true" />
+                {saving ? "Saving" : "Save"}
+              </button>
+            </>
+          )}
         </div>
       </header>
 
+      <nav className="admin-section-tabs" aria-label="Admin sections">
+        <button className={activeAdminTab === "map" ? "active" : ""} onClick={() => setActiveAdminTab("map")} type="button">
+          <Map size={16} aria-hidden="true" />
+          Map
+        </button>
+        <button className={activeAdminTab === "audio" ? "active" : ""} onClick={() => setActiveAdminTab("audio")} type="button">
+          <Music size={16} aria-hidden="true" />
+          Audio
+        </button>
+      </nav>
+
+      {activeAdminTab === "map" ? (
       <section className="admin-editor">
         <aside className="admin-sidebar">
           <div className="admin-layer-tabs">
@@ -1613,6 +1640,9 @@ export function AdminMapEditor({ initialLayout, onReset, onSave }: AdminMapEdito
           {status && <p className="admin-status">{status}</p>}
         </aside>
       </section>
+      ) : (
+        <AdminAudioEditor initialConfig={initialAudioConfig} onReset={onAudioReset} onSave={onAudioSave} session={adminSession} />
+      )}
     </main>
   );
 }
