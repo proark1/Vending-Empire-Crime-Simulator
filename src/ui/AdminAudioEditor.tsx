@@ -1,4 +1,4 @@
-import { History, Mic2, Music, Play, Plus, RotateCcw, Save, Trash2, Volume2, VolumeX } from "lucide-react";
+import { History, KeyRound, Mic2, Music, Play, Plus, RotateCcw, Save, Trash2, Volume2, VolumeX } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   audioTriggerOptions,
@@ -11,9 +11,18 @@ import {
   type AudioCue
 } from "../game/content/audioConfig";
 import {
+  createDefaultAudioProviderSettings,
+  normalizeAudioProviderSettings,
+  validateAudioProviderSettings,
+  type AudioProviderSettings,
+  type ElevenLabsVoiceProfile
+} from "../game/content/audioProvider";
+import {
+  loadAdminAudioProviderSettings,
   loadRemoteAudioConfigRevisions,
   resetRemoteAudioConfig,
   restoreRemoteAudioConfigRevision,
+  saveAdminAudioProviderSettings,
   saveRemoteAudioConfig,
   type AdminSession,
   type RemoteAudioConfigRevision
@@ -61,7 +70,9 @@ function categoryVolume(config: AudioConfig, category: AudioCategory, asset: Aud
 
 export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: AdminAudioEditorProps) {
   const [config, setConfig] = useState<AudioConfig>(() => normalizeAudioConfig(initialConfig));
+  const [providerSettings, setProviderSettings] = useState<AudioProviderSettings>(() => createDefaultAudioProviderSettings());
   const [revisions, setRevisions] = useState<RemoteAudioConfigRevision[]>([]);
+  const [providerSaving, setProviderSaving] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
   const [previewingId, setPreviewingId] = useState<string | null>(null);
@@ -78,9 +89,16 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
       .catch((error) => setStatus(error instanceof Error ? error.message : "Audio history failed to load."));
   }, [session]);
 
+  const refreshProviderSettings = useCallback(() => {
+    loadAdminAudioProviderSettings(session)
+      .then((response) => setProviderSettings(normalizeAudioProviderSettings(response.settings)))
+      .catch((error) => setStatus(error instanceof Error ? error.message : "ElevenLabs settings failed to load."));
+  }, [session]);
+
   useEffect(() => {
     refreshRevisions();
-  }, [refreshRevisions]);
+    refreshProviderSettings();
+  }, [refreshProviderSettings, refreshRevisions]);
 
   useEffect(() => {
     return () => {
@@ -93,9 +111,15 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
 
   const issues = useMemo(() => validateAudioConfig(config), [config]);
   const blockingIssues = issues.filter((issue) => issue.severity === "error");
+  const providerIssues = useMemo(() => validateAudioProviderSettings(providerSettings), [providerSettings]);
+  const providerBlockingIssues = providerIssues.filter((issue) => issue.severity === "error");
 
   const setNormalizedConfig = useCallback((updater: (current: AudioConfig) => AudioConfig) => {
     setConfig((current) => normalizeAudioConfig(updater(current)));
+  }, []);
+
+  const setNormalizedProviderSettings = useCallback((updater: (current: AudioProviderSettings) => AudioProviderSettings) => {
+    setProviderSettings((current) => normalizeAudioProviderSettings(updater(current)));
   }, []);
 
   const updateMixer = useCallback((key: keyof AudioConfig["mixer"], value: number | boolean) => {
@@ -121,6 +145,20 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
       cues: current.cues.map((cue, cueIndex) => cueIndex === index ? { ...cue, ...patch } : cue)
     }));
   }, [setNormalizedConfig]);
+
+  const updateProviderSettings = useCallback((patch: Partial<AudioProviderSettings>) => {
+    setNormalizedProviderSettings((current) => ({
+      ...current,
+      ...patch
+    }));
+  }, [setNormalizedProviderSettings]);
+
+  const updateVoiceProfile = useCallback((index: number, patch: Partial<ElevenLabsVoiceProfile>) => {
+    setNormalizedProviderSettings((current) => ({
+      ...current,
+      voiceProfiles: current.voiceProfiles.map((profile, profileIndex) => profileIndex === index ? { ...profile, ...patch } : profile)
+    }));
+  }, [setNormalizedProviderSettings]);
 
   const handleAddAsset = useCallback(() => {
     setNormalizedConfig((current) => {
@@ -168,6 +206,29 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
     });
   }, [setNormalizedConfig]);
 
+  const handleAddVoiceProfile = useCallback(() => {
+    setNormalizedProviderSettings((current) => {
+      const id = nextId("voice", current.voiceProfiles.map((profile) => profile.id));
+      return {
+        ...current,
+        voiceProfiles: [
+          ...current.voiceProfiles,
+          {
+            id,
+            label: "New Voice",
+            modelId: current.defaultModelId,
+            purpose: "voice",
+            similarityBoost: 0.75,
+            stability: 0.45,
+            style: 0,
+            useSpeakerBoost: true,
+            voiceId: ""
+          }
+        ]
+      };
+    });
+  }, [setNormalizedProviderSettings]);
+
   const handleDeleteAsset = useCallback((assetId: string) => {
     setNormalizedConfig((current) => ({
       ...current,
@@ -182,6 +243,13 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
       cues: current.cues.filter((cue) => cue.id !== cueId)
     }));
   }, [setNormalizedConfig]);
+
+  const handleDeleteVoiceProfile = useCallback((profileId: string) => {
+    setNormalizedProviderSettings((current) => ({
+      ...current,
+      voiceProfiles: current.voiceProfiles.filter((profile) => profile.id !== profileId)
+    }));
+  }, [setNormalizedProviderSettings]);
 
   const handlePreview = useCallback((asset: AudioAsset) => {
     if (!asset.url) {
@@ -234,6 +302,44 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
       .catch((error) => setStatus(error instanceof Error ? error.message : "Audio save failed."))
       .finally(() => setSaving(false));
   }, [config, onSave, refreshRevisions, session]);
+
+  const handleSaveProvider = useCallback(() => {
+    const nextSettings = normalizeAudioProviderSettings(providerSettings);
+    const nextIssues = validateAudioProviderSettings(nextSettings);
+    if (nextIssues.some((issue) => issue.severity === "error")) {
+      setStatus("Fix blocking ElevenLabs validation issues before saving.");
+      return;
+    }
+
+    setProviderSaving(true);
+    saveAdminAudioProviderSettings(session, nextSettings)
+      .then((response) => {
+        setProviderSettings(normalizeAudioProviderSettings(response.settings));
+        setStatus(`Saved ElevenLabs settings r${response.revision ?? "--"}.`);
+      })
+      .catch((error) => setStatus(error instanceof Error ? error.message : "ElevenLabs settings save failed."))
+      .finally(() => setProviderSaving(false));
+  }, [providerSettings, session]);
+
+  const handleClearProviderKey = useCallback(() => {
+    if (!window.confirm("Clear the saved ElevenLabs API key?")) {
+      return;
+    }
+
+    const nextSettings = normalizeAudioProviderSettings({
+      ...providerSettings,
+      apiKey: "",
+      hasApiKey: false
+    });
+    setProviderSaving(true);
+    saveAdminAudioProviderSettings(session, nextSettings, { clearApiKey: true })
+      .then((response) => {
+        setProviderSettings(normalizeAudioProviderSettings(response.settings));
+        setStatus("Cleared ElevenLabs API key.");
+      })
+      .catch((error) => setStatus(error instanceof Error ? error.message : "ElevenLabs API key clear failed."))
+      .finally(() => setProviderSaving(false));
+  }, [providerSettings, session]);
 
   const handleReset = useCallback(() => {
     if (!window.confirm("Reset the remote audio config to the authored default?")) {
@@ -302,6 +408,76 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
                 <strong>{Math.round(config.mixer[key] * 100)}%</strong>
               </label>
             ))}
+          </div>
+        </section>
+
+        <section className="admin-audio-panel">
+          <div className="admin-audio-panel-heading">
+            <h2>
+              <KeyRound size={17} aria-hidden="true" />
+              ElevenLabs
+            </h2>
+            <div className="admin-audio-heading-actions">
+              <button disabled={providerSaving || providerBlockingIssues.length > 0} onClick={handleSaveProvider} type="button">
+                <Save size={15} aria-hidden="true" />
+                {providerSaving ? "Saving" : "Save Provider"}
+              </button>
+              <button disabled={providerSaving || (!providerSettings.hasApiKey && !providerSettings.apiKey)} onClick={handleClearProviderKey} type="button">
+                <Trash2 size={15} aria-hidden="true" />
+                Clear Key
+              </button>
+            </div>
+          </div>
+
+          <div className="admin-provider-grid">
+            <label>
+              API key
+              <input
+                autoComplete="off"
+                placeholder={providerSettings.hasApiKey ? "Saved key on server" : "ElevenLabs API key"}
+                type="password"
+                value={providerSettings.apiKey}
+                onChange={(event) => updateProviderSettings({ apiKey: event.target.value, hasApiKey: Boolean(event.target.value) || providerSettings.hasApiKey })}
+              />
+            </label>
+            <label>
+              Default model
+              <input value={providerSettings.defaultModelId} onChange={(event) => updateProviderSettings({ defaultModelId: event.target.value })} />
+            </label>
+            <button onClick={handleAddVoiceProfile} type="button">
+              <Plus size={15} aria-hidden="true" />
+              Add Voice ID
+            </button>
+          </div>
+
+          <div className="admin-audio-table provider">
+            {providerSettings.voiceProfiles.length === 0 ? (
+              <p>No ElevenLabs voice IDs configured.</p>
+            ) : (
+              providerSettings.voiceProfiles.map((profile, index) => (
+                <div className="admin-audio-row provider" key={`${profile.id}-${index}`}>
+                  <select value={profile.purpose} onChange={(event) => updateVoiceProfile(index, { purpose: event.target.value as AudioCategory })}>
+                    {Object.entries(categoryLabels).map(([category, label]) => (
+                      <option key={category} value={category}>{label}</option>
+                    ))}
+                  </select>
+                  <input aria-label="Voice profile id" value={profile.id} onChange={(event) => updateVoiceProfile(index, { id: slug(event.target.value, profile.id || `voice_${index + 1}`) })} />
+                  <input aria-label="Voice profile label" value={profile.label} onChange={(event) => updateVoiceProfile(index, { label: event.target.value })} />
+                  <input aria-label="ElevenLabs voice id" className="wide" placeholder="Voice ID" value={profile.voiceId} onChange={(event) => updateVoiceProfile(index, { voiceId: event.target.value })} />
+                  <input aria-label="ElevenLabs model id" className="wide" value={profile.modelId} onChange={(event) => updateVoiceProfile(index, { modelId: event.target.value })} />
+                  <input aria-label="Stability" max="1" min="0" step="0.05" type="number" value={profile.stability} onChange={(event) => updateVoiceProfile(index, { stability: Number(event.target.value) })} />
+                  <input aria-label="Similarity boost" max="1" min="0" step="0.05" type="number" value={profile.similarityBoost} onChange={(event) => updateVoiceProfile(index, { similarityBoost: Number(event.target.value) })} />
+                  <input aria-label="Style" max="1" min="0" step="0.05" type="number" value={profile.style} onChange={(event) => updateVoiceProfile(index, { style: Number(event.target.value) })} />
+                  <label className="admin-audio-compact-check">
+                    <input checked={profile.useSpeakerBoost} type="checkbox" onChange={(event) => updateVoiceProfile(index, { useSpeakerBoost: event.target.checked })} />
+                    Boost
+                  </label>
+                  <button className="danger" onClick={() => handleDeleteVoiceProfile(profile.id)} type="button">
+                    <Trash2 size={14} aria-hidden="true" />
+                  </button>
+                </div>
+              ))
+            )}
           </div>
         </section>
 
@@ -441,6 +617,22 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
             <p>No audio validation issues.</p>
           ) : (
             issues.slice(0, 9).map((issue, index) => (
+              <p className={issue.severity} key={`${issue.message}-${index}`}>
+                {issue.message}
+              </p>
+            ))
+          )}
+        </div>
+
+        <div className="admin-validation">
+          <h3>
+            <KeyRound size={16} aria-hidden="true" />
+            ElevenLabs Validation
+          </h3>
+          {providerIssues.length === 0 ? (
+            <p>No ElevenLabs validation issues.</p>
+          ) : (
+            providerIssues.slice(0, 9).map((issue, index) => (
               <p className={issue.severity} key={`${issue.message}-${index}`}>
                 {issue.message}
               </p>

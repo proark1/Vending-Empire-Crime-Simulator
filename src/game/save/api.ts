@@ -1,5 +1,6 @@
 import type { GameState } from "../core/types";
 import type { AudioConfig } from "../content/audioConfig";
+import type { AudioProviderSettings } from "../content/audioProvider";
 import type { WorldMapLayout } from "../content/world";
 import { migrateGameState } from "./storage";
 
@@ -50,6 +51,13 @@ interface RemoteMapLayoutResponse {
 interface RemoteAudioConfigResponse {
   config: AudioConfig | null;
   revision: number | null;
+  updatedAt: string | null;
+  updatedBy: string | null;
+}
+
+interface RemoteAudioProviderSettingsResponse {
+  revision: number | null;
+  settings: AudioProviderSettings | null;
   updatedAt: string | null;
   updatedBy: string | null;
 }
@@ -260,6 +268,13 @@ export async function loadRemoteAudioConfig(): Promise<RemoteAudioConfigResponse
   });
 }
 
+export async function loadAdminAudioProviderSettings(session: AdminSession): Promise<RemoteAudioProviderSettingsResponse> {
+  return requestJson<RemoteAudioProviderSettingsResponse>("/api/admin/audio-provider", {
+    method: "GET",
+    headers: authHeaders(session.token)
+  });
+}
+
 export async function saveRemoteMapLayout(session: AdminSession, layout: WorldMapLayout): Promise<{ revision: number; updatedAt: string; updatedBy: string }> {
   return requestJson<{ ok: true; revision: number; updatedAt: string; updatedBy: string }>("/api/admin/map-layout", {
     method: "POST",
@@ -273,6 +288,14 @@ export async function saveRemoteAudioConfig(session: AdminSession, config: Audio
     method: "POST",
     headers: authHeaders(session.token),
     body: JSON.stringify({ config })
+  });
+}
+
+export async function saveAdminAudioProviderSettings(session: AdminSession, settings: AudioProviderSettings, options: { clearApiKey?: boolean } = {}): Promise<RemoteAudioProviderSettingsResponse> {
+  return requestJson<RemoteAudioProviderSettingsResponse>("/api/admin/audio-provider", {
+    method: "POST",
+    headers: authHeaders(session.token),
+    body: JSON.stringify({ clearApiKey: options.clearApiKey === true, settings })
   });
 }
 

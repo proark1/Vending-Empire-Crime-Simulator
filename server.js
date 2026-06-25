@@ -26,6 +26,7 @@ const metrics = {
   apiRequests: 0,
   audioRestores: 0,
   audioRevisions: 0,
+  audioProviderSaves: 0,
   audioSaves: 0,
   dbFailures: 0,
   expiredSessions: 0,
@@ -224,10 +225,20 @@ async function ensureDatabase() {
 
         CREATE INDEX IF NOT EXISTS audio_config_revisions_config_id_idx ON audio_config_revisions(config_id);
         CREATE INDEX IF NOT EXISTS audio_config_revisions_created_at_idx ON audio_config_revisions(created_at);
+
+        CREATE TABLE IF NOT EXISTS audio_provider_settings (
+          id TEXT PRIMARY KEY,
+          settings JSONB NOT NULL,
+          revision INTEGER NOT NULL DEFAULT 1,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          updated_by TEXT
+        );
       `);
       await db.query("ALTER TABLE game_saves ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1");
       await db.query("ALTER TABLE map_layouts ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1");
       await db.query("ALTER TABLE audio_configs ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1");
+      await db.query("ALTER TABLE audio_provider_settings ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1");
       await ensureSeededAdminUser(db);
       recordEvent("info", "database_ready", "Database schema is ready.");
     })();
@@ -847,6 +858,104 @@ async function handleAudioConfigRestore(request, response, body) {
   }
 }
 
+function normalizeAudioProviderCategory(value) {
+  return value === "sound" || value === "music" || value === "voice" ? value : "voice";
+}
+
+function normalizeAudioProviderNumber(value, fallback, min = 0, max = 1) {
+  const numberValue = typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  return Math.min(max, Math.max(min, numberValue));
+}
+
+function normalizeAudioProviderString(value, fallback = "") {
+  return typeof value === "string" ? value.trim() : fallback;
+}
+
+function normalizeAudioProviderSettings(candidate, existing = null, options = {}) {
+  const input = typeof candidate === "object" && candidate !== null ? candidate : {};
+  const existingSettings = typeof existing === "object" && existing !== null ? existing : {};
+  const defaultModelId = normalizeAudioProviderString(input.defaultModelId, normalizeAudioProviderString(existingSettings.defaultModelId, "eleven_multilingual_v2"));
+  const profiles = Array.isArray(input.voiceProfiles) ? input.voiceProfiles : [];
+  const apiKeyInput = normalizeAudioProviderString(input.apiKey);
+  const existingApiKey = normalizeAudioProviderString(existingSettings.apiKey);
+  const apiKey = options.clearApiKey ? "" : apiKeyInput || existingApiKey;
+
+  return {
+    apiKey,
+    defaultModelId,
+    hasApiKey: Boolean(apiKey),
+    provider: "elevenlabs",
+    voiceProfiles: profiles.map((profile, index) => {
+      const profileInput = typeof profile === "object" && profile !== null ? profile : {};
+      const label = normalizeAudioProviderString(profileInput.label, `Voice ${index + 1}`);
+      return {
+        id: normalizeAudioProviderString(profileInput.id, `voice_${index + 1}`),
+        label,
+        modelId: normalizeAudioProviderString(profileInput.modelId, defaultModelId),
+        purpose: normalizeAudioProviderCategory(profileInput.purpose),
+        similarityBoost: normalizeAudioProviderNumber(profileInput.similarityBoost, 0.75),
+        stability: normalizeAudioProviderNumber(profileInput.stability, 0.45),
+        style: normalizeAudioProviderNumber(profileInput.style, 0),
+        useSpeakerBoost: typeof profileInput.useSpeakerBoost === "boolean" ? profileInput.useSpeakerBoost : true,
+        voiceId: normalizeAudioProviderString(profileInput.voiceId)
+      };
+    })
+  };
+}
+
+function redactAudioProviderSettings(settings) {
+  const normalized = normalizeAudioProviderSettings(settings);
+  return {
+    ...normalized,
+    apiKey: "",
+    hasApiKey: Boolean(normalized.apiKey)
+  };
+}
+
+async function handleAudioProviderSettingsRead(request, response) {
+  await requireAdmin(request);
+  const result = await getPool().query("SELECT settings, updated_at, updated_by, revision FROM audio_provider_settings WHERE id = 'default'");
+  jsonResponse(response, 200, {
+    settings: redactAudioProviderSettings(result.rows[0]?.settings ?? null),
+    updatedAt: result.rows[0]?.updated_at ?? null,
+    updatedBy: result.rows[0]?.updated_by ?? null,
+    revision: result.rows[0]?.revision ?? null
+  });
+}
+
+async function handleAudioProviderSettingsSave(request, response, body) {
+  const admin = await requireAdmin(request);
+  if (!body?.settings || typeof body.settings !== "object") {
+    jsonResponse(response, 400, { error: "Missing audio provider settings." });
+    return;
+  }
+
+  const current = await getPool().query("SELECT settings FROM audio_provider_settings WHERE id = 'default'");
+  const settings = normalizeAudioProviderSettings(body.settings, current.rows[0]?.settings ?? null, { clearApiKey: body.clearApiKey === true });
+  const saved = await getPool().query(
+    `INSERT INTO audio_provider_settings (id, settings, revision, updated_at, updated_by)
+     VALUES ('default', $1, 1, now(), $2)
+     ON CONFLICT (id)
+     DO UPDATE SET
+       settings = EXCLUDED.settings,
+       revision = audio_provider_settings.revision + 1,
+       updated_at = now(),
+       updated_by = EXCLUDED.updated_by
+     RETURNING settings, updated_at, updated_by, revision`,
+    [settings, admin.name]
+  );
+  const row = saved.rows[0];
+  metrics.audioProviderSaves += 1;
+  recordEvent("info", "audio_provider_saved", "Audio provider settings saved.", { revision: row.revision, updatedBy: admin.name });
+  jsonResponse(response, 200, {
+    ok: true,
+    settings: redactAudioProviderSettings(row.settings),
+    updatedAt: row.updated_at,
+    updatedBy: row.updated_by,
+    revision: row.revision
+  });
+}
+
 async function handleAdminMonitoring(request, response) {
   await requireAdmin(request);
   let database = { ok: false, latencyMs: null };
@@ -964,6 +1073,16 @@ async function routeApi(request, response, url) {
 
     if (url.pathname === "/api/admin/audio-config/restore" && request.method === "POST") {
       await handleAudioConfigRestore(request, response, body);
+      return true;
+    }
+
+    if (url.pathname === "/api/admin/audio-provider" && request.method === "GET") {
+      await handleAudioProviderSettingsRead(request, response);
+      return true;
+    }
+
+    if (url.pathname === "/api/admin/audio-provider" && request.method === "POST") {
+      await handleAudioProviderSettingsSave(request, response, body);
       return true;
     }
 

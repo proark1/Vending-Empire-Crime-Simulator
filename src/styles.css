@@ -1790,6 +1790,7 @@ kbd {
 .admin-login input,
 .admin-field-grid input,
 .admin-field-grid select,
+.admin-provider-grid input,
 .admin-audio-row input,
 .admin-audio-row select {
   width: 100%;
@@ -1806,6 +1807,7 @@ kbd {
 .admin-actions button,
 .admin-section-tabs button,
 .admin-audio-panel-heading button,
+.admin-provider-grid button,
 .admin-audio-row button,
 .admin-audio-actions button,
 .admin-view-toggle button,
@@ -1833,6 +1835,7 @@ kbd {
 .admin-actions button:hover,
 .admin-section-tabs button:hover,
 .admin-audio-panel-heading button:hover,
+.admin-provider-grid button:hover,
 .admin-audio-row button:hover,
 .admin-audio-actions button:hover,
 .admin-view-toggle button:hover,
@@ -1959,6 +1962,13 @@ kbd {
   gap: 10px;
 }
 
+.admin-audio-heading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .admin-audio-panel-heading h2 {
   display: inline-flex;
   align-items: center;
@@ -1971,6 +1981,25 @@ kbd {
 
 .admin-audio-panel-heading button,
 .admin-audio-actions button {
+  padding: 0 10px;
+}
+
+.admin-provider-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(180px, 0.8fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.admin-provider-grid label {
+  display: grid;
+  gap: 5px;
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.admin-provider-grid button {
   padding: 0 10px;
 }
 
@@ -2057,6 +2086,11 @@ kbd {
 .admin-audio-row.cue {
   min-width: 1280px;
   grid-template-columns: 62px 120px 150px minmax(210px, 1fr) 160px 72px 108px 120px minmax(180px, 1fr) 72px 38px;
+}
+
+.admin-audio-row.provider {
+  min-width: 1240px;
+  grid-template-columns: 110px 120px 150px minmax(190px, 1fr) minmax(180px, 0.8fr) 84px 104px 84px 82px 38px;
 }
 
 .admin-audio-row input,
@@ -2665,6 +2699,10 @@ kbd {
 
   .admin-mixer-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-provider-grid {
+    grid-template-columns: 1fr;
   }
 
   .admin-sidebar,
