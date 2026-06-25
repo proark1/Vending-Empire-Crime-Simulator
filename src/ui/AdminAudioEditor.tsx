@@ -88,6 +88,48 @@ function formatBytes(bytes: number | null | undefined): string {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
+function configWithGeneratedAsset(config: AudioConfig, prompts: ElevenLabsGenerationPrompt[], asset: AudioAsset): AudioConfig {
+  const sourcePrompt = prompts.find((prompt) => `generated_${prompt.id}` === asset.id);
+  const nextAssets = config.assets.some((candidate) => candidate.id === asset.id)
+    ? config.assets.map((candidate) => candidate.id === asset.id ? { ...candidate, ...asset } : candidate)
+    : [...config.assets, asset];
+  const hasCue = config.cues.some((cue) => cue.assetId === asset.id || cue.trigger === sourcePrompt?.trigger);
+  const nextCues = config.cues.map((cue) => sourcePrompt?.trigger && cue.trigger === sourcePrompt.trigger
+    ? {
+      ...cue,
+      assetId: asset.id,
+      category: asset.category,
+      duckMusic: asset.category === "voice",
+      label: sourcePrompt.label,
+      subtitle: asset.category === "voice" ? sourcePrompt.prompt : cue.subtitle
+    }
+    : cue
+  );
+
+  return {
+    ...config,
+    assets: nextAssets,
+    cues: hasCue || !sourcePrompt?.trigger
+      ? nextCues
+      : [
+        ...nextCues,
+        {
+          assetId: asset.id,
+          category: asset.category,
+          cooldownMs: asset.category === "voice" ? 3500 : 0,
+          duckMusic: asset.category === "voice",
+          enabled: true,
+          id: `cue_${asset.id}`,
+          label: sourcePrompt.label,
+          priority: asset.category === "voice" ? 10 : 0,
+          speaker: "",
+          subtitle: asset.category === "voice" ? sourcePrompt.prompt : "",
+          trigger: sourcePrompt.trigger
+        }
+      ]
+  };
+}
+
 export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: AdminAudioEditorProps) {
   const [config, setConfig] = useState<AudioConfig>(() => normalizeAudioConfig(initialConfig));
   const [providerSettings, setProviderSettings] = useState<AudioProviderSettings>(() => createDefaultAudioProviderSettings());
@@ -379,50 +421,6 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
       .catch(() => setStatus("Copy failed."));
   }, []);
 
-  const upsertGeneratedAsset = useCallback((asset: AudioAsset) => {
-    setNormalizedConfig((current) => {
-      const sourcePrompt = providerSettings.generationPrompts.find((prompt) => `generated_${prompt.id}` === asset.id);
-      const nextAssets = current.assets.some((candidate) => candidate.id === asset.id)
-        ? current.assets.map((candidate) => candidate.id === asset.id ? { ...candidate, ...asset } : candidate)
-        : [...current.assets, asset];
-      const hasCue = current.cues.some((cue) => cue.assetId === asset.id || cue.trigger === sourcePrompt?.trigger);
-      const nextCues = current.cues.map((cue) => sourcePrompt?.trigger && cue.trigger === sourcePrompt.trigger
-        ? {
-          ...cue,
-          assetId: asset.id,
-          category: asset.category,
-          duckMusic: asset.category === "voice",
-          label: sourcePrompt.label,
-          subtitle: asset.category === "voice" ? sourcePrompt.prompt : cue.subtitle
-        }
-        : cue
-      );
-
-      return {
-        ...current,
-        assets: nextAssets,
-        cues: hasCue || !sourcePrompt?.trigger
-          ? nextCues
-          : [
-            ...nextCues,
-            {
-              assetId: asset.id,
-              category: asset.category,
-              cooldownMs: asset.category === "voice" ? 3500 : 0,
-              duckMusic: asset.category === "voice",
-              enabled: true,
-              id: `cue_${asset.id}`,
-              label: sourcePrompt.label,
-              priority: asset.category === "voice" ? 10 : 0,
-              speaker: "",
-              subtitle: asset.category === "voice" ? sourcePrompt.prompt : "",
-              trigger: sourcePrompt.trigger
-            }
-          ]
-      };
-    });
-  }, [providerSettings.generationPrompts, setNormalizedConfig]);
-
   const handleGeneratePrompt = useCallback((promptIndex: number) => {
     const prompt = providerSettings.generationPrompts[promptIndex];
     if (!prompt) {
@@ -431,15 +429,40 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
 
     setGeneratingPromptId(prompt.id);
     setStatus(`Generating ${prompt.label}...`);
-    generateAdminAudio(session, providerSettings, prompt)
+    const savedBeforeGeneration = normalizeAudioProviderSettings(providerSettings);
+    let settingsForGeneration = savedBeforeGeneration;
+    saveAdminAudioProviderSettings(session, savedBeforeGeneration)
+      .then((savedResponse) => {
+        const savedSettings = normalizeAudioProviderSettings(savedResponse.settings ?? savedBeforeGeneration);
+        settingsForGeneration = savedSettings;
+        setProviderSettings(savedSettings);
+        const savedPrompt = savedSettings.generationPrompts[promptIndex] ?? prompt;
+        setStatus(`Saved ElevenLabs settings. Generating ${savedPrompt.label}...`);
+        return generateAdminAudio(session, savedSettings, savedPrompt);
+      })
       .then((result) => {
-        updateGenerationPrompt(promptIndex, result.prompt);
-        upsertGeneratedAsset(result.asset);
-        setStatus(`Generated ${result.prompt.label}: ${formatBytes(result.asset.sizeBytes)}. Save Audio to publish the asset/cue mapping.`);
+        const nextSettings = normalizeAudioProviderSettings({
+          ...settingsForGeneration,
+          generationPrompts: settingsForGeneration.generationPrompts.map((candidate, index) => index === promptIndex ? result.prompt : candidate)
+        });
+        const nextConfig = normalizeAudioConfig(configWithGeneratedAsset(config, nextSettings.generationPrompts, result.asset));
+
+        setProviderSettings(nextSettings);
+        setConfig(nextConfig);
+        return Promise.all([
+          saveAdminAudioProviderSettings(session, nextSettings),
+          saveRemoteAudioConfig(session, nextConfig)
+        ]).then(([providerResponse, audioResponse]) => {
+          setProviderSettings(normalizeAudioProviderSettings(providerResponse.settings ?? nextSettings));
+          setConfig(nextConfig);
+          onSave(nextConfig);
+          refreshRevisions();
+          setStatus(`Generated and saved ${result.prompt.label}: ${formatBytes(result.asset.sizeBytes)}. Audio r${audioResponse.revision}.`);
+        });
       })
       .catch((error) => setStatus(error instanceof Error ? error.message : "Audio generation failed."))
       .finally(() => setGeneratingPromptId(null));
-  }, [providerSettings, session, updateGenerationPrompt, upsertGeneratedAsset]);
+  }, [config, onSave, providerSettings, refreshRevisions, session]);
 
   const handleSave = useCallback(() => {
     const nextConfig = normalizeAudioConfig(config);
