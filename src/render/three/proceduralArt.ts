@@ -430,7 +430,7 @@ export function createSkyDome(): THREE.Mesh {
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   const sky = new THREE.Mesh(
-    new THREE.SphereGeometry(62, 48, 24),
+    new THREE.SphereGeometry(106, 48, 24),
     new THREE.MeshBasicMaterial({ map: texture, side: THREE.BackSide })
   );
   sky.position.y = 6;
@@ -845,8 +845,10 @@ export function createAtmosphere(): THREE.Points {
   return points;
 }
 
-export function createStreetProps(): THREE.Group {
+export function createStreetProps(options: { enableLocalLights?: boolean; maxNpcs?: number } = {}): THREE.Group {
   const group = new THREE.Group();
+  const maxNpcs = options.maxNpcs ?? 16;
+  const enableLocalLights = options.enableLocalLights ?? true;
   const props: Array<{ kind: "poster" | "trash" | "pallet" | "graffiti"; x: number; z: number; y: number; w: number; h: number }> = [
     { kind: "poster", x: -6.9, z: -6.6, y: 1.1, w: 0.85, h: 1.15 },
     { kind: "poster", x: 6.4, z: 7.0, y: 1.0, w: 0.85, h: 1.15 },
@@ -971,10 +973,106 @@ export function createStreetProps(): THREE.Group {
       rotation: -0.2,
       speed: 0.34,
       variant: "scout"
+    },
+    {
+      action: "walk",
+      path: [
+        [-56.4, -31.2],
+        [-50.8, -31.2],
+        [-50.8, -25.4],
+        [-56.4, -25.4]
+      ],
+      rotation: 0.25,
+      speed: 0.44,
+      variant: "customer"
+    },
+    {
+      action: "scan",
+      path: [
+        [-52.8, -23.4],
+        [-46.2, -23.4],
+        [-46.2, -20.2],
+        [-52.8, -20.2]
+      ],
+      rotation: -0.2,
+      speed: 0.36,
+      variant: "scout"
+    },
+    {
+      action: "carry",
+      path: [
+        [-47.2, -34.8],
+        [-42.8, -34.8],
+        [-42.8, -30.8],
+        [-47.2, -30.8]
+      ],
+      rotation: -0.5,
+      speed: 0.3,
+      variant: "worker"
+    },
+    {
+      action: "pace",
+      path: [
+        [47.4, 21.8],
+        [53.4, 21.8],
+        [53.4, 25.8],
+        [47.4, 25.8]
+      ],
+      rotation: Math.PI,
+      speed: 0.3,
+      variant: "rival"
+    },
+    {
+      action: "walk",
+      path: [
+        [52.2, 30.2],
+        [57.2, 30.2],
+        [57.2, 36.8],
+        [52.2, 36.8]
+      ],
+      rotation: 0.15,
+      speed: 0.4,
+      variant: "customer"
+    },
+    {
+      action: "scan",
+      path: [
+        [43.6, 34.6],
+        [48.6, 34.6],
+        [48.6, 39.4],
+        [43.6, 39.4]
+      ],
+      rotation: -0.25,
+      speed: 0.34,
+      variant: "scout"
+    },
+    {
+      action: "carry",
+      path: [
+        [43.8, -23.4],
+        [48.2, -23.4],
+        [48.2, -18.2],
+        [43.8, -18.2]
+      ],
+      rotation: -0.4,
+      speed: 0.28,
+      variant: "worker"
+    },
+    {
+      action: "walk",
+      path: [
+        [-43.0, 21.2],
+        [-38.0, 21.2],
+        [-38.0, 27.0],
+        [-43.0, 27.0]
+      ],
+      rotation: 0.35,
+      speed: 0.38,
+      variant: "customer"
     }
   ];
 
-  npcs.forEach((npc, index) => {
+  npcs.slice(0, maxNpcs).forEach((npc, index) => {
     const [startX, startZ] = npc.path[0];
     const character = createNpcCharacter(npc.variant);
     character.position.set(startX, 0, startZ);
@@ -1104,9 +1202,11 @@ export function createStreetProps(): THREE.Group {
     head.position.copy(position).add(new THREE.Vector3(0, 3.45, 0));
     group.add(head);
 
-    const light = new THREE.PointLight("#fde68a", 9, 8, 1.6);
-    light.position.copy(head.position);
-    group.add(light);
+    if (enableLocalLights) {
+      const light = new THREE.PointLight("#fde68a", 9, 8, 1.6);
+      light.position.copy(head.position);
+      group.add(light);
+    }
   }
 
   return group;

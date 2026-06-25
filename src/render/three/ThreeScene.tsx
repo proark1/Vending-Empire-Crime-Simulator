@@ -2,7 +2,20 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import type { DistrictAccess, GameState, GameEventTone, Location, MachineUpgradeId, ProductId, StockCrate, StreetActivity, VendingMachine } from "../../game/core/types";
 import { activeMachineAlarms, activeVehicle, districtProgress, garageStorageUnits, machineAtLocation, machineRoutePressure } from "../../game/core/selectors";
-import { districtLabels, machinePlacementAnchors, worldBounds, worldBuildings, worldRoads, type WorldRoad } from "../../game/content/world";
+import {
+  cityBackdropBuildings,
+  districtLabels,
+  machinePlacementAnchors,
+  patrolZones,
+  trafficLoops,
+  worldBounds,
+  worldBuildings,
+  worldRoads,
+  type CityBackdropBuilding,
+  type PatrolZone,
+  type TrafficLoop,
+  type WorldRoad
+} from "../../game/content/world";
 import type { SceneFeedbackEvent, SceneTarget } from "./SceneTargets";
 import { createAsphaltMaterial, createAtmosphere, createBuilding, createNpcCharacter, createRoadMaterial, createSidewalkMaterial, createSkyDome, createStreetProps } from "./proceduralArt";
 
@@ -38,6 +51,16 @@ interface FeedbackRuntime {
   startY: number;
 }
 
+interface SceneRenderProfile {
+  enableLocalLights: boolean;
+  enableShadows: boolean;
+  lowPower: boolean;
+  maxAmbientNpcs: number;
+  maxBackdropBuildings: number;
+  maxPixelRatio: number;
+  maxTrafficLoops: number;
+}
+
 interface NpcRuntimeLimb {
   lower?: THREE.Object3D;
   upper?: THREE.Object3D;
@@ -68,6 +91,25 @@ const worldWidth = worldBounds.maxX - worldBounds.minX;
 const worldDepth = worldBounds.maxZ - worldBounds.minZ;
 const worldCenterX = (worldBounds.minX + worldBounds.maxX) / 2;
 const worldCenterZ = (worldBounds.minZ + worldBounds.maxZ) / 2;
+
+function detectRenderProfile(): SceneRenderProfile {
+  const cores = navigator.hardwareConcurrency || 4;
+  const mobileViewport = window.matchMedia("(max-width: 860px), (max-height: 620px)").matches;
+  const deviceMemory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+  const highMemory = typeof deviceMemory === "number" && deviceMemory >= 8;
+  const highTier = cores >= 8 && highMemory && !mobileViewport;
+  const lowPower = !highTier;
+
+  return {
+    enableLocalLights: highTier,
+    enableShadows: highTier,
+    lowPower,
+    maxAmbientNpcs: lowPower ? 7 : 12,
+    maxBackdropBuildings: lowPower ? 12 : cityBackdropBuildings.length,
+    maxPixelRatio: lowPower ? 1.1 : 1.5,
+    maxTrafficLoops: lowPower ? 3 : 5
+  };
+}
 
 function machineFrontVector(rotationY: number): THREE.Vector3 {
   return new THREE.Vector3(-Math.sin(rotationY), 0, -Math.cos(rotationY));
@@ -311,6 +353,25 @@ function updateAnimatedStreetProp(object: THREE.Object3D, time: number): void {
   const walkBob = isMoving ? Math.abs(Math.cos(time * 0.0055 * Math.max(0.8, walkSpeed * 2.8) + phase)) * 0.01 : 0;
   object.position.y = baseY + Math.sin(time * 0.003 * floatSpeed + phase) * amount + walkBob;
   updateNpcRig(object, time, walkSpeed || floatSpeed, isMoving);
+}
+
+function updateTrafficVehicle(object: THREE.Object3D, time: number): void {
+  const path = Array.isArray(object.userData.walkPath) ? object.userData.walkPath as THREE.Vector3[] : [];
+  const speed = typeof object.userData.walkSpeed === "number" ? object.userData.walkSpeed : 0;
+  const pathOffset = typeof object.userData.pathOffset === "number" ? object.userData.pathOffset : 0;
+  const state = pathStateAt(path, time * 0.001 * speed + pathOffset);
+  if (!state) {
+    return;
+  }
+
+  object.position.x = state.position.x;
+  object.position.z = state.position.z;
+  object.rotation.y = Math.atan2(-state.direction.x, -state.direction.z);
+
+  const emergencyLight = object.userData.emergencyLight as THREE.Object3D | undefined;
+  if (emergencyLight) {
+    emergencyLight.visible = Math.sin(time * 0.012) > 0;
+  }
 }
 
 function createMachineSignTexture(color: string, damage: number): THREE.CanvasTexture {
@@ -1351,6 +1412,174 @@ function addBuilding(scene: THREE.Scene, x: number, z: number, width: number, de
   scene.add(building);
 }
 
+function createBackdropBuilding(definition: CityBackdropBuilding): THREE.Group {
+  const group = new THREE.Group();
+  const bodyMaterial = new THREE.MeshStandardMaterial({ color: definition.color, roughness: 0.84, metalness: 0.05 });
+  const trimMaterial = new THREE.MeshBasicMaterial({ color: "#020617", transparent: true, opacity: 0.5 });
+  const litMaterial = new THREE.MeshBasicMaterial({
+    color: definition.lit > 0.68 ? "#f0abfc" : definition.lit > 0.46 ? "#93c5fd" : "#fde68a",
+    transparent: true,
+    opacity: 0.62
+  });
+  const darkWindowMaterial = new THREE.MeshBasicMaterial({ color: "#0f172a", transparent: true, opacity: 0.5 });
+
+  const body = new THREE.Mesh(new THREE.BoxGeometry(definition.width, definition.height, definition.depth), bodyMaterial);
+  body.position.y = definition.height / 2;
+  body.receiveShadow = false;
+  body.castShadow = false;
+  group.add(body);
+
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(definition.width + 0.24, 0.12, definition.depth + 0.24), trimMaterial);
+  roof.position.y = definition.height + 0.08;
+  group.add(roof);
+
+  const rows = Math.max(2, Math.min(8, Math.floor(definition.height / 1.15)));
+  const cols = Math.max(2, Math.min(6, Math.floor(definition.width / 0.85)));
+  const frontZ = -definition.depth / 2 - 0.012;
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      const lit = ((row * 5 + col * 3 + Math.round(definition.x + definition.z)) % 10) / 10 < definition.lit;
+      const window = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.22, 0.018), lit ? litMaterial : darkWindowMaterial);
+      window.position.set(
+        -definition.width / 2 + 0.42 + col * ((definition.width - 0.84) / Math.max(1, cols - 1)),
+        0.78 + row * ((definition.height - 1.4) / Math.max(1, rows - 1)),
+        frontZ
+      );
+      group.add(window);
+    }
+  }
+
+  const lobbyGlow = new THREE.Mesh(
+    new THREE.BoxGeometry(Math.min(definition.width * 0.55, 2.1), 0.42, 0.024),
+    new THREE.MeshBasicMaterial({ color: litMaterial.color, transparent: true, opacity: 0.28 + definition.lit * 0.18 })
+  );
+  lobbyGlow.position.set(0, 0.54, frontZ - 0.005);
+  group.add(lobbyGlow);
+
+  group.position.set(definition.x, 0, definition.z);
+  return group;
+}
+
+function createCityBackdropLayer(maxBuildings: number): THREE.Group {
+  const group = new THREE.Group();
+  cityBackdropBuildings.slice(0, maxBuildings).forEach((building) => {
+    group.add(createBackdropBuilding(building));
+  });
+  return group;
+}
+
+function createPatrolZone(zone: PatrolZone): THREE.Group {
+  const group = new THREE.Group();
+  const fill = new THREE.Mesh(
+    new THREE.CircleGeometry(zone.radius, 36),
+    new THREE.MeshBasicMaterial({ color: zone.color, transparent: true, opacity: 0.045, depthWrite: false })
+  );
+  fill.rotation.x = -Math.PI / 2;
+  fill.position.y = 0.075;
+  group.add(fill);
+
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(zone.radius, 0.035, 6, 80),
+    new THREE.MeshBasicMaterial({ color: zone.color, transparent: true, opacity: 0.34, depthWrite: false })
+  );
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.095;
+  group.add(ring);
+
+  const postMaterial = new THREE.MeshBasicMaterial({ color: zone.color, transparent: true, opacity: 0.7 });
+  for (const offset of [-zone.radius * 0.68, zone.radius * 0.68]) {
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.9, 0.12), postMaterial);
+    post.position.set(offset, 0.45, 0);
+    group.add(post);
+  }
+
+  group.position.set(zone.x, 0, zone.z);
+  addLabel(group, zone.label, zone.color, new THREE.Vector3(0, 0, 0), 1.15);
+  return group;
+}
+
+function createPatrolZoneLayer(maxZones: number): THREE.Group {
+  const group = new THREE.Group();
+  patrolZones.slice(0, maxZones).forEach((zone) => {
+    group.add(createPatrolZone(zone));
+  });
+  return group;
+}
+
+function createTrafficVehicleMesh(loop: TrafficLoop, enableShadows: boolean): THREE.Group {
+  const group = new THREE.Group();
+  const bodyColor = loop.kind === "police" ? "#f8fafc" : loop.color;
+  const bodyMaterial = new THREE.MeshStandardMaterial({ color: bodyColor, roughness: 0.48, metalness: 0.08 });
+  const trimMaterial = new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.52, metalness: 0.18 });
+  const glassMaterial = new THREE.MeshBasicMaterial({ color: "#bae6fd", transparent: true, opacity: 0.58 });
+  const length = loop.kind === "delivery" ? 1.38 : 1.05;
+  const height = loop.kind === "delivery" ? 0.52 : 0.34;
+
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.58, height, length), bodyMaterial);
+  body.position.y = 0.32;
+  body.castShadow = enableShadows;
+  body.receiveShadow = enableShadows;
+  group.add(body);
+
+  const cab = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.28, 0.42), glassMaterial);
+  cab.position.set(0, 0.62, -length * 0.16);
+  group.add(cab);
+
+  if (loop.kind === "police") {
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.08, length + 0.035), new THREE.MeshBasicMaterial({ color: "#1d4ed8" }));
+    stripe.position.set(0, 0.34, 0);
+    group.add(stripe);
+    const lightbar = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.06, 0.12), new THREE.MeshBasicMaterial({ color: "#ef4444" }));
+    lightbar.position.set(0, 0.8, -0.08);
+    group.add(lightbar);
+    group.userData.emergencyLight = lightbar;
+  }
+
+  if (loop.kind === "delivery") {
+    const cargoLine = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.08, 0.78), new THREE.MeshBasicMaterial({ color: "#451a03" }));
+    cargoLine.position.set(0, 0.48, 0.2);
+    group.add(cargoLine);
+  }
+
+  for (const x of [-0.34, 0.34]) {
+    for (const z of [-length * 0.32, length * 0.34]) {
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.075, 14), trimMaterial);
+      wheel.position.set(x, 0.18, z);
+      wheel.rotation.z = Math.PI / 2;
+      wheel.castShadow = enableShadows;
+      group.add(wheel);
+    }
+  }
+
+  const headlightMaterial = new THREE.MeshBasicMaterial({ color: "#fde68a", transparent: true, opacity: 0.76 });
+  for (const x of [-0.19, 0.19]) {
+    const light = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.045, 0.018), headlightMaterial);
+    light.position.set(x, 0.34, -length / 2 - 0.012);
+    group.add(light);
+  }
+
+  return group;
+}
+
+function createTrafficLayer(maxLoops: number, enableShadows: boolean): { animated: THREE.Object3D[]; group: THREE.Group } {
+  const group = new THREE.Group();
+  const animated: THREE.Object3D[] = [];
+
+  trafficLoops.slice(0, maxLoops).forEach((loop) => {
+    const vehicle = createTrafficVehicleMesh(loop, enableShadows);
+    const start = loop.path[0];
+    vehicle.position.set(start.x, 0.02, start.z);
+    vehicle.userData.trafficLoop = true;
+    vehicle.userData.walkPath = loop.path.map((point) => new THREE.Vector3(point.x, 0.02, point.z));
+    vehicle.userData.walkSpeed = loop.speed;
+    vehicle.userData.pathOffset = loop.phase;
+    group.add(vehicle);
+    animated.push(vehicle);
+  });
+
+  return { animated, group };
+}
+
 function sidewalkStripsForRoad(road: WorldRoad): Array<{ depth: number; width: number; x: number; z: number }> {
   const sidewalkWidth = 1.9;
   if (road.width >= road.depth) {
@@ -1677,11 +1906,12 @@ export function ThreeScene({ feedbackEvent, guidanceLocationId, state, onPlayerP
       return;
     }
 
+    const renderProfile = detectRenderProfile();
     const scene = new THREE.Scene();
     scene.background = new THREE.Color("#0f172a");
-    scene.fog = new THREE.Fog("#18243a", 34, 112);
+    scene.fog = new THREE.Fog("#18243a", renderProfile.lowPower ? 28 : 38, renderProfile.lowPower ? 122 : 148);
 
-    const camera = new THREE.PerspectiveCamera(70, mount.clientWidth / mount.clientHeight, 0.1, 170);
+    const camera = new THREE.PerspectiveCamera(70, mount.clientWidth / mount.clientHeight, 0.1, 220);
     camera.position.set(0, 1.65, 0);
     camera.rotation.order = "YXZ";
 
@@ -1705,10 +1935,10 @@ export function ThreeScene({ feedbackEvent, guidanceLocationId, state, onPlayerP
       ? `${stateRef.current.player.carriedCrate.productId}:${stateRef.current.player.carriedCrate.quantity}:${stateRef.current.player.carriedCrate.source}`
       : null;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    const renderer = new THREE.WebGLRenderer({ antialias: !renderProfile.lowPower, powerPreference: renderProfile.lowPower ? "default" : "high-performance" });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, renderProfile.maxPixelRatio));
     renderer.setSize(mount.clientWidth, mount.clientHeight);
-    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.enabled = renderProfile.enableShadows;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     mount.appendChild(renderer.domElement);
 
@@ -1721,8 +1951,8 @@ export function ThreeScene({ feedbackEvent, guidanceLocationId, state, onPlayerP
 
     const keyLight = new THREE.DirectionalLight("#bfdbfe", 1.45);
     keyLight.position.set(-8, 13, 7);
-    keyLight.castShadow = true;
-    keyLight.shadow.mapSize.set(1024, 1024);
+    keyLight.castShadow = renderProfile.enableShadows;
+    keyLight.shadow.mapSize.set(renderProfile.lowPower ? 512 : 1024, renderProfile.lowPower ? 512 : 1024);
     scene.add(keyLight);
 
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(worldWidth + 10, worldDepth + 10), createAsphaltMaterial());
@@ -1753,6 +1983,9 @@ export function ThreeScene({ feedbackEvent, guidanceLocationId, state, onPlayerP
       addBuilding(scene, building.x, building.z, building.width, building.depth, building.height, building.style, building.signText);
     }
 
+    scene.add(createCityBackdropLayer(renderProfile.maxBackdropBuildings));
+    scene.add(createPatrolZoneLayer(renderProfile.lowPower ? 2 : patrolZones.length));
+
     for (const label of districtLabels) {
       const district = stateRef.current.districts[label.districtId];
       if (district) {
@@ -1760,15 +1993,21 @@ export function ThreeScene({ feedbackEvent, guidanceLocationId, state, onPlayerP
       }
     }
 
-    const streetProps = createStreetProps();
+    const streetProps = createStreetProps({
+      enableLocalLights: renderProfile.enableLocalLights,
+      maxNpcs: renderProfile.maxAmbientNpcs
+    });
     const animatedProps: THREE.Object3D[] = [];
     streetProps.traverse((object) => {
       if (object.userData.floatSpeed) {
         animatedProps.push(object);
       }
     });
+    const trafficLayer = createTrafficLayer(renderProfile.maxTrafficLoops, renderProfile.enableShadows);
+    animatedProps.push(...trafficLayer.animated);
     animatedPropsRef.current = animatedProps;
     scene.add(streetProps);
+    scene.add(trafficLayer.group);
 
     const dynamicGroup = new THREE.Group();
     scene.add(dynamicGroup);
@@ -1965,7 +2204,11 @@ export function ThreeScene({ feedbackEvent, guidanceLocationId, state, onPlayerP
         }
       });
       for (const object of animatedProps) {
-        updateAnimatedStreetProp(object, time);
+        if (object.userData.trafficLoop) {
+          updateTrafficVehicle(object, time);
+        } else {
+          updateAnimatedStreetProp(object, time);
+        }
       }
       updateFeedbackEffects(feedbackGroup, time);
 
