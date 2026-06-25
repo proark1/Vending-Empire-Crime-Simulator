@@ -15,6 +15,9 @@ export interface ElevenLabsVoiceProfile {
 export interface ElevenLabsGenerationPrompt {
   durationSeconds: number;
   enabled: boolean;
+  generatedAt?: string;
+  generatedSizeBytes?: number | null;
+  generatedUrl?: string;
   id: string;
   label: string;
   negativePrompt: string;
@@ -491,6 +494,9 @@ export function normalizeAudioProviderSettings(candidate: unknown): AudioProvide
       return {
         durationSeconds: clamp(prompt.durationSeconds, fallback?.durationSeconds ?? 3, 0.5, 180),
         enabled: booleanValue(prompt.enabled, true),
+        generatedAt: stringValue(prompt.generatedAt),
+        generatedSizeBytes: typeof prompt.generatedSizeBytes === "number" && Number.isFinite(prompt.generatedSizeBytes) ? Math.max(0, Math.round(prompt.generatedSizeBytes)) : null,
+        generatedUrl: stringValue(prompt.generatedUrl),
         id: stringValue(prompt.id, idFromLabel(label, `prompt_${index + 1}`)),
         label,
         negativePrompt: stringValue(prompt.negativePrompt, fallback?.negativePrompt ?? ""),

@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { mkdir, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,7 @@ import pg from "pg";
 const { Pool } = pg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.join(__dirname, "dist");
+const generatedAudioDir = path.join(__dirname, "generated-audio");
 const port = Number(process.env.PORT ?? 3000);
 const databaseUrl = process.env.DATABASE_URL;
 const seedAdminName = process.env.ADMIN_NAME ?? "proark";
@@ -27,6 +28,7 @@ const metrics = {
   audioRestores: 0,
   audioRevisions: 0,
   audioProviderSaves: 0,
+  audioGenerations: 0,
   audioSaves: 0,
   dbFailures: 0,
   expiredSessions: 0,
@@ -895,6 +897,9 @@ function normalizeAudioProviderSettings(candidate, existing = null, options = {}
         return {
           durationSeconds: normalizeAudioProviderNumber(promptInput.durationSeconds, 3, 0.5, 180),
           enabled: typeof promptInput.enabled === "boolean" ? promptInput.enabled : true,
+          generatedAt: normalizeAudioProviderString(promptInput.generatedAt),
+          generatedSizeBytes: typeof promptInput.generatedSizeBytes === "number" && Number.isFinite(promptInput.generatedSizeBytes) ? Math.max(0, Math.round(promptInput.generatedSizeBytes)) : null,
+          generatedUrl: normalizeAudioProviderString(promptInput.generatedUrl),
           id: normalizeAudioProviderString(promptInput.id, `prompt_${index + 1}`),
           label,
           negativePrompt: normalizeAudioProviderString(promptInput.negativePrompt),
@@ -975,6 +980,148 @@ async function handleAudioProviderSettingsSave(request, response, body) {
     updatedAt: row.updated_at,
     updatedBy: row.updated_by,
     revision: row.revision
+  });
+}
+
+function safeFileSegment(value) {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "audio";
+}
+
+function generatedAudioUrl(filename) {
+  return `/generated-audio/${encodeURIComponent(filename)}`;
+}
+
+function findVoiceProfile(settings, prompt) {
+  if (prompt.voiceProfileId) {
+    return settings.voiceProfiles.find((profile) => profile.id === prompt.voiceProfileId) ?? null;
+  }
+
+  return settings.voiceProfiles.find((profile) => profile.purpose === "voice") ?? settings.voiceProfiles[0] ?? null;
+}
+
+async function elevenLabsAudioRequest({ apiKey, endpoint, payload }) {
+  const upstream = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "xi-api-key": apiKey
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!upstream.ok) {
+    const errorText = await upstream.text().catch(() => "");
+    throw httpError(`ElevenLabs generation failed: ${errorText || upstream.statusText}`, upstream.status >= 500 ? 502 : 400, "ELEVENLABS_GENERATION_FAILED");
+  }
+
+  return Buffer.from(await upstream.arrayBuffer());
+}
+
+async function generateElevenLabsAudio(settings, prompt) {
+  const apiKey = normalizeAudioProviderString(settings.apiKey);
+  if (!apiKey) {
+    throw httpError("ElevenLabs API key is not set.", 400, "ELEVENLABS_API_KEY_MISSING");
+  }
+
+  if (!prompt.prompt) {
+    throw httpError("Generation prompt text is missing.", 400, "AUDIO_PROMPT_MISSING");
+  }
+
+  if (prompt.purpose === "voice") {
+    const profile = findVoiceProfile(settings, prompt);
+    if (!profile?.voiceId) {
+      throw httpError("Select a voice profile with an ElevenLabs voice ID before generating voice audio.", 400, "ELEVENLABS_VOICE_ID_MISSING");
+    }
+
+    return elevenLabsAudioRequest({
+      apiKey,
+      endpoint: `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(profile.voiceId)}?output_format=mp3_44100_128`,
+      payload: {
+        model_id: profile.modelId || settings.defaultModelId || "eleven_multilingual_v2",
+        text: prompt.prompt,
+        voice_settings: {
+          similarity_boost: profile.similarityBoost,
+          stability: profile.stability,
+          style: profile.style,
+          use_speaker_boost: profile.useSpeakerBoost
+        }
+      }
+    });
+  }
+
+  if (prompt.purpose === "music") {
+    return elevenLabsAudioRequest({
+      apiKey,
+      endpoint: "https://api.elevenlabs.io/v1/music/stream?output_format=mp3_44100_128",
+      payload: {
+        force_instrumental: true,
+        model_id: "music_v1",
+        music_length_ms: Math.round(Math.min(600, Math.max(3, prompt.durationSeconds || 60)) * 1000),
+        prompt: prompt.prompt
+      }
+    });
+  }
+
+  return elevenLabsAudioRequest({
+    apiKey,
+    endpoint: "https://api.elevenlabs.io/v1/sound-generation?output_format=mp3_44100_128",
+    payload: {
+      duration_seconds: Math.min(30, Math.max(0.5, prompt.durationSeconds || 2)),
+      loop: prompt.trigger?.startsWith("music.") || prompt.label?.toLowerCase().includes("loop") || false,
+      model_id: "eleven_text_to_sound_v2",
+      prompt_influence: 0.35,
+      text: prompt.prompt
+    }
+  });
+}
+
+async function handleAudioProviderGenerate(request, response, body) {
+  const admin = await requireAdmin(request);
+  if (!body?.prompt || typeof body.prompt !== "object") {
+    jsonResponse(response, 400, { error: "Missing generation prompt." });
+    return;
+  }
+
+  const current = await getPool().query("SELECT settings FROM audio_provider_settings WHERE id = 'default'");
+  const settings = normalizeAudioProviderSettings(body.settings ?? {}, current.rows[0]?.settings ?? null);
+  const prompt = normalizeAudioProviderSettings({ generationPrompts: [body.prompt] }).generationPrompts[0];
+  const audio = await generateElevenLabsAudio(settings, prompt);
+  await mkdir(generatedAudioDir, { recursive: true });
+
+  const generatedAt = new Date().toISOString();
+  const filename = `${safeFileSegment(prompt.purpose)}-${safeFileSegment(prompt.id)}-${Date.now()}.mp3`;
+  const filePath = path.join(generatedAudioDir, filename);
+  await writeFile(filePath, audio);
+
+  const generatedPrompt = {
+    ...prompt,
+    generatedAt,
+    generatedSizeBytes: audio.length,
+    generatedUrl: generatedAudioUrl(filename)
+  };
+
+  metrics.audioGenerations += 1;
+  recordEvent("info", "audio_generated", "ElevenLabs audio generated.", {
+    by: admin.name,
+    promptId: prompt.id,
+    purpose: prompt.purpose,
+    sizeBytes: audio.length
+  });
+  jsonResponse(response, 200, {
+    asset: {
+      category: prompt.purpose,
+      id: `generated_${prompt.id}`,
+      label: prompt.label,
+      loop: prompt.purpose === "music",
+      sizeBytes: audio.length,
+      url: generatedPrompt.generatedUrl,
+      volume: 0.85
+    },
+    prompt: generatedPrompt
   });
 }
 
@@ -1108,6 +1255,11 @@ async function routeApi(request, response, url) {
       return true;
     }
 
+    if (url.pathname === "/api/admin/audio-provider/generate" && request.method === "POST") {
+      await handleAudioProviderGenerate(request, response, body);
+      return true;
+    }
+
     if (url.pathname === "/api/admin/monitoring" && request.method === "GET") {
       await handleAdminMonitoring(request, response);
       return true;
@@ -1141,10 +1293,38 @@ const contentTypes = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".mp3": "audio/mpeg",
   ".png": "image/png",
   ".svg": "image/svg+xml",
+  ".wav": "audio/wav",
   ".webp": "image/webp"
 };
+
+async function serveGeneratedAudio(response, url) {
+  const prefix = "/generated-audio/";
+  const requestedName = decodeURIComponent(url.pathname.slice(prefix.length));
+  const safeName = path.basename(requestedName);
+  const filePath = path.normalize(path.join(generatedAudioDir, safeName));
+
+  if (!safeName || !filePath.startsWith(generatedAudioDir)) {
+    jsonResponse(response, 403, { error: "Forbidden." });
+    return;
+  }
+
+  try {
+    await stat(filePath);
+  } catch {
+    jsonResponse(response, 404, { error: "Generated audio file not found." });
+    return;
+  }
+
+  const ext = path.extname(filePath);
+  response.writeHead(200, {
+    "content-type": contentTypes[ext] ?? "application/octet-stream",
+    "cache-control": "public, max-age=31536000, immutable"
+  });
+  createReadStream(filePath).pipe(response);
+}
 
 async function serveStatic(request, response, url) {
   const decodedPath = decodeURIComponent(url.pathname);
@@ -1177,6 +1357,11 @@ const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
   const handledApi = await routeApi(request, response, url);
   if (handledApi) {
+    return;
+  }
+
+  if (url.pathname.startsWith("/generated-audio/")) {
+    await serveGeneratedAudio(response, url);
     return;
   }
 

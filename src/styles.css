@@ -2117,14 +2117,24 @@ kbd {
 
 .admin-audio-row.prompt {
   align-items: stretch;
-  min-width: 1560px;
-  grid-template-columns: 62px 110px 130px 150px 180px minmax(280px, 1.2fr) minmax(220px, 0.9fr) 160px 92px 38px;
+  min-width: 1780px;
+  grid-template-columns: 62px 110px 130px 150px 180px minmax(280px, 1.2fr) minmax(220px, 0.9fr) 160px 92px 86px 38px 98px 38px;
 }
 
 .admin-audio-row.voice-text {
   align-items: stretch;
-  min-width: 1320px;
-  grid-template-columns: 62px 170px 180px 160px minmax(320px, 1.2fr) minmax(230px, 0.85fr) 82px 38px;
+  min-width: 1540px;
+  grid-template-columns: 62px 170px 180px 160px minmax(320px, 1.2fr) minmax(230px, 0.85fr) 82px 86px 38px 98px 38px;
+}
+
+.admin-audio-file-size {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 900;
 }
 
 .admin-audio-row input,

@@ -1,6 +1,6 @@
 import type { GameState } from "../core/types";
-import type { AudioConfig } from "../content/audioConfig";
-import type { AudioProviderSettings } from "../content/audioProvider";
+import type { AudioAsset, AudioConfig } from "../content/audioConfig";
+import type { AudioProviderSettings, ElevenLabsGenerationPrompt } from "../content/audioProvider";
 import type { WorldMapLayout } from "../content/world";
 import { migrateGameState } from "./storage";
 
@@ -60,6 +60,13 @@ interface RemoteAudioProviderSettingsResponse {
   settings: AudioProviderSettings | null;
   updatedAt: string | null;
   updatedBy: string | null;
+}
+
+export interface GeneratedAudioResponse {
+  asset: AudioAsset & {
+    sizeBytes: number;
+  };
+  prompt: ElevenLabsGenerationPrompt;
 }
 
 export interface RemoteMapRevision {
@@ -296,6 +303,14 @@ export async function saveAdminAudioProviderSettings(session: AdminSession, sett
     method: "POST",
     headers: authHeaders(session.token),
     body: JSON.stringify({ clearApiKey: options.clearApiKey === true, settings })
+  });
+}
+
+export async function generateAdminAudio(session: AdminSession, settings: AudioProviderSettings, prompt: ElevenLabsGenerationPrompt): Promise<GeneratedAudioResponse> {
+  return requestJson<GeneratedAudioResponse>("/api/admin/audio-provider/generate", {
+    method: "POST",
+    headers: authHeaders(session.token),
+    body: JSON.stringify({ prompt, settings })
   });
 }
 

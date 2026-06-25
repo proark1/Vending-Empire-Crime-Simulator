@@ -20,6 +20,7 @@ import {
   type ElevenLabsVoiceProfile
 } from "../game/content/audioProvider";
 import {
+  generateAdminAudio,
   loadAdminAudioProviderSettings,
   loadRemoteAudioConfigRevisions,
   resetRemoteAudioConfig,
@@ -70,11 +71,28 @@ function categoryVolume(config: AudioConfig, category: AudioCategory, asset: Aud
   return Math.min(1, Math.max(0, config.mixer.masterVolume * channel * asset.volume));
 }
 
+function formatBytes(bytes: number | null | undefined): string {
+  if (!bytes) {
+    return "--";
+  }
+
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
 export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: AdminAudioEditorProps) {
   const [config, setConfig] = useState<AudioConfig>(() => normalizeAudioConfig(initialConfig));
   const [providerSettings, setProviderSettings] = useState<AudioProviderSettings>(() => createDefaultAudioProviderSettings());
   const [revisions, setRevisions] = useState<RemoteAudioConfigRevision[]>([]);
   const [providerSaving, setProviderSaving] = useState(false);
+  const [generatingPromptId, setGeneratingPromptId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
   const [previewingId, setPreviewingId] = useState<string | null>(null);
@@ -346,6 +364,68 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
       .catch(() => setStatus("Copy failed."));
   }, []);
 
+  const upsertGeneratedAsset = useCallback((asset: AudioAsset) => {
+    setNormalizedConfig((current) => {
+      const sourcePrompt = providerSettings.generationPrompts.find((prompt) => `generated_${prompt.id}` === asset.id);
+      const nextAssets = current.assets.some((candidate) => candidate.id === asset.id)
+        ? current.assets.map((candidate) => candidate.id === asset.id ? { ...candidate, ...asset } : candidate)
+        : [...current.assets, asset];
+      const hasCue = current.cues.some((cue) => cue.assetId === asset.id || cue.trigger === sourcePrompt?.trigger);
+      const nextCues = current.cues.map((cue) => sourcePrompt?.trigger && cue.trigger === sourcePrompt.trigger
+        ? {
+          ...cue,
+          assetId: asset.id,
+          category: asset.category,
+          duckMusic: asset.category === "voice",
+          label: sourcePrompt.label,
+          subtitle: asset.category === "voice" ? sourcePrompt.prompt : cue.subtitle
+        }
+        : cue
+      );
+
+      return {
+        ...current,
+        assets: nextAssets,
+        cues: hasCue || !sourcePrompt?.trigger
+          ? nextCues
+          : [
+            ...nextCues,
+            {
+              assetId: asset.id,
+              category: asset.category,
+              cooldownMs: asset.category === "voice" ? 3500 : 0,
+              duckMusic: asset.category === "voice",
+              enabled: true,
+              id: `cue_${asset.id}`,
+              label: sourcePrompt.label,
+              priority: asset.category === "voice" ? 10 : 0,
+              speaker: "",
+              subtitle: asset.category === "voice" ? sourcePrompt.prompt : "",
+              trigger: sourcePrompt.trigger
+            }
+          ]
+      };
+    });
+  }, [providerSettings.generationPrompts, setNormalizedConfig]);
+
+  const handleGeneratePrompt = useCallback((promptIndex: number) => {
+    const prompt = providerSettings.generationPrompts[promptIndex];
+    if (!prompt) {
+      return;
+    }
+
+    setGeneratingPromptId(prompt.id);
+    setStatus(`Generating ${prompt.label}...`);
+    generateAdminAudio(session, providerSettings, prompt)
+      .then((result) => {
+        updateGenerationPrompt(promptIndex, result.prompt);
+        upsertGeneratedAsset(result.asset);
+        setStatus(`Generated ${result.prompt.label}: ${formatBytes(result.asset.sizeBytes)}. Save Audio to publish the asset/cue mapping.`);
+      })
+      .catch((error) => setStatus(error instanceof Error ? error.message : "Audio generation failed."))
+      .finally(() => setGeneratingPromptId(null));
+  }, [providerSettings, session, updateGenerationPrompt, upsertGeneratedAsset]);
+
   const handleSave = useCallback(() => {
     const nextConfig = normalizeAudioConfig(config);
     const nextIssues = validateAudioConfig(nextConfig);
@@ -578,6 +658,13 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
                   <textarea aria-label="Voice text prompt" value={prompt.prompt} onChange={(event) => updateGenerationPrompt(index, { prompt: event.target.value })} />
                   <textarea aria-label="Voice direction negative prompt" value={prompt.negativePrompt} onChange={(event) => updateGenerationPrompt(index, { negativePrompt: event.target.value })} />
                   <input aria-label="Voice duration" max="30" min="0.5" step="0.5" type="number" value={prompt.durationSeconds} onChange={(event) => updateGenerationPrompt(index, { durationSeconds: Number(event.target.value) })} />
+                  <span className="admin-audio-file-size">{formatBytes(prompt.generatedSizeBytes)}</span>
+                  <button disabled={!prompt.generatedUrl} onClick={() => handlePreview({ category: "voice", id: prompt.id, label: prompt.label, loop: false, url: prompt.generatedUrl ?? "", volume: 1 })} type="button">
+                    <Play size={14} aria-hidden="true" />
+                  </button>
+                  <button disabled={Boolean(generatingPromptId)} onClick={() => handleGeneratePrompt(index)} type="button">
+                    {generatingPromptId === prompt.id ? "Generating" : "Generate"}
+                  </button>
                   <button onClick={() => handleCopyPrompt(prompt.prompt)} type="button">
                     <Copy size={14} aria-hidden="true" />
                   </button>
@@ -631,6 +718,13 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
                     ))}
                   </select>
                   <input aria-label="Prompt duration" max="180" min="0.5" step="0.5" type="number" value={prompt.durationSeconds} onChange={(event) => updateGenerationPrompt(index, { durationSeconds: Number(event.target.value) })} />
+                  <span className="admin-audio-file-size">{formatBytes(prompt.generatedSizeBytes)}</span>
+                  <button disabled={!prompt.generatedUrl} onClick={() => handlePreview({ category: prompt.purpose, id: prompt.id, label: prompt.label, loop: prompt.purpose === "music", url: prompt.generatedUrl ?? "", volume: 1 })} type="button">
+                    <Play size={14} aria-hidden="true" />
+                  </button>
+                  <button disabled={Boolean(generatingPromptId)} onClick={() => handleGeneratePrompt(index)} type="button">
+                    {generatingPromptId === prompt.id ? "Generating" : "Generate"}
+                  </button>
                   <button className="danger" onClick={() => handleDeleteGenerationPrompt(prompt.id)} type="button">
                     <Trash2 size={14} aria-hidden="true" />
                   </button>
