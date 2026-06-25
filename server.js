@@ -303,25 +303,18 @@ async function handleGameLogin(response, body) {
   const existing = await db.query("SELECT * FROM player_profiles WHERE name_key = $1", [credentials.nameKey]);
   let profile = existing.rows[0];
 
-  if (profile) {
-    const expectedHash = hashPin(credentials.pin, profile.pin_salt);
-    if (!safeEqual(expectedHash, profile.pin_hash)) {
-      jsonResponse(response, 401, { error: "Name or PIN is incorrect." });
-      return;
-    }
-
-    await db.query("UPDATE player_profiles SET name = $1, updated_at = now(), last_login_at = now() WHERE id = $2", [credentials.name, profile.id]);
-  } else {
-    const salt = randomBytes(16).toString("hex");
-    const id = randomUUID();
-    const inserted = await db.query(
-      `INSERT INTO player_profiles (id, name, name_key, pin_salt, pin_hash, last_login_at)
-       VALUES ($1, $2, $3, $4, $5, now())
-       RETURNING *`,
-      [id, credentials.name, credentials.nameKey, salt, hashPin(credentials.pin, salt)]
-    );
-    profile = inserted.rows[0];
+  if (!profile) {
+    jsonResponse(response, 401, { error: "Name or PIN is incorrect." });
+    return;
   }
+
+  const expectedHash = hashPin(credentials.pin, profile.pin_salt);
+  if (!safeEqual(expectedHash, profile.pin_hash)) {
+    jsonResponse(response, 401, { error: "Name or PIN is incorrect." });
+    return;
+  }
+
+  await db.query("UPDATE player_profiles SET name = $1, updated_at = now(), last_login_at = now() WHERE id = $2", [credentials.name, profile.id]);
 
   await db.query("DELETE FROM player_sessions WHERE expires_at <= now()");
   const token = await createPlayerSession(profile.id);
@@ -330,6 +323,40 @@ async function handleGameLogin(response, body) {
   jsonResponse(response, 200, {
     profile: { id: profile.id, name: profile.name },
     save: save.rows[0] ? { state: save.rows[0].state, updatedAt: save.rows[0].updated_at } : null,
+    token
+  });
+}
+
+async function handleGameRegister(response, body) {
+  const credentials = validateGameCredentials(body);
+  if (credentials.error) {
+    jsonResponse(response, 400, { error: credentials.error });
+    return;
+  }
+
+  await ensureDatabase();
+  const db = getPool();
+  const existing = await db.query("SELECT id FROM player_profiles WHERE name_key = $1", [credentials.nameKey]);
+  if (existing.rows[0]) {
+    jsonResponse(response, 409, { error: "That player name is already registered. Log in instead." });
+    return;
+  }
+
+  const pinRecord = createPinRecord(credentials.pin);
+  const inserted = await db.query(
+    `INSERT INTO player_profiles (id, name, name_key, pin_salt, pin_hash, last_login_at)
+     VALUES ($1, $2, $3, $4, $5, now())
+     RETURNING *`,
+    [randomUUID(), credentials.name, credentials.nameKey, pinRecord.salt, pinRecord.hash]
+  );
+  const profile = inserted.rows[0];
+
+  await db.query("DELETE FROM player_sessions WHERE expires_at <= now()");
+  const token = await createPlayerSession(profile.id);
+
+  jsonResponse(response, 200, {
+    profile: { id: profile.id, name: profile.name },
+    save: null,
     token
   });
 }
@@ -431,6 +458,11 @@ async function routeApi(request, response, url) {
 
     if (url.pathname === "/api/game/login" && request.method === "POST") {
       await handleGameLogin(response, body);
+      return true;
+    }
+
+    if (url.pathname === "/api/game/register" && request.method === "POST") {
+      await handleGameRegister(response, body);
       return true;
     }
 

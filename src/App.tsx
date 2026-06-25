@@ -16,8 +16,9 @@ import { ToastStack, type ToastMessage } from "./ui/ToastStack";
 import type { DayReport, GameCommand, GameState, LocationId, Vec2 } from "./game/core/types";
 import type { WorldMapLayout } from "./game/content/world";
 import { clearWorldMapLayout, loadWorldMapLayout, saveWorldMapLayout } from "./game/world/mapLayoutStorage";
-import { clearStoredGameSession, loadRemoteGame, loadRemoteMapLayout, loadStoredGameSession, loginGame, type GameSession } from "./game/save/api";
+import { clearStoredGameSession, loadRemoteGame, loadRemoteMapLayout, loadStoredGameSession, loginGame, registerGame, type GameSession } from "./game/save/api";
 import { loadGame } from "./game/save/storage";
+import { createInitialState } from "./game/content/initialState";
 
 function targetLocationId(target: SceneTarget | null, state: GameState): LocationId | null {
   if (!target) {
@@ -329,6 +330,7 @@ function GameApp({ initialState, mapLayout, session }: GameAppProps) {
 }
 
 function GameAccessGate({ mapLayout }: { mapLayout: WorldMapLayout }) {
+  const [accessMode, setAccessMode] = useState<"login" | "register">("login");
   const [authState, setAuthState] = useState<
     | { status: "loading" }
     | { status: "login"; message?: string }
@@ -336,6 +338,7 @@ function GameAccessGate({ mapLayout }: { mapLayout: WorldMapLayout }) {
   >({ status: "loading" });
   const [credentials, setCredentials] = useState({ name: "", pin: "" });
   const [submitting, setSubmitting] = useState(false);
+  const actionLabel = accessMode === "register" ? "Register" : "Login";
 
   useEffect(() => {
     const session = loadStoredGameSession();
@@ -372,22 +375,31 @@ function GameAccessGate({ mapLayout }: { mapLayout: WorldMapLayout }) {
   const handleLogin = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
+      setAuthState({ status: "login" });
       setSubmitting(true);
-      loginGame(credentials.name, credentials.pin)
+      const submitMode = accessMode;
+      const submitAuth = submitMode === "register" ? registerGame : loginGame;
+
+      submitAuth(credentials.name, credentials.pin)
         .then((response) => {
           setAuthState({
             status: "ready",
             session: { profile: response.profile, token: response.token },
-            initialState: response.save?.state ?? loadGame()
+            initialState: response.save?.state ?? (submitMode === "register" ? createInitialState() : loadGame())
           });
         })
         .catch((error) => {
-          setAuthState({ status: "login", message: error instanceof Error ? error.message : "Sign in failed." });
+          setAuthState({ status: "login", message: error instanceof Error ? error.message : `${actionLabel} failed.` });
         })
         .finally(() => setSubmitting(false));
     },
-    [credentials.name, credentials.pin]
+    [accessMode, actionLabel, credentials.name, credentials.pin]
   );
+
+  const switchAccessMode = useCallback((mode: "login" | "register") => {
+    setAccessMode(mode);
+    setAuthState((current) => (current.status === "login" ? { status: "login" } : current));
+  }, []);
 
   if (authState.status === "ready") {
     return <GameApp key={authState.session.profile.id} initialState={authState.initialState} mapLayout={mapLayout} session={authState.session} />;
@@ -398,7 +410,25 @@ function GameAccessGate({ mapLayout }: { mapLayout: WorldMapLayout }) {
       <form className="access-panel" onSubmit={handleLogin}>
         <div>
           <h1>Vendetta Vending</h1>
-          <span>{authState.status === "loading" ? "Loading protected save" : "Protected game save"}</span>
+          <span>{authState.status === "loading" ? "Loading protected save" : accessMode === "register" ? "Create game profile" : "Load game profile"}</span>
+        </div>
+        <div className="access-mode-tabs" aria-label="Game access mode">
+          <button
+            aria-pressed={accessMode === "login"}
+            disabled={authState.status === "loading" || submitting}
+            onClick={() => switchAccessMode("login")}
+            type="button"
+          >
+            Login
+          </button>
+          <button
+            aria-pressed={accessMode === "register"}
+            disabled={authState.status === "loading" || submitting}
+            onClick={() => switchAccessMode("register")}
+            type="button"
+          >
+            Register
+          </button>
         </div>
         <label>
           Player name
@@ -413,7 +443,7 @@ function GameAccessGate({ mapLayout }: { mapLayout: WorldMapLayout }) {
         <label>
           PIN
           <input
-            autoComplete="current-password"
+            autoComplete={accessMode === "register" ? "new-password" : "current-password"}
             disabled={authState.status === "loading" || submitting}
             inputMode="numeric"
             maxLength={12}
@@ -424,7 +454,7 @@ function GameAccessGate({ mapLayout }: { mapLayout: WorldMapLayout }) {
         </label>
         {authState.status === "login" && authState.message && <p>{authState.message}</p>}
         <button disabled={authState.status === "loading" || submitting} type="submit">
-          {submitting ? "Opening..." : "Open save"}
+          {submitting ? `${actionLabel}...` : actionLabel}
         </button>
       </form>
     </main>

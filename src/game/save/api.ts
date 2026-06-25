@@ -20,7 +20,7 @@ export interface AdminSession {
   token: string;
 }
 
-interface GameLoginResponse extends GameSession {
+interface GameAuthResponse extends GameSession {
   save: {
     state: GameState;
     updatedAt: string;
@@ -109,13 +109,26 @@ export function clearStoredAdminSession(): void {
   window.sessionStorage.removeItem(ADMIN_SESSION_KEY);
 }
 
-export async function loginGame(name: string, pin: string): Promise<GameLoginResponse> {
-  const response = await requestJson<GameLoginResponse>("/api/game/login", {
+function migrateGameAuthResponse(response: GameAuthResponse): GameAuthResponse {
+  return response.save ? { ...response, save: { ...response.save, state: migrateGameState(response.save.state) } } : response;
+}
+
+export async function loginGame(name: string, pin: string): Promise<GameAuthResponse> {
+  const response = await requestJson<GameAuthResponse>("/api/game/login", {
     method: "POST",
     body: JSON.stringify({ name, pin })
   });
   storeGameSession({ profile: response.profile, token: response.token });
-  return response.save ? { ...response, save: { ...response.save, state: migrateGameState(response.save.state) } } : response;
+  return migrateGameAuthResponse(response);
+}
+
+export async function registerGame(name: string, pin: string): Promise<GameAuthResponse> {
+  const response = await requestJson<GameAuthResponse>("/api/game/register", {
+    method: "POST",
+    body: JSON.stringify({ name, pin })
+  });
+  storeGameSession({ profile: response.profile, token: response.token });
+  return migrateGameAuthResponse(response);
 }
 
 export async function loadRemoteGame(session: GameSession): Promise<RemoteGameSaveResponse> {
