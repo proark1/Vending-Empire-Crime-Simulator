@@ -1,6 +1,6 @@
 import type { GameCommand, GameState } from "../core/types";
 import { effectiveMachineSecurity, getMachineUpgradeEffects } from "../core/machineStats";
-import { machineAtLocation, ownedMachines } from "../core/selectors";
+import { installableLocation, isDistrictUnlockedForPlacement, machineAtLocation, ownedMachines, placementCostForLocation } from "../core/selectors";
 import { mostProfitablePlayerMachine } from "../systems/reducer";
 
 export function planNpcCommands(state: GameState): GameCommand[] {
@@ -14,7 +14,8 @@ export function planNpcCommands(state: GameState): GameCommand[] {
 
     const target = mostProfitablePlayerMachine(state);
     const openLocation = Object.values(state.locations)
-      .filter((location) => location.kind !== "garage" && location.kind !== "supplier")
+      .filter(installableLocation)
+      .filter((location) => isDistrictUnlockedForPlacement(state, location.districtId))
       .filter((location) => !machineAtLocation(state, location.id))
       .sort((a, b) => b.footTraffic + b.rivalPressure - (a.footTraffic + a.rivalPressure))[0];
 
@@ -35,7 +36,7 @@ export function planNpcCommands(state: GameState): GameCommand[] {
       continue;
     }
 
-    if (openLocation && faction.money >= Math.round(openLocation.placementCost * 0.65)) {
+    if (openLocation && faction.money >= Math.round(placementCostForLocation(state, openLocation) * 0.65)) {
       commands.push({ type: "rival_action", actorId: faction.id, action: "expand", locationId: openLocation.id });
     } else if (target) {
       commands.push({ type: "rival_action", actorId: faction.id, action: "undercut", targetMachineId: target.id });

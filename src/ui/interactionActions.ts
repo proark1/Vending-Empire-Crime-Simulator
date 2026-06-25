@@ -1,5 +1,14 @@
 import type { GameCommand, GameState, ProductId } from "../game/core/types";
-import { activeVehicle, cargoSpaceRemaining, firstGarageStorageProduct, firstVehicleProduct, inventoryUnits, machineAtLocation } from "../game/core/selectors";
+import {
+  activeVehicle,
+  cargoSpaceRemaining,
+  firstGarageStorageProduct,
+  firstVehicleProduct,
+  inventoryUnits,
+  isDistrictUnlockedForPlacement,
+  machineAtLocation,
+  placementCostForLocation
+} from "../game/core/selectors";
 import type { SceneTarget } from "../render/three/SceneTargets";
 
 export type PrimaryInteraction =
@@ -110,10 +119,12 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
   if (target.type === "placement") {
     const location = state.locations[target.id];
     const occupied = Boolean(machineAtLocation(state, target.id));
+    const unlocked = isDistrictUnlockedForPlacement(state, location.districtId);
+    const placementCost = placementCostForLocation(state, location);
     return {
       kind: "command",
-      label: `Install machine`,
-      disabled: occupied || player.money < location.placementCost,
+      label: unlocked ? "Install machine" : "District locked",
+      disabled: !unlocked || occupied || player.money < placementCost,
       command: { type: "place_machine", actorId, locationId: location.id }
     };
   }

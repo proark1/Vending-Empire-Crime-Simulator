@@ -1,4 +1,4 @@
-import type { Faction, GameState, RouteVehicle, ServiceContract, VendingMachine } from "../core/types";
+import type { DistrictProgress, Faction, GameState, RouteVehicle, ServiceContract, VendingMachine } from "../core/types";
 import { products } from "./products";
 import { districts, locations } from "./world";
 
@@ -87,6 +87,23 @@ const starterContract: ServiceContract = {
   status: "active"
 };
 
+function cloneContent<T>(value: T): T {
+  return structuredClone(value) as T;
+}
+
+function createInitialDistrictProgress(): Record<string, DistrictProgress> {
+  return Object.fromEntries(
+    Object.keys(districts).map((districtId) => [
+      districtId,
+      {
+        access: districtId === "starter_suburb" ? "unlocked" : "locked",
+        districtId,
+        ...(districtId === "starter_suburb" ? { scoutedHour: 8, unlockedHour: 8 } : {})
+      }
+    ])
+  );
+}
+
 export function createInitialState(): GameState {
   return {
     version: 1,
@@ -105,20 +122,21 @@ export function createInitialState(): GameState {
       garageStorage: {},
       garageCapacity: 180
     },
-    factions,
-    products,
-    districts,
-    locations,
+    factions: cloneContent(factions),
+    products: cloneContent(products),
+    districts: cloneContent(districts),
+    districtProgress: createInitialDistrictProgress(),
+    locations: cloneContent(locations),
     machines: {
-      [playerMachine.id]: playerMachine,
-      [rivalMachine.id]: rivalMachine
+      [playerMachine.id]: cloneContent(playerMachine),
+      [rivalMachine.id]: cloneContent(rivalMachine)
     },
     vehicles: {
-      [starterVehicle.id]: starterVehicle
+      [starterVehicle.id]: cloneContent(starterVehicle)
     },
     employees: {},
     contracts: {
-      [starterContract.id]: starterContract
+      [starterContract.id]: cloneContent(starterContract)
     },
     npcControllers: {
       rival_redline: {
@@ -151,6 +169,7 @@ export function createInitialState(): GameState {
     },
     dayReports: [],
     progression: {
+      contractsCompletedTotal: 0,
       nextContractNumber: 2,
       lastReportDay: 0,
       revenueCollectedToday: 0,

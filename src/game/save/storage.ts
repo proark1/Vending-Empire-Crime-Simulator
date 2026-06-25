@@ -21,6 +21,31 @@ function migrateGameState(parsed: GameState): GameState {
         ...baseline.player.garageStorage,
         ...(parsedPlayer.garageStorage ?? {})
       };
+  const districts = Object.fromEntries(
+    Object.entries({
+      ...baseline.districts,
+      ...(parsed.districts ?? {})
+    }).map(([districtId, district]) => [
+      districtId,
+      {
+        ...(baseline.districts[districtId] ?? {}),
+        ...district
+      }
+    ])
+  );
+  const districtProgress = Object.fromEntries(
+    Object.keys(districts).map((districtId) => [
+      districtId,
+      {
+        ...(baseline.districtProgress[districtId] ?? {
+          access: districtId === "starter_suburb" ? "unlocked" : "locked",
+          districtId
+        }),
+        ...(parsed.districtProgress?.[districtId] ?? {}),
+        districtId
+      }
+    ])
+  );
 
   return {
     ...baseline,
@@ -41,18 +66,8 @@ function migrateGameState(parsed: GameState): GameState {
       ...baseline.products,
       ...parsed.products
     },
-    districts: Object.fromEntries(
-      Object.entries({
-        ...baseline.districts,
-        ...(parsed.districts ?? {})
-      }).map(([districtId, district]) => [
-        districtId,
-        {
-          ...(baseline.districts[districtId] ?? {}),
-          ...district
-        }
-      ])
-    ),
+    districts,
+    districtProgress,
     locations: {
       ...baseline.locations,
       ...parsed.locations
@@ -103,7 +118,8 @@ function migrateGameState(parsed: GameState): GameState {
     dayReports: parsed.dayReports ?? baseline.dayReports,
     progression: {
       ...baseline.progression,
-      ...(parsed.progression ?? {})
+      ...(parsed.progression ?? {}),
+      contractsCompletedTotal: parsed.progression?.contractsCompletedTotal ?? parsed.progression?.contractsCompletedToday ?? baseline.progression.contractsCompletedTotal
     }
   };
 }

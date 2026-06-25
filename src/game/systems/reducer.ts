@@ -18,12 +18,15 @@ import {
   activeContracts,
   cargoSpaceRemaining,
   contractRemainingQuantity,
+  districtUnlockInfo,
   garageStorageSpaceRemaining,
   inventoryUnits,
+  isDistrictUnlockedForPlacement,
   machineAtLocation,
   machineStockUnits,
   missionProgress,
   ownedMachines,
+  placementCostForLocation,
   vehicleSpaceRemaining
 } from "../core/selectors";
 import { machineUpgrades } from "../content/machineUpgrades";
@@ -416,6 +419,9 @@ function applyStreetActivity(state: GameState, events: GameEvent[]): void {
 
 function createServiceContract(state: GameState, location: Location, productId: ProductId, requiredQuantity: number, deadlineHour: number): ServiceContract {
   const product = state.products[productId];
+  const district = state.districts[location.districtId];
+  const rentMultiplier = district?.rentMultiplier ?? 1;
+  const heatMultiplier = district ? Math.max(0.75, 1.35 - district.heatTolerance / 80) : 1;
   const id = `contract_${state.progression.nextContractNumber++}`;
   return {
     id,
@@ -426,10 +432,10 @@ function createServiceContract(state: GameState, location: Location, productId: 
     deliveredQuantity: 0,
     issuedHour: state.worldTimeHours,
     deadlineHour,
-    rewardMoney: Math.round(requiredQuantity * product.basePrice + 14 + location.footTraffic * 10),
+    rewardMoney: Math.round((requiredQuantity * product.basePrice + 14 + location.footTraffic * 10) * rentMultiplier),
     rewardPublicReputation: 1 + (location.safety >= 0.7 ? 1 : 0),
     rewardStreetReputation: location.rivalPressure >= 0.25 ? 2 : 1,
-    failureHeat: location.policePresence >= 0.25 ? 4 : 2,
+    failureHeat: Math.round((location.policePresence >= 0.25 ? 4 : 2) * heatMultiplier),
     failureRivalPressure: 0.08 + location.rivalPressure * 0.08,
     status: "active"
   };
@@ -452,6 +458,7 @@ function issueDailyContracts(state: GameState, events: GameEvent[]): void {
   const candidates = ownedMachines(state, state.playerFactionId)
     .map((machine) => state.locations[machine.locationId])
     .filter((location): location is Location => Boolean(location))
+    .filter((location) => isDistrictUnlockedForPlacement(state, location.districtId))
     .sort((a, b) => b.footTraffic + b.rivalPressure - (a.footTraffic + a.rivalPressure));
 
   let issued = 0;
@@ -489,6 +496,7 @@ function completeContract(state: GameState, events: GameEvent[], contract: Servi
   player.streetReputation += contract.rewardStreetReputation;
   state.progression.contractRewardsToday += contract.rewardMoney;
   state.progression.contractsCompletedToday += 1;
+  state.progression.contractsCompletedTotal = (state.progression.contractsCompletedTotal ?? 0) + 1;
 
   const location = state.locations[contract.locationId];
   if (location) {
@@ -1098,6 +1106,79 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       break;
     }
 
+    case "scout_district": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      const district = state.districts[command.districtId];
+      if (!district) {
+        break;
+      }
+
+      const progress = districtUnlockInfo(state, district.id).progress;
+      if (progress.access !== "locked") {
+        log(state, events, `${district.name} is already mapped.`, "neutral");
+        break;
+      }
+
+      if (actor.money < district.scoutCost) {
+        log(state, events, `Scouting ${district.name} needs $${district.scoutCost}.`, "warning");
+        break;
+      }
+
+      actor.money -= district.scoutCost;
+      state.districtProgress[district.id] = {
+        access: "scouted",
+        districtId: district.id,
+        scoutedHour: state.worldTimeHours
+      };
+      log(state, events, `${district.name} scouted. Requirements and machine pads are now visible.`, "good");
+      break;
+    }
+
+    case "unlock_district": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      const district = state.districts[command.districtId];
+      if (!district) {
+        break;
+      }
+
+      const info = districtUnlockInfo(state, district.id);
+      if (info.progress.access === "unlocked") {
+        log(state, events, `${district.name} is already open for operations.`, "neutral");
+        break;
+      }
+
+      if (info.progress.access !== "scouted") {
+        log(state, events, `Scout ${district.name} before you move machines in.`, "warning");
+        break;
+      }
+
+      if (info.unmetRequirements.length > 0) {
+        log(state, events, `${district.name} still needs: ${info.unmetRequirements.join(", ")}.`, "warning");
+        break;
+      }
+
+      if (actor.money < district.unlockCost) {
+        log(state, events, `Opening ${district.name} needs $${district.unlockCost}.`, "warning");
+        break;
+      }
+
+      actor.money -= district.unlockCost;
+      state.districtProgress[district.id] = {
+        access: "unlocked",
+        districtId: district.id,
+        scoutedHour: info.progress.scoutedHour ?? state.worldTimeHours,
+        unlockedHour: state.worldTimeHours
+      };
+      log(state, events, `${district.name} unlocked. New placement pads are active.`, "good");
+      break;
+    }
+
     case "hire_employee": {
       if (actor.id !== state.playerFactionId) {
         break;
@@ -1245,12 +1326,19 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
         break;
       }
 
-      if (actor.money < location.placementCost) {
-        log(state, events, `${location.name} needs $${location.placementCost} to install a machine.`, "warning");
+      if (!isDistrictUnlockedForPlacement(state, location.districtId)) {
+        const district = state.districts[location.districtId];
+        log(state, events, `${district?.name ?? "This district"} is locked. Scout and open it before installing machines.`, "warning");
         break;
       }
 
-      actor.money -= location.placementCost;
+      const placementCost = placementCostForLocation(state, location);
+      if (actor.money < placementCost) {
+        log(state, events, `${location.name} needs $${placementCost} to install a machine.`, "warning");
+        break;
+      }
+
+      actor.money -= placementCost;
       const machine = createMachine(state, actor.id, location.id);
       log(state, events, `${machine.name} installed at ${location.name}.`, actor.id === state.playerFactionId ? "good" : "danger");
       if (actor.id === state.playerFactionId) {
@@ -1370,9 +1458,14 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
 
       if (command.action === "expand" && command.locationId) {
         const location = state.locations[command.locationId];
-        if (location && !machineAtLocation(state, location.id)) {
+        if (location && !machineAtLocation(state, location.id) && isDistrictUnlockedForPlacement(state, location.districtId)) {
+          const cost = Math.round(placementCostForLocation(state, location) * 0.65);
+          if (actor.money < cost) {
+            break;
+          }
+
           createMachine(state, actor.id, location.id);
-          actor.money = Math.max(0, actor.money - Math.round(location.placementCost * 0.65));
+          actor.money = Math.max(0, actor.money - cost);
           log(state, events, `${actor.name} dropped a new machine at ${location.name}.`, "danger");
         }
       }

@@ -768,6 +768,14 @@ kbd {
   text-transform: uppercase;
 }
 
+.route-actions strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  text-align: right;
+}
+
 .route-actions,
 .row-actions {
   display: flex;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createInitialState } from "../content/initialState";
-import { routeTasks, selectedRouteTask } from "../core/selectors";
+import { districtUnlockInfo, machineAtLocation, routeTasks, selectedRouteTask } from "../core/selectors";
 import type { GameCommand, LocationId } from "../core/types";
 import { reduceCommands, reduceGameState } from "./reducer";
 
@@ -226,6 +226,53 @@ describe("game reducer", () => {
     expect(state.factions.player.money).toBe(144);
     expect(state.progression.contractRewardsToday).toBe(36);
     expect(state.progression.contractsCompletedToday).toBe(1);
+    expect(state.progression.contractsCompletedTotal).toBe(1);
+  });
+
+  it("blocks player machine placement in locked districts", () => {
+    const initial = createInitialState();
+    initial.factions.player.money = 1000;
+
+    const result = reduceCommands(initial, [
+      visit("freight_depot"),
+      { type: "place_machine", actorId: "player", locationId: "freight_depot" }
+    ]);
+
+    expect(machineAtLocation(result.state, "freight_depot")).toBeUndefined();
+    expect(result.events.some((event) => event.message.includes("locked"))).toBe(true);
+  });
+
+  it("scouts and opens districts after requirements are met", () => {
+    const initial = createInitialState();
+    initial.factions.player.money = 400;
+    initial.factions.player.streetReputation = 1;
+    initial.progression.contractsCompletedTotal = 1;
+
+    const result = reduceCommands(initial, [
+      visit("gym"),
+      { type: "place_machine", actorId: "player", locationId: "gym" },
+      { type: "scout_district", actorId: "player", districtId: "industrial_yards" },
+      { type: "unlock_district", actorId: "player", districtId: "industrial_yards" },
+      visit("freight_depot"),
+      { type: "place_machine", actorId: "player", locationId: "freight_depot" }
+    ]);
+
+    expect(districtUnlockInfo(result.state, "industrial_yards").progress.access).toBe("unlocked");
+    expect(machineAtLocation(result.state, "freight_depot")?.ownerFactionId).toBe("player");
+  });
+
+  it("keeps rival expansion out of locked districts", () => {
+    const initial = createInitialState();
+    initial.factions.rival_redline.money = 1000;
+
+    const result = reduceGameState(initial, {
+      type: "rival_action",
+      actorId: "rival_redline",
+      action: "expand",
+      locationId: "freight_depot"
+    });
+
+    expect(machineAtLocation(result.state, "freight_depot")).toBeUndefined();
   });
 
   it("fails expired service contracts and files a day report", () => {

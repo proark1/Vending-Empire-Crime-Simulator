@@ -1,4 +1,20 @@
-import type { DayReport, Employee, FactionId, GameState, Inventory, Location, LocationId, MachineId, ProductId, RouteVehicle, ServiceContract, VendingMachine } from "./types";
+import type {
+  DayReport,
+  DistrictId,
+  DistrictProgress,
+  DistrictStatus,
+  Employee,
+  FactionId,
+  GameState,
+  Inventory,
+  Location,
+  LocationId,
+  MachineId,
+  ProductId,
+  RouteVehicle,
+  ServiceContract,
+  VendingMachine
+} from "./types";
 
 export type RouteTaskType = "supplier" | "garage" | "stock" | "collect" | "repair" | "pressure" | "contract";
 
@@ -40,6 +56,121 @@ export function dailyEmployeeWages(state: GameState): number {
 
 export function machineAtLocation(state: GameState, locationId: LocationId): VendingMachine | undefined {
   return Object.values(state.machines).find((machine) => machine.locationId === locationId);
+}
+
+export function installableLocation(location: Location): boolean {
+  return location.kind !== "garage" && location.kind !== "supplier";
+}
+
+export function districtProgress(state: GameState, districtId: DistrictId): DistrictProgress {
+  const existing = state.districtProgress?.[districtId];
+  if (existing) {
+    return existing;
+  }
+
+  return {
+    access: districtId === "starter_suburb" ? "unlocked" : "locked",
+    districtId,
+    ...(districtId === "starter_suburb" ? { scoutedHour: 8, unlockedHour: 8 } : {})
+  };
+}
+
+export function districtLocations(state: GameState, districtId: DistrictId): Location[] {
+  return Object.values(state.locations).filter((location) => location.districtId === districtId);
+}
+
+export function isDistrictUnlockedForPlacement(state: GameState, districtId: DistrictId): boolean {
+  return districtProgress(state, districtId).access === "unlocked";
+}
+
+export function placementCostForLocation(state: GameState, location: Location): number {
+  const district = state.districts[location.districtId];
+  return Math.round(location.placementCost * (district?.rentMultiplier ?? 1));
+}
+
+export function districtMachineCounts(
+  state: GameState,
+  districtId: DistrictId
+): { playerCount: number; rivalCount: number; total: number; openSites: number; totalSites: number } {
+  const locations = districtLocations(state, districtId).filter(installableLocation);
+  const machines = locations.map((location) => machineAtLocation(state, location.id)).filter((machine): machine is VendingMachine => Boolean(machine));
+  return {
+    playerCount: machines.filter((machine) => machine.ownerFactionId === state.playerFactionId).length,
+    rivalCount: machines.filter((machine) => machine.ownerFactionId !== state.playerFactionId).length,
+    total: machines.length,
+    openSites: locations.filter((location) => !machineAtLocation(state, location.id)).length,
+    totalSites: locations.length
+  };
+}
+
+export function districtStatus(state: GameState, districtId: DistrictId): DistrictStatus {
+  if (!isDistrictUnlockedForPlacement(state, districtId)) {
+    return "locked";
+  }
+
+  const locations = districtLocations(state, districtId).filter(installableLocation);
+  const counts = districtMachineCounts(state, districtId);
+  const averagePressure = locations.reduce((sum, location) => sum + location.rivalPressure, 0) / Math.max(1, locations.length);
+  const controlThreshold = Math.max(1, Math.ceil(locations.length * 0.67));
+
+  if (counts.playerCount >= controlThreshold && counts.rivalCount === 0 && averagePressure < 0.35) {
+    return "controlled";
+  }
+
+  if (counts.rivalCount > 0 || averagePressure >= 0.45) {
+    return "contested";
+  }
+
+  return "available";
+}
+
+export function districtUnlockRequirements(state: GameState, districtId: DistrictId): string[] {
+  const district = state.districts[districtId];
+  if (!district) {
+    return ["Unknown district"];
+  }
+
+  const requirements: string[] = [];
+  const ownedCount = ownedMachines(state, state.playerFactionId).length;
+  const completedTotal = state.progression.contractsCompletedTotal ?? state.progression.contractsCompletedToday ?? 0;
+  const streetReputation = state.factions[state.playerFactionId]?.streetReputation ?? 0;
+
+  if (ownedCount < district.requiredOwnedMachines) {
+    requirements.push(`Own ${district.requiredOwnedMachines} machines`);
+  }
+
+  if (completedTotal < district.requiredContractsCompleted) {
+    requirements.push(`Complete ${district.requiredContractsCompleted} contracts`);
+  }
+
+  if (streetReputation < district.requiredStreetReputation) {
+    requirements.push(`Street rep ${district.requiredStreetReputation}`);
+  }
+
+  return requirements;
+}
+
+export interface DistrictUnlockInfo {
+  canScout: boolean;
+  canUnlock: boolean;
+  progress: DistrictProgress;
+  status: DistrictStatus;
+  unmetRequirements: string[];
+}
+
+export function districtUnlockInfo(state: GameState, districtId: DistrictId): DistrictUnlockInfo {
+  const district = state.districts[districtId];
+  const progress = districtProgress(state, districtId);
+  const unmetRequirements = districtUnlockRequirements(state, districtId);
+  const player = state.factions[state.playerFactionId];
+
+  return {
+    canScout: Boolean(district && progress.access === "locked" && player.money >= district.scoutCost),
+    canUnlock: Boolean(district && progress.access === "scouted" && unmetRequirements.length === 0 && player.money >= district.unlockCost),
+    progress,
+    status: districtStatus(state, districtId),
+    unmetRequirements
+  };
 }
 
 export function getMachineLocation(state: GameState, machineId: MachineId): Location | undefined {
@@ -189,7 +320,7 @@ export function machineRoutePressure(
 ): { score: number; tone: "good" | "warning" | "danger"; reasons: string[] } {
   const location = state.locations[machine.locationId];
   const stock = machineStockUnits(machine);
-  const capacity = machine.slots.reduce((sum, slot) => sum + slot.capacity, 0) || machine.maxSlots * 24;
+  const capacity = machine.slots.reduce((sum, slot) => sum + slot.capacity, 0) + Math.max(0, machine.maxSlots - machine.slots.length) * 24;
   const reasons: string[] = [];
   let score = 0;
 
@@ -291,7 +422,7 @@ export function routeTasks(state: GameState): RouteTask[] {
     const location = state.locations[machine.locationId];
     const pressure = machineRoutePressure(state, machine);
     const stock = machineStockUnits(machine);
-    const capacity = machine.slots.reduce((sum, slot) => sum + slot.capacity, 0) || machine.maxSlots * 24;
+    const capacity = machine.slots.reduce((sum, slot) => sum + slot.capacity, 0) + Math.max(0, machine.maxSlots - machine.slots.length) * 24;
 
     if (stock === 0 || stock / capacity <= 0.25) {
       tasks.push({

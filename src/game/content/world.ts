@@ -49,7 +49,12 @@ export const districts: Record<string, District> = {
     bounds: { minX: -14, maxX: 12, minZ: -10, maxZ: 12 },
     heatTolerance: 35,
     rentMultiplier: 1,
+    requiredContractsCompleted: 0,
+    requiredOwnedMachines: 0,
+    requiredStreetReputation: 0,
+    scoutCost: 0,
     dominantTags: ["laundry", "commuter", "student"],
+    unlockCost: 0,
     visualTheme: "brick storefronts and small service stops"
   },
   industrial_yards: {
@@ -59,7 +64,12 @@ export const districts: Record<string, District> = {
     bounds: { minX: -40, maxX: -18, minZ: -6, maxZ: 24 },
     heatTolerance: 48,
     rentMultiplier: 1.18,
+    requiredContractsCompleted: 1,
+    requiredOwnedMachines: 2,
+    requiredStreetReputation: 1,
+    scoutCost: 25,
     dominantTags: ["commuter", "gym", "utility"],
+    unlockCost: 90,
     visualTheme: "freight depots, loading bays, and sodium lamps"
   },
   downtown_loop: {
@@ -69,7 +79,12 @@ export const districts: Record<string, District> = {
     bounds: { minX: 18, maxX: 38, minZ: -10, maxZ: 16 },
     heatTolerance: 28,
     rentMultiplier: 1.55,
+    requiredContractsCompleted: 2,
+    requiredOwnedMachines: 3,
+    requiredStreetReputation: 2,
+    scoutCost: 45,
     dominantTags: ["commuter", "gym", "office"],
+    unlockCost: 160,
     visualTheme: "glass fronts, bus shelters, and compact plazas"
   },
   neon_quarter: {
@@ -79,7 +94,12 @@ export const districts: Record<string, District> = {
     bounds: { minX: 4, maxX: 34, minZ: -32, maxZ: -18 },
     heatTolerance: 24,
     rentMultiplier: 1.42,
+    requiredContractsCompleted: 2,
+    requiredOwnedMachines: 3,
+    requiredStreetReputation: 3,
+    scoutCost: 55,
     dominantTags: ["arcade", "night", "student"],
+    unlockCost: 180,
     visualTheme: "arcade fronts, food stalls, and glowing side streets"
   }
 };

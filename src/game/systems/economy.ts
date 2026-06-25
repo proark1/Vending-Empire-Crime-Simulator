@@ -6,6 +6,26 @@ function tagDemandMultiplier(product: Product, location: Location): number {
   return 1 + tagMatches * 0.28;
 }
 
+function districtDemandMultiplier(state: GameState, product: Product, location: Location): number {
+  const district = state.districts[location.districtId];
+  if (!district) {
+    return 1;
+  }
+
+  const dominantMatches = product.demandTags.filter((tag) => district.dominantTags.includes(tag)).length;
+  const rentSignal = Math.max(0, district.rentMultiplier - 1) * 0.08;
+  return 1 + dominantMatches * 0.12 + rentSignal;
+}
+
+function districtHeatMultiplier(state: GameState, location: Location): number {
+  const district = state.districts[location.districtId];
+  if (!district) {
+    return 1;
+  }
+
+  return Math.max(0.72, Math.min(1.25, 1.2 - district.heatTolerance / 120));
+}
+
 function timeOfDayMultiplier(worldTimeHours: number, product: Product): number {
   const hour = worldTimeHours % 24;
   const isNight = hour >= 18 || hour < 5;
@@ -76,6 +96,7 @@ export function estimateMachineSalesPerHour(state: GameState, machine: VendingMa
       location.footTraffic *
       product.demand *
       tagDemandMultiplier(product, location) *
+      districtDemandMultiplier(state, product, location) *
       timeOfDayMultiplier(state.worldTimeHours, product) *
       visibility *
       damageMultiplier *
@@ -86,7 +107,7 @@ export function estimateMachineSalesPerHour(state: GameState, machine: VendingMa
     return {
       productId: slot.productId,
       unitsPerHour: demand * 1.55,
-      heatMultiplier: effects.heatMultiplier
+      heatMultiplier: effects.heatMultiplier * districtHeatMultiplier(state, location)
     };
   });
 }

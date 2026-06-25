@@ -22,6 +22,8 @@ describe("world content", () => {
     const openLocations = installableLocations.filter((location) => !Object.values(state.machines).some((machine) => machine.locationId === location.id));
 
     expect(Object.keys(state.districts).length).toBeGreaterThanOrEqual(4);
+    expect(state.districtProgress.starter_suburb.access).toBe("unlocked");
+    expect(state.districtProgress.industrial_yards.access).toBe("locked");
     expect(installableLocations.length).toBeGreaterThanOrEqual(12);
     expect(openLocations.length).toBeGreaterThanOrEqual(10);
   });

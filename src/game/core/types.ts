@@ -120,8 +120,23 @@ export interface District {
   name: string;
   heatTolerance: number;
   rentMultiplier: number;
+  requiredContractsCompleted: number;
+  requiredOwnedMachines: number;
+  requiredStreetReputation: number;
+  scoutCost: number;
   dominantTags: string[];
+  unlockCost: number;
   visualTheme: string;
+}
+
+export type DistrictAccess = "locked" | "scouted" | "unlocked";
+export type DistrictStatus = "locked" | "available" | "contested" | "controlled";
+
+export interface DistrictProgress {
+  access: DistrictAccess;
+  districtId: DistrictId;
+  scoutedHour?: number;
+  unlockedHour?: number;
 }
 
 export interface PlayerState {
@@ -191,6 +206,7 @@ export interface DayReport {
 }
 
 export interface ProgressionState {
+  contractsCompletedTotal: number;
   nextContractNumber: number;
   lastReportDay: number;
   revenueCollectedToday: number;
@@ -278,6 +294,7 @@ export interface GameState {
   factions: Record<FactionId, Faction>;
   products: Record<ProductId, Product>;
   districts: Record<DistrictId, District>;
+  districtProgress: Record<DistrictId, DistrictProgress>;
   locations: Record<LocationId, Location>;
   machines: Record<MachineId, VendingMachine>;
   vehicles: Record<VehicleId, RouteVehicle>;
@@ -303,6 +320,8 @@ export type GameCommand =
   | { type: "take_vehicle_crate"; actorId: FactionId; vehicleId: VehicleId; productId: ProductId; quantity: number }
   | { type: "dispatch_vehicle"; actorId: FactionId; vehicleId: VehicleId; locationId: LocationId }
   | { type: "select_route_task"; actorId: FactionId; taskId: string | null }
+  | { type: "scout_district"; actorId: FactionId; districtId: DistrictId }
+  | { type: "unlock_district"; actorId: FactionId; districtId: DistrictId }
   | { type: "hire_employee"; actorId: FactionId; role: EmployeeRole }
   | { type: "assign_employee"; actorId: FactionId; employeeId: EmployeeId; machineId: MachineId; assigned: boolean }
   | { type: "stock_machine"; actorId: FactionId; machineId: MachineId; productId: ProductId; quantity: number }

@@ -1,4 +1,4 @@
-import { AlertTriangle, Boxes, Building2, ClipboardList, HandCoins, Map, Navigation, Package, PackagePlus, Route, ShieldAlert, Truck, UserPlus, Users, Wrench } from "lucide-react";
+import { AlertTriangle, Boxes, Building2, ClipboardList, HandCoins, Lock, Map, Navigation, Package, PackagePlus, Route, Search, ShieldAlert, Truck, Unlock, UserPlus, Users, Wrench } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { GameCommand, GameState } from "../game/core/types";
 import { employeeRoleList, employeeRoles } from "../game/content/employees";
@@ -12,15 +12,20 @@ import {
   contractRemainingQuantity,
   contractTone,
   dailyEmployeeWages,
+  districtLocations,
+  districtMachineCounts,
+  districtUnlockInfo,
   employeeList,
   formatClock,
   garageStorageUnits,
   getMachineLocation,
+  installableLocation,
   latestDayReport,
   machineAtLocation,
   machineRoutePressure,
   machineStockUnits,
   ownedMachines,
+  placementCostForLocation,
   routeTasks,
   selectedRouteTask,
   vehicleInventoryUnits,
@@ -65,23 +70,27 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
     () =>
       Object.values(state.districts)
         .map((district) => {
-          const districtLocations = Object.values(state.locations).filter((location) => location.districtId === district.id && location.kind !== "garage" && location.kind !== "supplier");
-          const machines = districtLocations.map((location) => machineAtLocation(state, location.id)).filter(Boolean);
-          const openSites = districtLocations.filter((location) => !machineAtLocation(state, location.id));
-          const pressure = districtLocations.reduce((sum, location) => sum + location.rivalPressure, 0) / Math.max(1, districtLocations.length);
-          const traffic = districtLocations.reduce((sum, location) => sum + location.footTraffic, 0);
-          const nextCost = openSites.reduce((lowest, location) => Math.min(lowest, location.placementCost), Number.POSITIVE_INFINITY);
-          const playerCount = machines.filter((machine) => machine?.ownerFactionId === state.playerFactionId).length;
-          const rivalCount = machines.filter((machine) => machine && machine.ownerFactionId !== state.playerFactionId).length;
+          const locations = districtLocations(state, district.id).filter(installableLocation);
+          const openSites = locations.filter((location) => !machineAtLocation(state, location.id));
+          const pressure = locations.reduce((sum, location) => sum + location.rivalPressure, 0) / Math.max(1, locations.length);
+          const traffic = locations.reduce((sum, location) => sum + location.footTraffic, 0);
+          const nextCost = openSites.reduce((lowest, location) => Math.min(lowest, placementCostForLocation(state, location)), Number.POSITIVE_INFINITY);
+          const counts = districtMachineCounts(state, district.id);
+          const unlockInfo = districtUnlockInfo(state, district.id);
           return {
             district,
-            openSites: openSites.length,
+            canScout: unlockInfo.canScout,
+            canUnlock: unlockInfo.canUnlock,
+            openSites: counts.openSites,
             pressure,
+            progress: unlockInfo.progress,
+            status: unlockInfo.status,
             traffic,
             nextCost: Number.isFinite(nextCost) ? nextCost : 0,
-            playerCount,
-            rivalCount,
-            totalSites: districtLocations.length
+            playerCount: counts.playerCount,
+            rivalCount: counts.rivalCount,
+            totalSites: counts.totalSites,
+            unmetRequirements: unlockInfo.unmetRequirements
           };
         })
         .sort((a, b) => a.district.name.localeCompare(b.district.name)),
@@ -163,19 +172,43 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
       {tab === "districts" && (
         <div className="panel-list">
           {districtSummaries.map((summary) => {
-            const pressureTone = summary.pressure >= 0.45 ? "danger" : summary.pressure >= 0.28 ? "warning" : "good";
+            const pressureTone = summary.status === "contested" ? "danger" : summary.progress.access !== "unlocked" || summary.pressure >= 0.28 ? "warning" : "good";
+            const accessLabel = summary.progress.access === "unlocked" ? summary.status : summary.progress.access;
             return (
               <article className={`route-task ${pressureTone}`} key={summary.district.id}>
                 <div>
                   <h3>{summary.district.name}</h3>
                   <p>{summary.district.description}</p>
                   <p>
-                    {summary.playerCount} yours · {summary.rivalCount} rival · {summary.openSites}/{summary.totalSites} open pads
+                    {accessLabel} · {summary.playerCount} yours · {summary.rivalCount} rival · {summary.openSites}/{summary.totalSites} open pads
                   </p>
+                  {summary.unmetRequirements.length > 0 && <p>Needs {summary.unmetRequirements.join(" · ")}</p>}
                 </div>
-                <strong>
-                  {summary.nextCost > 0 ? `$${summary.nextCost}` : "Full"} · {summary.traffic.toFixed(1)} traffic · {Math.round(summary.pressure * 100)} pressure
-                </strong>
+                <div className="route-actions">
+                  {summary.progress.access === "locked" && (
+                    <MiniButton disabled={!summary.canScout} onClick={() => onCommand({ type: "scout_district", actorId: state.playerFactionId, districtId: summary.district.id })}>
+                      <Search size={13} aria-hidden="true" />
+                      Scout ${summary.district.scoutCost}
+                    </MiniButton>
+                  )}
+                  {summary.progress.access === "scouted" && (
+                    <MiniButton disabled={!summary.canUnlock} onClick={() => onCommand({ type: "unlock_district", actorId: state.playerFactionId, districtId: summary.district.id })}>
+                      <Unlock size={13} aria-hidden="true" />
+                      Open ${summary.district.unlockCost}
+                    </MiniButton>
+                  )}
+                  {summary.progress.access === "unlocked" && (
+                    <strong>
+                      {summary.nextCost > 0 ? `$${summary.nextCost}` : "Full"} · {summary.traffic.toFixed(1)} traffic · {Math.round(summary.pressure * 100)} pressure
+                    </strong>
+                  )}
+                  {summary.progress.access !== "unlocked" && (
+                    <strong>
+                      <Lock size={13} aria-hidden="true" />
+                      {summary.traffic.toFixed(1)} traffic
+                    </strong>
+                  )}
+                </div>
               </article>
             );
           })}

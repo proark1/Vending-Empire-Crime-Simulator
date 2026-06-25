@@ -1,5 +1,15 @@
 import type { GameState, LocationId, Vec2 } from "./types";
-import { carriedCrateUnits, garageStorageUnits, machineAtLocation, missionProgress, ownedMachines, totalOwnedStockUnits } from "./selectors";
+import {
+  carriedCrateUnits,
+  garageStorageUnits,
+  installableLocation,
+  isDistrictUnlockedForPlacement,
+  machineAtLocation,
+  missionProgress,
+  ownedMachines,
+  placementCostForLocation,
+  totalOwnedStockUnits
+} from "./selectors";
 
 export type MissionStepId =
   | "buy_stock"
@@ -31,17 +41,20 @@ function nearestOpenPlacement(state: GameState, from: Vec2): LocationId | undefi
   const playerMoney = state.factions[state.playerFactionId].money;
 
   return Object.values(state.locations)
-    .filter((location) => location.kind !== "garage" && location.kind !== "supplier")
+    .filter(installableLocation)
+    .filter((location) => isDistrictUnlockedForPlacement(state, location.districtId))
     .filter((location) => !machineAtLocation(state, location.id))
     .sort((a, b) => {
-      const aAffordable = a.placementCost <= playerMoney ? 0 : 1;
-      const bAffordable = b.placementCost <= playerMoney ? 0 : 1;
+      const aCost = placementCostForLocation(state, a);
+      const bCost = placementCostForLocation(state, b);
+      const aAffordable = aCost <= playerMoney ? 0 : 1;
+      const bAffordable = bCost <= playerMoney ? 0 : 1;
       if (aAffordable !== bAffordable) {
         return aAffordable - bAffordable;
       }
 
-      if (a.placementCost !== b.placementCost && aAffordable === bAffordable) {
-        return a.placementCost - b.placementCost;
+      if (aCost !== bCost && aAffordable === bAffordable) {
+        return aCost - bCost;
       }
 
       return distance(a.position, from) - distance(b.position, from);
@@ -51,9 +64,10 @@ function nearestOpenPlacement(state: GameState, from: Vec2): LocationId | undefi
 function hasAffordableOpenPlacement(state: GameState): boolean {
   const playerMoney = state.factions[state.playerFactionId].money;
   return Object.values(state.locations)
-    .filter((location) => location.kind !== "garage" && location.kind !== "supplier")
+    .filter(installableLocation)
+    .filter((location) => isDistrictUnlockedForPlacement(state, location.districtId))
     .filter((location) => !machineAtLocation(state, location.id))
-    .some((location) => location.placementCost <= playerMoney);
+    .some((location) => placementCostForLocation(state, location) <= playerMoney);
 }
 
 export function getStarterMissionStep(state: GameState, playerPosition: Vec2): MissionStep {

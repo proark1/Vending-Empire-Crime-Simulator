@@ -11,11 +11,14 @@ import {
   contractProgressRatio,
   contractRemainingQuantity,
   contractTone,
+  districtUnlockInfo,
   garageStorageSpaceRemaining,
   garageStorageUnits,
+  isDistrictUnlockedForPlacement,
   machineAtLocation,
   machineRoutePressure,
   machineStockUnits,
+  placementCostForLocation,
   vehicleInventoryUnits,
   vehicleSpaceRemaining
 } from "../game/core/selectors";
@@ -276,6 +279,10 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
   if (target.type === "placement") {
     const location = state.locations[target.id];
     const occupied = Boolean(machineAtLocation(state, target.id));
+    const unlocked = isDistrictUnlockedForPlacement(state, location.districtId);
+    const district = state.districts[location.districtId];
+    const unlockInfo = districtUnlockInfo(state, location.districtId);
+    const placementCost = placementCostForLocation(state, location);
     return (
       <section className="interaction-panel">
         <h2>{location.name}</h2>
@@ -288,15 +295,19 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
         <p>
           Traffic {location.footTraffic.toFixed(1)} · Risk {Math.round((1 - location.safety + location.policePresence) * 50)}
         </p>
+        <p>
+          {district?.name ?? "Unknown district"} · {unlockInfo.progress.access}
+        </p>
         <div className="action-grid">
           <ActionButton
-            disabled={occupied || player.money < location.placementCost}
-            icon={<PackagePlus size={17} aria-hidden="true" />}
+            disabled={!unlocked || occupied || player.money < placementCost}
+            icon={unlocked ? <PackagePlus size={17} aria-hidden="true" /> : <Lock size={17} aria-hidden="true" />}
             onClick={() => onCommand({ type: "place_machine", actorId: state.playerFactionId, locationId: location.id })}
           >
-            Install ${location.placementCost}
+            {unlocked ? `Install $${placementCost}` : "District locked"}
           </ActionButton>
         </div>
+        {!unlocked && <p className="empty-note">Use the Districts tab to scout and open this area.</p>}
       </section>
     );
   }
