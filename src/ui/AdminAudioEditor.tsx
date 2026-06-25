@@ -13,6 +13,7 @@ import {
 import {
   createDefaultAudioProviderSettings,
   defaultElevenLabsGenerationPrompts,
+  defaultElevenLabsVoiceProfiles,
   normalizeAudioProviderSettings,
   validateAudioProviderSettings,
   type AudioProviderSettings,
@@ -247,6 +248,7 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
         voiceProfiles: [
           ...current.voiceProfiles,
           {
+            designPrompt: "",
             id,
             label: "New Voice",
             modelId: current.defaultModelId,
@@ -260,6 +262,19 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
         ]
       };
     });
+  }, [setNormalizedProviderSettings]);
+
+  const handleResetVoiceProfiles = useCallback(() => {
+    setNormalizedProviderSettings((current) => ({
+      ...current,
+      voiceProfiles: defaultElevenLabsVoiceProfiles.map((profile) => {
+        const existing = current.voiceProfiles.find((candidate) => candidate.id === profile.id);
+        return {
+          ...profile,
+          voiceId: existing?.voiceId ?? ""
+        };
+      })
+    }));
   }, [setNormalizedProviderSettings]);
 
   const handleAddGenerationPrompt = useCallback(() => {
@@ -589,23 +604,29 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
             </label>
             <button onClick={handleAddVoiceProfile} type="button">
               <Plus size={15} aria-hidden="true" />
-              Add Voice ID
+              Add Voice
             </button>
+          </div>
+
+          <div className="admin-audio-subheading">
+            <h3>Voice Design Prompts</h3>
+            <div className="admin-audio-heading-actions">
+              <button onClick={handleResetVoiceProfiles} type="button">
+                <RotateCcw size={14} aria-hidden="true" />
+                Defaults
+              </button>
+            </div>
           </div>
 
           <div className="admin-audio-table provider">
             {providerSettings.voiceProfiles.length === 0 ? (
-              <p>No ElevenLabs voice IDs configured.</p>
+              <p>No ElevenLabs voice profiles configured.</p>
             ) : (
               providerSettings.voiceProfiles.map((profile, index) => (
                 <div className="admin-audio-row provider" key={`${profile.id}-${index}`}>
-                  <select value={profile.purpose} onChange={(event) => updateVoiceProfile(index, { purpose: event.target.value as AudioCategory })}>
-                    {Object.entries(categoryLabels).map(([category, label]) => (
-                      <option key={category} value={category}>{label}</option>
-                    ))}
-                  </select>
                   <input aria-label="Voice profile id" value={profile.id} onChange={(event) => updateVoiceProfile(index, { id: slug(event.target.value, profile.id || `voice_${index + 1}`) })} />
                   <input aria-label="Voice profile label" value={profile.label} onChange={(event) => updateVoiceProfile(index, { label: event.target.value })} />
+                  <textarea aria-label="ElevenLabs voice design prompt" value={profile.designPrompt} onChange={(event) => updateVoiceProfile(index, { designPrompt: event.target.value })} />
                   <input aria-label="ElevenLabs voice id" className="wide" placeholder="Voice ID" value={profile.voiceId} onChange={(event) => updateVoiceProfile(index, { voiceId: event.target.value })} />
                   <input aria-label="ElevenLabs model id" className="wide" value={profile.modelId} onChange={(event) => updateVoiceProfile(index, { modelId: event.target.value })} />
                   <input aria-label="Stability" max="1" min="0" step="0.05" type="number" value={profile.stability} onChange={(event) => updateVoiceProfile(index, { stability: Number(event.target.value) })} />
@@ -615,6 +636,9 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
                     <input checked={profile.useSpeakerBoost} type="checkbox" onChange={(event) => updateVoiceProfile(index, { useSpeakerBoost: event.target.checked })} />
                     Boost
                   </label>
+                  <button onClick={() => handleCopyPrompt(profile.designPrompt)} type="button">
+                    <Copy size={14} aria-hidden="true" />
+                  </button>
                   <button className="danger" onClick={() => handleDeleteVoiceProfile(profile.id)} type="button">
                     <Trash2 size={14} aria-hidden="true" />
                   </button>

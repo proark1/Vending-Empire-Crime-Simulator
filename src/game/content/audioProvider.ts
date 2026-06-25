@@ -1,6 +1,7 @@
 import type { AudioCategory } from "./audioConfig";
 
 export interface ElevenLabsVoiceProfile {
+  designPrompt: string;
   id: string;
   label: string;
   modelId: string;
@@ -42,6 +43,69 @@ export interface AudioProviderValidationIssue {
 }
 
 const defaultModelId = "eleven_multilingual_v2";
+
+export const defaultElevenLabsVoiceProfiles: ElevenLabsVoiceProfile[] = [
+  {
+    designPrompt: "A calm, street-smart fixer and dispatcher in their late 30s. Low confident voice, dry delivery, urban crime-drama tone, controlled urgency when warning the player. Practical, observant, slightly tired, never cartoonish or exaggerated.",
+    id: "voice_fixer_dispatcher",
+    label: "Fixer / Dispatcher",
+    modelId: defaultModelId,
+    purpose: "voice",
+    similarityBoost: 0.78,
+    stability: 0.48,
+    style: 0.18,
+    useSpeakerBoost: true,
+    voiceId: ""
+  },
+  {
+    designPrompt: "A grounded warehouse supplier and mechanic voice. Mid-range, rough but friendly, practical working-class tone, speaks like someone surrounded by tools, crates, and machines. Helpful but not cheerful, believable and understated.",
+    id: "voice_supplier_mechanic",
+    label: "Supplier / Mechanic",
+    modelId: defaultModelId,
+    purpose: "voice",
+    similarityBoost: 0.76,
+    stability: 0.52,
+    style: 0.12,
+    useSpeakerBoost: true,
+    voiceId: ""
+  },
+  {
+    designPrompt: "A threatening rival crew boss. Deep, restrained, intimidating voice with slow confidence. Sounds dangerous without shouting. Gritty street-crime tone, controlled menace, no theatrical villain acting.",
+    id: "voice_rival_enforcer",
+    label: "Rival / Enforcer",
+    modelId: defaultModelId,
+    purpose: "voice",
+    similarityBoost: 0.8,
+    stability: 0.56,
+    style: 0.25,
+    useSpeakerBoost: true,
+    voiceId: ""
+  },
+  {
+    designPrompt: "A polished authority voice for inspectors, lawyers, and contract pressure. Clear, sharp, controlled, professional, slightly cold. Sounds like someone using paperwork and law as a weapon, not a cartoon bureaucrat.",
+    id: "voice_authority",
+    label: "Authority / Inspector",
+    modelId: defaultModelId,
+    purpose: "voice",
+    similarityBoost: 0.74,
+    stability: 0.62,
+    style: 0.08,
+    useSpeakerBoost: true,
+    voiceId: ""
+  },
+  {
+    designPrompt: "A nervous street informant. Quiet, quick, alert delivery, sounds like they are passing information before leaving fast. Subtle tension, clear and understandable, no whisper parody or exaggerated accent.",
+    id: "voice_informant",
+    label: "Informant",
+    modelId: defaultModelId,
+    purpose: "voice",
+    similarityBoost: 0.72,
+    stability: 0.42,
+    style: 0.28,
+    useSpeakerBoost: true,
+    voiceId: ""
+  }
+];
 
 export const defaultElevenLabsGenerationPrompts: ElevenLabsGenerationPrompt[] = [
   {
@@ -295,7 +359,7 @@ export const defaultElevenLabsGenerationPrompts: ElevenLabsGenerationPrompt[] = 
     prompt: "New block, new rules. Keep the machines stocked and the locals paid.",
     purpose: "voice",
     trigger: "voice.district_entry",
-    voiceProfileId: ""
+    voiceProfileId: "voice_fixer_dispatcher"
   },
   {
     durationSeconds: 4,
@@ -306,7 +370,7 @@ export const defaultElevenLabsGenerationPrompts: ElevenLabsGenerationPrompt[] = 
     prompt: "Heat is climbing. Kill the noise before inspectors start knocking.",
     purpose: "voice",
     trigger: "voice.heat_warning",
-    voiceProfileId: ""
+    voiceProfileId: "voice_fixer_dispatcher"
   },
   {
     durationSeconds: 4,
@@ -317,7 +381,7 @@ export const defaultElevenLabsGenerationPrompts: ElevenLabsGenerationPrompt[] = 
     prompt: "Redline is moving on one of our machines. Get there now.",
     purpose: "voice",
     trigger: "voice.rival_attack",
-    voiceProfileId: ""
+    voiceProfileId: "voice_fixer_dispatcher"
   },
   {
     durationSeconds: 4,
@@ -328,7 +392,7 @@ export const defaultElevenLabsGenerationPrompts: ElevenLabsGenerationPrompt[] = 
     prompt: "That route is ours. Bank the win and prep the next block.",
     purpose: "voice",
     trigger: "voice.mission_complete",
-    voiceProfileId: ""
+    voiceProfileId: "voice_fixer_dispatcher"
   },
   {
     durationSeconds: 5,
@@ -339,7 +403,7 @@ export const defaultElevenLabsGenerationPrompts: ElevenLabsGenerationPrompt[] = 
     prompt: "I can get you a clean pallet by midnight. Pay fast, move faster.",
     purpose: "voice",
     trigger: "voice.supplier_offer",
-    voiceProfileId: ""
+    voiceProfileId: "voice_supplier_mechanic"
   },
   {
     durationSeconds: 5,
@@ -350,7 +414,7 @@ export const defaultElevenLabsGenerationPrompts: ElevenLabsGenerationPrompt[] = 
     prompt: "There is a back door on this deal. It costs extra because it works.",
     purpose: "voice",
     trigger: "voice.fixer_tip",
-    voiceProfileId: ""
+    voiceProfileId: "voice_fixer_dispatcher"
   },
   {
     durationSeconds: 5,
@@ -361,7 +425,7 @@ export const defaultElevenLabsGenerationPrompts: ElevenLabsGenerationPrompt[] = 
     prompt: "Rent clears by morning, or your machine finds the sidewalk.",
     purpose: "voice",
     trigger: "voice.landlord_pressure",
-    voiceProfileId: ""
+    voiceProfileId: "voice_authority"
   },
   {
     durationSeconds: 5,
@@ -372,7 +436,7 @@ export const defaultElevenLabsGenerationPrompts: ElevenLabsGenerationPrompt[] = 
     prompt: "That corner was ours before your logo touched it. Pull back, or we pull it down.",
     purpose: "voice",
     trigger: "voice.rival_boss_threat",
-    voiceProfileId: ""
+    voiceProfileId: "voice_rival_enforcer"
   },
   {
     durationSeconds: 5,
@@ -383,7 +447,7 @@ export const defaultElevenLabsGenerationPrompts: ElevenLabsGenerationPrompt[] = 
     prompt: "I rebuilt the lock assembly. It is ugly, heavy, and exactly what you need.",
     purpose: "voice",
     trigger: "voice.mechanic_unlock",
-    voiceProfileId: ""
+    voiceProfileId: "voice_supplier_mechanic"
   },
   {
     durationSeconds: 5,
@@ -394,7 +458,7 @@ export const defaultElevenLabsGenerationPrompts: ElevenLabsGenerationPrompt[] = 
     prompt: "Route is hot. I can still make the drop, but I am not waiting twice.",
     purpose: "voice",
     trigger: "voice.driver_warning",
-    voiceProfileId: ""
+    voiceProfileId: "voice_supplier_mechanic"
   },
   {
     durationSeconds: 5,
@@ -405,7 +469,7 @@ export const defaultElevenLabsGenerationPrompts: ElevenLabsGenerationPrompt[] = 
     prompt: "I have eyes on the block. If Redline tests the machine, they pay for it.",
     purpose: "voice",
     trigger: "voice.guard_contact",
-    voiceProfileId: ""
+    voiceProfileId: "voice_rival_enforcer"
   },
   {
     durationSeconds: 5,
@@ -416,7 +480,7 @@ export const defaultElevenLabsGenerationPrompts: ElevenLabsGenerationPrompt[] = 
     prompt: "This placement is flagged for inspection. Keep your paperwork close.",
     purpose: "voice",
     trigger: "voice.inspector_notice",
-    voiceProfileId: ""
+    voiceProfileId: "voice_authority"
   },
   {
     durationSeconds: 5,
@@ -427,7 +491,7 @@ export const defaultElevenLabsGenerationPrompts: ElevenLabsGenerationPrompt[] = 
     prompt: "Their contract language is sloppy. Give me one day and I can turn it against them.",
     purpose: "voice",
     trigger: "voice.lawyer_notice",
-    voiceProfileId: ""
+    voiceProfileId: "voice_authority"
   },
   {
     durationSeconds: 5,
@@ -438,7 +502,7 @@ export const defaultElevenLabsGenerationPrompts: ElevenLabsGenerationPrompt[] = 
     prompt: "A scout marked your machine ten minutes ago. They are checking if you are asleep.",
     purpose: "voice",
     trigger: "voice.informant_tip",
-    voiceProfileId: ""
+    voiceProfileId: "voice_informant"
   }
 ];
 
@@ -474,13 +538,13 @@ export function createDefaultAudioProviderSettings(): AudioProviderSettings {
     generationPrompts: defaultElevenLabsGenerationPrompts.map((prompt) => ({ ...prompt })),
     hasApiKey: false,
     provider: "elevenlabs",
-    voiceProfiles: []
+    voiceProfiles: defaultElevenLabsVoiceProfiles.map((profile) => ({ ...profile }))
   };
 }
 
 export function normalizeAudioProviderSettings(candidate: unknown): AudioProviderSettings {
   const input = typeof candidate === "object" && candidate !== null ? candidate as Partial<AudioProviderSettings> : {};
-  const profilesInput = Array.isArray(input.voiceProfiles) ? input.voiceProfiles : [];
+  const profilesInput = Array.isArray(input.voiceProfiles) && input.voiceProfiles.length > 0 ? input.voiceProfiles : defaultElevenLabsVoiceProfiles;
   const promptsInput = Array.isArray(input.generationPrompts) ? input.generationPrompts : defaultElevenLabsGenerationPrompts;
   const defaultModel = stringValue(input.defaultModelId, defaultModelId);
 
@@ -511,15 +575,17 @@ export function normalizeAudioProviderSettings(candidate: unknown): AudioProvide
     voiceProfiles: profilesInput.map((profileInput, index) => {
       const profile = typeof profileInput === "object" && profileInput !== null ? profileInput as Partial<ElevenLabsVoiceProfile> : {};
       const label = stringValue(profile.label, `Voice ${index + 1}`);
+      const fallback = defaultElevenLabsVoiceProfiles[index];
       return {
+        designPrompt: stringValue(profile.designPrompt, fallback?.designPrompt ?? ""),
         id: stringValue(profile.id, idFromLabel(label, `voice_${index + 1}`)),
         label,
-        modelId: stringValue(profile.modelId, defaultModel),
-        purpose: purposeValue(profile.purpose),
-        similarityBoost: clamp(profile.similarityBoost, 0.75),
-        stability: clamp(profile.stability, 0.45),
-        style: clamp(profile.style, 0),
-        useSpeakerBoost: booleanValue(profile.useSpeakerBoost, true),
+        modelId: stringValue(profile.modelId, fallback?.modelId ?? defaultModel),
+        purpose: purposeValue(profile.purpose ?? fallback?.purpose),
+        similarityBoost: clamp(profile.similarityBoost, fallback?.similarityBoost ?? 0.75),
+        stability: clamp(profile.stability, fallback?.stability ?? 0.45),
+        style: clamp(profile.style, fallback?.style ?? 0),
+        useSpeakerBoost: booleanValue(profile.useSpeakerBoost, fallback?.useSpeakerBoost ?? true),
         voiceId: stringValue(profile.voiceId)
       };
     })
@@ -550,6 +616,10 @@ export function validateAudioProviderSettings(settings: AudioProviderSettings): 
 
     if (!profile.voiceId) {
       issues.push({ severity: "warning", message: `ElevenLabs voice profile "${profile.label || profile.id}" is missing a voice id.` });
+    }
+
+    if (!profile.designPrompt) {
+      issues.push({ severity: "warning", message: `ElevenLabs voice profile "${profile.label || profile.id}" is missing a voice design prompt.` });
     }
   }
 

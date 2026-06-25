@@ -2111,8 +2111,9 @@ kbd {
 }
 
 .admin-audio-row.provider {
-  min-width: 1240px;
-  grid-template-columns: 110px 120px 150px minmax(190px, 1fr) minmax(180px, 0.8fr) 84px 104px 84px 82px 38px;
+  align-items: stretch;
+  min-width: 1560px;
+  grid-template-columns: 130px 160px minmax(360px, 1.3fr) 180px minmax(180px, 0.7fr) 84px 104px 84px 82px 38px 38px;
 }
 
 .admin-audio-row.prompt {

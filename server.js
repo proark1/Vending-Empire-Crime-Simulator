@@ -916,6 +916,7 @@ function normalizeAudioProviderSettings(candidate, existing = null, options = {}
       const profileInput = typeof profile === "object" && profile !== null ? profile : {};
       const label = normalizeAudioProviderString(profileInput.label, `Voice ${index + 1}`);
       return {
+        designPrompt: normalizeAudioProviderString(profileInput.designPrompt),
         id: normalizeAudioProviderString(profileInput.id, `voice_${index + 1}`),
         label,
         modelId: normalizeAudioProviderString(profileInput.modelId, defaultModelId),
