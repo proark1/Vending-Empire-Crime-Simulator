@@ -1,4 +1,5 @@
 import type { DistrictProgress, Faction, GameState, RouteVehicle, VendingMachine } from "../core/types";
+import { createInitialBaseFacilities } from "./baseFacilities";
 import { products } from "./products";
 import { districts, locations } from "./world";
 
@@ -17,11 +18,49 @@ const factions: Record<string, Faction> = {
     id: "rival_redline",
     name: "Redline Snacks",
     type: "npc",
+    archetype: "street_crew",
+    tactic: "undercuts prices, tags machines, and tests weak routes",
     money: 180,
     heat: 4,
     publicReputation: 5,
     streetReputation: 5,
     color: "#ef4444"
+  },
+  rival_glassline: {
+    id: "rival_glassline",
+    name: "Glassline VendCo",
+    type: "npc",
+    archetype: "corporate",
+    tactic: "buys contracts, pushes inspections, and pressures legal stops",
+    money: 420,
+    heat: 1,
+    publicReputation: 9,
+    streetReputation: 1,
+    color: "#60a5fa"
+  },
+  rival_nightmarket: {
+    id: "rival_nightmarket",
+    name: "Night Market Supply",
+    type: "npc",
+    archetype: "black_market",
+    tactic: "copies high-margin products and fights for after-hours demand",
+    money: 260,
+    heat: 8,
+    publicReputation: 2,
+    streetReputation: 8,
+    color: "#c084fc"
+  },
+  rival_marlow: {
+    id: "rival_marlow",
+    name: "Marlow's Machines",
+    type: "npc",
+    archetype: "former_partner",
+    tactic: "targets profitable machines and exploits old route knowledge",
+    money: 300,
+    heat: 5,
+    publicReputation: 4,
+    streetReputation: 7,
+    color: "#f97316"
   }
 };
 
@@ -29,6 +68,7 @@ const playerMachine: VendingMachine = {
   id: "machine_player_1",
   name: "Rusty Starter",
   ownerFactionId: "player",
+  machineModelId: "basic_snack",
   locationId: "garage",
   placementStatus: "stored",
   placementMethod: "legal_contract",
@@ -47,6 +87,7 @@ const rivalMachine: VendingMachine = {
   id: "machine_rival_1",
   name: "Redline Basic",
   ownerFactionId: "rival_redline",
+  machineModelId: "combo_machine",
   locationId: "rival_corner",
   placementStatus: "installed",
   placementMethod: "rival_territory",
@@ -71,7 +112,21 @@ const starterVehicle: RouteVehicle = {
   inventory: {},
   capacity: 36,
   security: 0.15,
-  speed: 1
+  speed: 1,
+  escapeRating: 0.35,
+  condition: 1
+};
+
+const chaseVehicle: RouteVehicle = {
+  id: "vehicle_courier_hatch",
+  name: "Courier Hatch",
+  locationId: "garage",
+  inventory: {},
+  capacity: 18,
+  security: 0.08,
+  speed: 1.35,
+  escapeRating: 0.58,
+  condition: 1
 };
 
 function cloneContent<T>(value: T): T {
@@ -119,16 +174,70 @@ export function createInitialState(): GameState {
       [rivalMachine.id]: cloneContent(rivalMachine)
     },
     vehicles: {
-      [starterVehicle.id]: cloneContent(starterVehicle)
+      [starterVehicle.id]: cloneContent(starterVehicle),
+      [chaseVehicle.id]: cloneContent(chaseVehicle)
     },
     employees: {},
     contracts: {},
+    base: {
+      facilities: createInitialBaseFacilities(),
+      securityReadiness: 0.15
+    },
+    economy: {
+      finance: {
+        ledger: [],
+        nextEntryNumber: 1,
+        revenueToday: 0,
+        expensesToday: 0,
+        frontBusinessRevenueToday: 0,
+        insurancePlan: "none"
+      },
+      supply: {
+        nextVolatilityHour: 12,
+        volatility: 0.08,
+        priceMultipliers: {},
+        supplierMood: "stable"
+      },
+      traffic: {
+        nextTrafficHour: 10,
+        congestionByLocation: {},
+        fuelPrice: 2.2,
+        checkpoints: {},
+        vehicleMaintenanceDue: {
+          [starterVehicle.id]: 0,
+          [chaseVehicle.id]: 0
+        }
+      },
+      spoilage: {
+        nextSpoilageHour: 14,
+        spoiledToday: 0
+      },
+      productCustomizations: {}
+    },
     npcControllers: {
       rival_redline: {
         factionId: "rival_redline",
         aggression: 0.55,
         lastActedHour: 8,
         cooldownHours: 2.25
+      },
+      rival_glassline: {
+        factionId: "rival_glassline",
+        aggression: 0.28,
+        lastActedHour: 8,
+        cooldownHours: 7.5
+      },
+      rival_nightmarket: {
+        factionId: "rival_nightmarket",
+        aggression: 0.68,
+        lastActedHour: 8,
+        cooldownHours: 6.25
+      },
+      rival_marlow: {
+        factionId: "rival_marlow",
+        aggression: 0.76,
+        lastActedHour: 8,
+        cooldownHours: 8.25
       }
     },
     machineAlarms: {},
@@ -140,6 +249,13 @@ export function createInitialState(): GameState {
       finesToday: 0,
       confiscatedUnitsToday: 0,
       lastInspectionHour: 0
+    },
+    conflict: {
+      eventSequence: 1,
+      nextConflictHour: 12.5,
+      activeEvents: {},
+      resolvedToday: 0,
+      missedToday: 0
     },
     eventLog: [
       {

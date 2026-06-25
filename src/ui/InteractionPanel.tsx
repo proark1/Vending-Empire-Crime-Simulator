@@ -1,17 +1,22 @@
 import { Camera, CreditCard, HandCoins, Lightbulb, Lock, Minus, PackagePlus, Plus, RadioTower, RotateCcw, Save, Shield, ShieldAlert, ShoppingCart, Sparkles, Truck, Wrench, Zap } from "lucide-react";
-import type { GameCommand, GameState, MachineUpgradeId } from "../game/core/types";
+import type { ConflictEvent, GameCommand, GameState, MachineUpgradeId } from "../game/core/types";
 import { machineUpgradeList } from "../game/content/machineUpgrades";
+import { machineModels } from "../game/content/machineModels";
 import { effectiveMachineSecurity, effectiveMachineVisibility, getMachineUpgradeEffects, machineHasUpgrade, priceDemandMultiplier } from "../game/core/machineStats";
 import {
   activeAlarmForMachine,
   activeContractsAtLocation,
+  activeConflictEvents,
   activeVehicle,
+  baseFacilityUpgradeCost,
+  baseStorageCapacity,
   cargoSpaceRemaining,
   carriedCrateUnits,
   contractNeedByProduct,
   contractProgressRatio,
   contractRemainingQuantity,
   contractTone,
+  currentProductCost,
   districtUnlockInfo,
   garageStorageSpaceRemaining,
   garageStorageUnits,
@@ -26,6 +31,7 @@ import {
   vehicleSpaceRemaining
 } from "../game/core/selectors";
 import { estimateMachineSalesPerHour } from "../game/systems/economy";
+import { baseFacilityList } from "../game/content/baseFacilities";
 import type { SceneTarget } from "../render/three/SceneTargets";
 import { getPrimaryInteraction } from "./interactionActions";
 
@@ -89,6 +95,39 @@ function formatUpgradeEffect(upgradeId: MachineUpgradeId): string {
   return parts.join(" · ");
 }
 
+function ConflictActions({ conflict, onCommand, state }: { conflict: ConflictEvent; onCommand: (command: GameCommand) => void; state: GameState }) {
+  const vehicle = activeVehicle(state);
+  const vehicleAtStop = vehicle?.locationId === conflict.locationId;
+  return (
+    <div className="machine-section machine-alarm">
+      <div className="section-title">
+        <ShieldAlert size={16} aria-hidden="true" />
+        <span>{conflict.kind === "base_raid" ? "Base defense" : conflict.kind === "route_ambush" ? "Route ambush" : "Street chase"}</span>
+        <em>{Math.max(1, Math.ceil((conflict.expiresHour - state.worldTimeHours) * 60))}m</em>
+      </div>
+      <p>{conflict.message}</p>
+      <div className="action-grid">
+        <ActionButton icon={<Zap size={17} aria-hidden="true" />} onClick={() => onCommand({ type: "resolve_conflict_event", actorId: state.playerFactionId, eventId: conflict.id, resolution: "melee" })}>
+          Melee
+        </ActionButton>
+        <ActionButton
+          disabled={!vehicleAtStop}
+          icon={<Truck size={17} aria-hidden="true" />}
+          onClick={() => onCommand({ type: "resolve_conflict_event", actorId: state.playerFactionId, eventId: conflict.id, resolution: "drive_escape" })}
+        >
+          Escape
+        </ActionButton>
+        <ActionButton
+          icon={<Shield size={17} aria-hidden="true" />}
+          onClick={() => onCommand({ type: "resolve_conflict_event", actorId: state.playerFactionId, eventId: conflict.id, resolution: "remote_lockdown" })}
+        >
+          Lockdown
+        </ActionButton>
+      </div>
+    </div>
+  );
+}
+
 export function InteractionPanel({ state, target, onCommand, onSave, onReload, onRestart }: InteractionPanelProps) {
   const player = state.factions[state.playerFactionId];
   const primaryInteraction = getPrimaryInteraction(state, target);
@@ -101,6 +140,12 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
       </section>
     );
   }
+
+  const targetLocationId =
+    target.type === "base" || target.type === "supplier" || target.type === "placement"
+      ? target.id
+      : state.machines[target.id]?.locationId;
+  const conflictAtTarget = targetLocationId ? activeConflictEvents(state).find((conflict) => conflict.locationId === targetLocationId) : undefined;
 
   if (target.type === "base") {
     const crate = state.player.carriedCrate;
@@ -119,6 +164,7 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
             <span>{primaryInteraction.label}</span>
           </div>
         )}
+        {conflictAtTarget && <ConflictActions conflict={conflictAtTarget} onCommand={onCommand} state={state} />}
         {storedMachines.length > 0 && (
           <div className="machine-section">
             <div className="section-title">
@@ -151,13 +197,13 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
           </div>
         )}
         <div className="machine-section">
-          <div className="section-title">
-            <PackagePlus size={16} aria-hidden="true" />
-            <span>Route loadout</span>
-            <em>
-              {storageUsed}/{state.player.garageCapacity}
+            <div className="section-title">
+              <PackagePlus size={16} aria-hidden="true" />
+              <span>Route loadout</span>
+              <em>
+              {storageUsed}/{baseStorageCapacity(state)}
             </em>
-          </div>
+            </div>
           {crate ? (
             <article className="slot-row">
               <div>
@@ -198,6 +244,36 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
             })}
           </div>
         </div>
+        <div className="machine-section">
+          <div className="section-title">
+            <Wrench size={16} aria-hidden="true" />
+            <span>Base upgrades</span>
+          </div>
+          <div className="storage-list">
+            {baseFacilityList.map((facility) => {
+              const current = state.base.facilities[facility.id];
+              const cost = baseFacilityUpgradeCost(state, facility.id);
+              const atMax = current.level >= facility.maxLevel;
+              return (
+                <article className="inventory-row" key={facility.id}>
+                  <div>
+                    <h3>{facility.name}</h3>
+                    <p>
+                      Level {current.level}/{facility.maxLevel} · {facility.description}
+                    </p>
+                  </div>
+                  <ActionButton
+                    disabled={atMax || player.money < cost}
+                    icon={<Wrench size={17} aria-hidden="true" />}
+                    onClick={() => onCommand({ type: "upgrade_base_facility", actorId: state.playerFactionId, facilityId: facility.id })}
+                  >
+                    {atMax ? "Max" : `$${cost}`}
+                  </ActionButton>
+                </article>
+              );
+            })}
+          </div>
+        </div>
         {vehicle && (
           <div className="machine-section">
             <div className="section-title">
@@ -208,8 +284,17 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
               </em>
             </div>
             <p className="empty-note">
-              Parked at {state.locations[vehicle.locationId]?.name ?? "unknown stop"} · {vehicleSpaceRemaining(state, vehicle)} trunk space open
+              Parked at {state.locations[vehicle.locationId]?.name ?? "unknown stop"} · {vehicleSpaceRemaining(state, vehicle)} trunk space open · {Math.round((vehicle.condition ?? 1) * 100)}% condition
             </p>
+            <div className="action-grid">
+              <ActionButton
+                disabled={vehicle.locationId !== "garage"}
+                icon={<Wrench size={17} aria-hidden="true" />}
+                onClick={() => onCommand({ type: "service_vehicle", actorId: state.playerFactionId, vehicleId: vehicle.id })}
+              >
+                Service
+              </ActionButton>
+            </div>
             <div className="storage-list">
               {Object.values(state.products).map((product) => {
                 const stored = state.player.garageStorage[product.id] ?? 0;
@@ -291,8 +376,8 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
         )}
         <div className="action-grid">
           {Object.values(state.products).map((product) => {
-            const quantity = product.id === "mystery_capsules" ? 3 : Math.min(10, Math.floor(state.player.cargoCapacity / product.size));
-            const cost = product.cost * quantity;
+            const quantity = product.legality > 0 ? 3 : product.size > 1 ? Math.min(6, Math.floor(state.player.cargoCapacity / product.size)) : Math.min(10, Math.floor(state.player.cargoCapacity / product.size));
+            const cost = currentProductCost(state, product.id) * quantity;
             const disabled = carrying || player.money < cost || cargoSpaceRemaining(state) < product.size * quantity;
             return (
               <ActionButton
@@ -330,6 +415,7 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
             <span>{primaryInteraction.label}</span>
           </div>
         )}
+        {conflictAtTarget && <ConflictActions conflict={conflictAtTarget} onCommand={onCommand} state={state} />}
         <p>
           Traffic {location.footTraffic.toFixed(1)} · Risk {Math.round((1 - location.safety + location.policePresence) * 50)}
         </p>
@@ -403,6 +489,7 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
   }
 
   const owner = state.factions[machine.ownerFactionId];
+  const model = machineModels[machine.machineModelId] ?? machineModels.basic_snack;
   const isPlayerMachine = machine.ownerFactionId === state.playerFactionId;
   const effects = getMachineUpgradeEffects(machine);
   const security = effectiveMachineSecurity(machine);
@@ -425,7 +512,7 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
       <div className="panel-heading">
         <div>
           <h2>{machine.name}</h2>
-          <p>{owner.name}</p>
+          <p>{owner.name} · {model.name}</p>
         </div>
         <span className={isPlayerMachine ? "owner-chip player" : "owner-chip rival"}>{isPlayerMachine ? "Owned" : "Rival"}</span>
       </div>
@@ -436,6 +523,7 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
           <span>{primaryInteraction.label}</span>
         </div>
       )}
+      {conflictAtTarget && <ConflictActions conflict={conflictAtTarget} onCommand={onCommand} state={state} />}
 
       <div className="machine-readout">
         <span>${Math.round(machine.revenueStored)}</span>

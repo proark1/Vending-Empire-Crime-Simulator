@@ -1,5 +1,8 @@
 import type {
+  BaseFacilityEffects,
+  BaseFacilityId,
   DayReport,
+  ConflictEvent,
   DistrictId,
   DistrictProgress,
   DistrictStatus,
@@ -19,8 +22,9 @@ import type {
   ServiceContract,
   VendingMachine
 } from "./types";
+import { baseFacilities } from "../content/baseFacilities";
 
-export type RouteTaskType = "supplier" | "garage" | "placement" | "stock" | "collect" | "repair" | "pressure" | "contract" | "alarm" | "inspection";
+export type RouteTaskType = "supplier" | "garage" | "placement" | "stock" | "collect" | "repair" | "pressure" | "contract" | "alarm" | "inspection" | "conflict";
 
 export interface RouteTask {
   id: string;
@@ -32,6 +36,7 @@ export interface RouteTask {
   contractId?: string;
   productId?: ProductId;
   alarmId?: string;
+  conflictId?: string;
   inspectionId?: string;
   priority: number;
   tone: "good" | "warning" | "danger";
@@ -70,6 +75,90 @@ export function assignedEmployeesForMachine(state: GameState, machineId: Machine
 
 export function dailyEmployeeWages(state: GameState): number {
   return employeeList(state).reduce((sum, employee) => sum + employee.wagePerDay, 0);
+}
+
+export function baseFacilityLevel(state: GameState, facilityId: BaseFacilityId): number {
+  return Math.max(0, state.base?.facilities?.[facilityId]?.level ?? (facilityId === "garage_storage" ? 1 : 0));
+}
+
+export function baseFacilityUpgradeCost(state: GameState, facilityId: BaseFacilityId): number {
+  const definition = baseFacilities[facilityId];
+  const level = baseFacilityLevel(state, facilityId);
+  if (!definition || level >= definition.maxLevel) {
+    return 0;
+  }
+
+  return Math.round(definition.baseCost * Math.pow(definition.costGrowth, level));
+}
+
+export function baseFacilityEffects(state: GameState): BaseFacilityEffects {
+  return Object.values(baseFacilities).reduce<BaseFacilityEffects>((effects, facility) => {
+    const level = baseFacilityLevel(state, facility.id);
+    for (const [key, value] of Object.entries(facility.effectsPerLevel) as Array<[keyof BaseFacilityEffects, number | undefined]>) {
+      if (!value) {
+        continue;
+      }
+      effects[key] = (effects[key] ?? 0) + value * level;
+    }
+    return effects;
+  }, {});
+}
+
+export function baseStorageCapacity(state: GameState): number {
+  return state.player.garageCapacity + (baseFacilityEffects(state).storageCapacity ?? 0);
+}
+
+export function employeeCapacity(state: GameState): number {
+  return 3 + (baseFacilityEffects(state).employeeCapacity ?? 0);
+}
+
+export function productLabSlots(state: GameState): number {
+  return baseFacilityEffects(state).productLabSlots ?? 0;
+}
+
+export function regionalManagerCapacity(state: GameState): number {
+  return baseFacilityEffects(state).managerSlots ?? 0;
+}
+
+export function baseSecurityScore(state: GameState): number {
+  return Math.min(0.9, (state.base?.securityReadiness ?? 0.1) + (baseFacilityEffects(state).baseSecurity ?? 0));
+}
+
+export function coldStorageProtection(state: GameState): number {
+  return Math.min(0.82, baseFacilityEffects(state).coldStorageProtection ?? 0);
+}
+
+export function supplierDiscount(state: GameState): number {
+  return Math.min(0.22, baseFacilityEffects(state).supplierDiscount ?? 0);
+}
+
+export function routeRiskReduction(state: GameState): number {
+  return Math.min(0.42, (baseFacilityEffects(state).routeRiskReduction ?? 0) + (baseFacilityEffects(state).planningIntel ?? 0) * 0.35);
+}
+
+export function currentProductCost(state: GameState, productId: ProductId): number {
+  const product = state.products[productId];
+  if (!product) {
+    return 0;
+  }
+
+  const marketMultiplier = state.economy?.supply?.priceMultipliers?.[productId] ?? 1;
+  const customizationCost = state.economy?.productCustomizations?.[productId]?.costDelta ?? 0;
+  return Math.max(1, Math.round((product.cost + customizationCost) * marketMultiplier * (1 - supplierDiscount(state))));
+}
+
+export function financeLedger(state: GameState) {
+  return [...(state.economy?.finance?.ledger ?? [])].sort((a, b) => b.hour - a.hour || b.id.localeCompare(a.id));
+}
+
+export function financeSummary(state: GameState): { revenueToday: number; expensesToday: number; netToday: number } {
+  const revenueToday = state.economy?.finance?.revenueToday ?? 0;
+  const expensesToday = state.economy?.finance?.expensesToday ?? 0;
+  return {
+    revenueToday,
+    expensesToday,
+    netToday: revenueToday - expensesToday
+  };
 }
 
 export function machineAtLocation(state: GameState, locationId: LocationId): VendingMachine | undefined {
@@ -311,7 +400,7 @@ export function garageStorageUnits(state: GameState): number {
 }
 
 export function garageStorageSpaceRemaining(state: GameState): number {
-  return Math.max(0, state.player.garageCapacity - garageStorageUnits(state));
+  return Math.max(0, baseStorageCapacity(state) - garageStorageUnits(state));
 }
 
 export function activeVehicle(state: GameState): RouteVehicle | undefined {
@@ -342,6 +431,69 @@ export function firstVehicleProduct(state: GameState, vehicle = activeVehicle(st
 
 export function totalOwnedStockUnits(state: GameState): number {
   return carriedCrateUnits(state) + garageStorageUnits(state) + Object.values(state.vehicles).reduce((sum, vehicle) => sum + vehicleInventoryUnits(state, vehicle), 0);
+}
+
+export function activePoliceCheckpointAt(state: GameState, locationId: LocationId): boolean {
+  return Object.values(state.economy?.traffic?.checkpoints ?? {}).some((checkpoint) => checkpoint.locationId === locationId && checkpoint.expiresHour > state.worldTimeHours);
+}
+
+export function routeDangerScore(state: GameState, location: Location, vehicle = activeVehicle(state)): { score: number; reasons: string[]; tone: "good" | "warning" | "danger" } {
+  const player = state.factions[state.playerFactionId];
+  const congestion = state.economy?.traffic?.congestionByLocation?.[location.id] ?? 0;
+  const checkpoint = activePoliceCheckpointAt(state, location.id) ? 0.55 : 0;
+  const conditionRisk = vehicle ? Math.max(0, 1 - (vehicle.condition ?? 1)) * 0.45 : 0.25;
+  const score = Math.max(
+    0,
+    location.rivalPressure * 0.45 +
+      (1 - location.safety) * 0.18 +
+      location.policePresence * 0.22 +
+      player.heat * 0.012 +
+      congestion * 0.18 +
+      checkpoint +
+      conditionRisk -
+      routeRiskReduction(state)
+  );
+  const reasons = [
+    location.rivalPressure >= 0.4 ? "rival pressure" : "",
+    location.policePresence >= 0.35 || checkpoint > 0 ? "police" : "",
+    congestion >= 0.45 ? "traffic" : "",
+    conditionRisk >= 0.18 ? "vehicle wear" : ""
+  ].filter(Boolean);
+  return {
+    score,
+    reasons,
+    tone: score >= 0.85 ? "danger" : score >= 0.45 ? "warning" : "good"
+  };
+}
+
+export function rivalTerritoryByDistrict(state: GameState): Array<{
+  districtId: DistrictId;
+  districtName: string;
+  playerMachines: number;
+  rivalMachines: number;
+  averagePressure: number;
+  controllingFactionId: FactionId;
+}> {
+  return Object.values(state.districts).map((district) => {
+    const locations = districtLocations(state, district.id).filter(installableLocation);
+    const machines = locations.map((location) => machineAtLocation(state, location.id)).filter((machine): machine is VendingMachine => Boolean(machine));
+    const playerMachines = machines.filter((machine) => machine.ownerFactionId === state.playerFactionId).length;
+    const rivalMachinesByFaction = new Map<FactionId, number>();
+    for (const machine of machines.filter((candidate) => candidate.ownerFactionId !== state.playerFactionId)) {
+      rivalMachinesByFaction.set(machine.ownerFactionId, (rivalMachinesByFaction.get(machine.ownerFactionId) ?? 0) + 1);
+    }
+    const strongestRival = [...rivalMachinesByFaction.entries()].sort((a, b) => b[1] - a[1])[0];
+    const averagePressure = locations.reduce((sum, location) => sum + location.rivalPressure, 0) / Math.max(1, locations.length);
+    const controllingFactionId = playerMachines >= Math.max(1, (strongestRival?.[1] ?? 0) + 1) && averagePressure < 0.45 ? state.playerFactionId : strongestRival?.[0] ?? state.playerFactionId;
+    return {
+      districtId: district.id,
+      districtName: district.name,
+      playerMachines,
+      rivalMachines: machines.length - playerMachines,
+      averagePressure,
+      controllingFactionId
+    };
+  });
 }
 
 export function firstGarageStorageProduct(state: GameState): { productId: keyof GameState["products"]; quantity: number } | undefined {
@@ -440,6 +592,12 @@ export function activeLawInspections(state: GameState): LawInspection[] {
     .sort((a, b) => a.deadlineHour - b.deadlineHour);
 }
 
+export function activeConflictEvents(state: GameState): ConflictEvent[] {
+  return Object.values(state.conflict?.activeEvents ?? {})
+    .filter((event) => event.status === "active")
+    .sort((a, b) => a.expiresHour - b.expiresHour);
+}
+
 export function activeInspectionForMachine(state: GameState, machineId: MachineId): LawInspection | undefined {
   return activeLawInspections(state).find((inspection) => inspection.machineId === machineId);
 }
@@ -500,6 +658,27 @@ export function routeTasks(state: GameState): RouteTask[] {
   const vehicle = activeVehicle(state);
   const player = state.factions[state.playerFactionId];
 
+  for (const conflict of activeConflictEvents(state)) {
+    const location = state.locations[conflict.locationId];
+    const minutesLeft = Math.max(1, Math.ceil((conflict.expiresHour - state.worldTimeHours) * 60));
+    tasks.push({
+      id: `conflict:${conflict.id}`,
+      type: "conflict",
+      title:
+        conflict.kind === "base_raid"
+          ? "Defend the garage"
+          : conflict.kind === "route_ambush"
+            ? "Route ambush"
+            : "Street chase",
+      detail: `${location?.name ?? "Unknown stop"} · intensity ${conflict.intensity} · ${minutesLeft}m to respond`,
+      locationId: conflict.locationId,
+      machineId: conflict.targetMachineId,
+      conflictId: conflict.id,
+      priority: 32,
+      tone: "danger"
+    });
+  }
+
   for (const inspection of activeLawInspections(state)) {
     const machine = state.machines[inspection.machineId];
     const minutesLeft = Math.max(1, Math.ceil((inspection.deadlineHour - state.worldTimeHours) * 60));
@@ -535,6 +714,19 @@ export function routeTasks(state: GameState): RouteTask[] {
 
   if (!vehicle) {
     return tasks;
+  }
+
+  const maintenanceDue = state.economy?.traffic?.vehicleMaintenanceDue?.[vehicle.id] ?? 0;
+  if (maintenanceDue >= 10 || (vehicle.condition ?? 1) <= 0.72) {
+    tasks.push({
+      id: `vehicle:${vehicle.id}:service`,
+      type: "garage",
+      title: `Service ${vehicle.name}`,
+      detail: `${Math.round((vehicle.condition ?? 1) * 100)}% condition · $${Math.max(8, Math.ceil(maintenanceDue + (1 - (vehicle.condition ?? 1)) * 60))} maintenance due`,
+      locationId: "garage",
+      priority: (vehicle.condition ?? 1) <= 0.55 ? 13 : 7,
+      tone: (vehicle.condition ?? 1) <= 0.55 ? "danger" : "warning"
+    });
   }
 
   for (const machine of storedPlayerMachines(state)) {
@@ -602,11 +794,12 @@ export function routeTasks(state: GameState): RouteTask[] {
     const hoursLeft = contractHoursRemaining(state, contract);
     const product = state.products[contract.productId];
     const tone = contractTone(state, contract);
+    const danger = location ? routeDangerScore(state, location, vehicle) : undefined;
     tasks.push({
       id: `contract:${contract.id}`,
       type: "contract",
       title: `Deliver ${remaining}x ${product?.name ?? "stock"}`,
-      detail: `${contract.title} · due by ${formatClock(contract.deadlineHour)} · ${Math.max(0, Math.ceil(hoursLeft))}h left`,
+      detail: `${contract.title} · due by ${formatClock(contract.deadlineHour)} · ${Math.max(0, Math.ceil(hoursLeft))}h left${danger && danger.reasons.length > 0 ? ` · ${danger.reasons.join(", ")}` : ""}`,
       locationId: contract.locationId,
       machineId: machineAtLocation(state, contract.locationId)?.id,
       contractId: contract.id,
@@ -619,6 +812,7 @@ export function routeTasks(state: GameState): RouteTask[] {
   for (const machine of installedMachines(state, state.playerFactionId)) {
     const location = state.locations[machine.locationId];
     const pressure = machineRoutePressure(state, machine);
+    const danger = location ? routeDangerScore(state, location, vehicle) : undefined;
     const stock = machineStockUnits(machine);
     const capacity = machine.slots.reduce((sum, slot) => sum + slot.capacity, 0) + Math.max(0, machine.maxSlots - machine.slots.length) * 24;
 
@@ -627,7 +821,7 @@ export function routeTasks(state: GameState): RouteTask[] {
         id: `machine:${machine.id}:stock`,
         type: "stock",
         title: `Restock ${machine.name}`,
-        detail: `${stock}/${capacity} stock at ${location?.name ?? "unknown location"}`,
+        detail: `${stock}/${capacity} stock at ${location?.name ?? "unknown location"}${danger && danger.reasons.length > 0 ? ` · ${danger.reasons.join(", ")}` : ""}`,
         locationId: machine.locationId,
         machineId: machine.id,
         priority: stock === 0 ? 10 : 6,

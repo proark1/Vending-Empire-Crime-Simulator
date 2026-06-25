@@ -22,16 +22,18 @@ export function migrateGameState(parsed: GameState): GameState {
         ...(parsedPlayer.garageStorage ?? {})
       };
   const districts = Object.fromEntries(
-    Object.entries({
-      ...baseline.districts,
-      ...(parsed.districts ?? {})
-    }).map(([districtId, district]) => [
-      districtId,
-      {
-        ...district,
-        ...(baseline.districts[districtId] ?? {})
-      }
-    ])
+      Object.entries({
+        ...baseline.districts,
+        ...(parsed.districts ?? {})
+      }).map(([districtId, district]) => [
+        districtId,
+        {
+          ...district,
+          ...(baseline.districts[districtId] ?? {}),
+          customerArchetypes: baseline.districts[districtId]?.customerArchetypes ?? district.customerArchetypes ?? [],
+          riskFlavor: baseline.districts[districtId]?.riskFlavor ?? district.riskFlavor ?? ""
+        }
+      ])
   );
   const districtProgress = Object.fromEntries(
     Object.keys(districts).map((districtId) => [
@@ -105,6 +107,7 @@ export function migrateGameState(parsed: GameState): GameState {
         machineId,
         {
           ...machine,
+          machineModelId: machine.machineModelId ?? baseline.machines[machineId]?.machineModelId ?? "basic_snack",
           placementStatus: machine.placementStatus ?? "installed",
           placementMethod: machine.placementMethod ?? "legal_contract",
           upgrades: Array.isArray(machine.upgrades) ? machine.upgrades : []
@@ -119,11 +122,66 @@ export function migrateGameState(parsed: GameState): GameState {
         vehicleId,
         {
           ...vehicle,
-          inventory: vehicle.inventory ?? {}
+          inventory: vehicle.inventory ?? {},
+          escapeRating: vehicle.escapeRating ?? baseline.vehicles[vehicleId]?.escapeRating ?? 0.35,
+          condition: vehicle.condition ?? baseline.vehicles[vehicleId]?.condition ?? 1
         }
       ])
     ),
-    employees: parsed.employees ?? baseline.employees,
+    employees: Object.fromEntries(
+      Object.entries(parsed.employees ?? baseline.employees).map(([employeeId, employee]) => [
+        employeeId,
+        {
+          ...employee,
+          betrayed: employee.betrayed ?? false,
+          level: employee.level ?? 1,
+          xp: employee.xp ?? 0
+        }
+      ])
+    ),
+    base: {
+      ...baseline.base,
+      ...(parsed.base ?? {}),
+      facilities: Object.fromEntries(
+        Object.entries(baseline.base.facilities).map(([facilityId, facility]) => [
+          facilityId,
+          {
+            ...facility,
+            ...(parsed.base?.facilities?.[facilityId as keyof typeof baseline.base.facilities] ?? {}),
+            id: facilityId
+          }
+        ])
+      ) as GameState["base"]["facilities"]
+    },
+    economy: {
+      ...baseline.economy,
+      ...(parsed.economy ?? {}),
+      finance: {
+        ...baseline.economy.finance,
+        ...(parsed.economy?.finance ?? {}),
+        ledger: Array.isArray(parsed.economy?.finance?.ledger) ? parsed.economy.finance.ledger : baseline.economy.finance.ledger
+      },
+      supply: {
+        ...baseline.economy.supply,
+        ...(parsed.economy?.supply ?? {}),
+        priceMultipliers: parsed.economy?.supply?.priceMultipliers ?? baseline.economy.supply.priceMultipliers
+      },
+      traffic: {
+        ...baseline.economy.traffic,
+        ...(parsed.economy?.traffic ?? {}),
+        congestionByLocation: parsed.economy?.traffic?.congestionByLocation ?? baseline.economy.traffic.congestionByLocation,
+        checkpoints: parsed.economy?.traffic?.checkpoints ?? baseline.economy.traffic.checkpoints,
+        vehicleMaintenanceDue: {
+          ...baseline.economy.traffic.vehicleMaintenanceDue,
+          ...(parsed.economy?.traffic?.vehicleMaintenanceDue ?? {})
+        }
+      },
+      spoilage: {
+        ...baseline.economy.spoilage,
+        ...(parsed.economy?.spoilage ?? {})
+      },
+      productCustomizations: parsed.economy?.productCustomizations ?? baseline.economy.productCustomizations
+    },
     routePlan: {
       ...baseline.routePlan,
       ...(parsed.routePlan ?? {})
@@ -132,7 +190,17 @@ export function migrateGameState(parsed: GameState): GameState {
       ...baseline.contracts,
       ...(parsed.contracts ?? {})
     },
-    dayReports: parsed.dayReports ?? baseline.dayReports,
+    conflict: {
+      ...baseline.conflict,
+      ...(parsed.conflict ?? {}),
+      activeEvents: parsed.conflict?.activeEvents ?? baseline.conflict.activeEvents
+    },
+    dayReports: (parsed.dayReports ?? baseline.dayReports).map((report) => ({
+      ...report,
+      operatingRevenue: report.operatingRevenue ?? 0,
+      operatingExpenses: report.operatingExpenses ?? 0,
+      netCashflow: report.netCashflow ?? 0
+    })),
     progression: {
       ...baseline.progression,
       ...(parsed.progression ?? {}),

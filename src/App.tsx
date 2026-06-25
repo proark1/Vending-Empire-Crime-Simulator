@@ -9,7 +9,7 @@ import { MissionTracker } from "./ui/MissionTracker";
 import { GuidanceArrow } from "./ui/GuidanceArrow";
 import { AdminMapEditor } from "./ui/AdminMapEditor";
 import { getStarterMissionStep } from "./game/core/mission";
-import { activeMachineAlarms, latestDayReport, selectedRouteTask } from "./game/core/selectors";
+import { activeConflictEvents, activeMachineAlarms, latestDayReport, selectedRouteTask } from "./game/core/selectors";
 import { executePrimaryInteraction, getPrimaryInteraction } from "./ui/interactionActions";
 import { useGame } from "./hooks/useGame";
 import { ToastStack, type ToastMessage } from "./ui/ToastStack";
@@ -19,6 +19,7 @@ import { clearWorldMapLayout, loadWorldMapLayout, saveWorldMapLayout } from "./g
 import { clearStoredGameSession, loadRemoteGame, loadRemoteMapLayout, loadStoredGameSession, loginGame, registerGame, type GameSession } from "./game/save/api";
 import { loadGame } from "./game/save/storage";
 import { createInitialState } from "./game/content/initialState";
+import { playEventCue, playFeedbackCue, startGameAmbience, unlockGameAudio, updateGameAmbience } from "./ui/audio";
 
 function targetLocationId(target: SceneTarget | null, state: GameState): LocationId | null {
   if (!target) {
@@ -73,6 +74,19 @@ function createSceneFeedback(command: GameCommand, target: SceneTarget | null, s
     case "confront_alarm": {
       const alarm = state.machineAlarms[command.alarmId];
       return alarm ? { kind: "fight", machineId: alarm.machineId, tone: "good" } : null;
+    }
+    case "resolve_conflict_event": {
+      const conflict = state.conflict.activeEvents[command.eventId];
+      if (!conflict) {
+        return null;
+      }
+
+      return {
+        kind: command.resolution === "drive_escape" ? "escape" : command.resolution === "remote_lockdown" ? "lockdown" : "melee",
+        locationId: conflict.locationId,
+        machineId: conflict.targetMachineId,
+        tone: command.resolution === "melee" ? "danger" : "good"
+      };
     }
     case "scout_district": {
       const locationId = targetLocationId(target, state) ?? Object.values(state.locations).find((location) => location.districtId === command.districtId)?.id ?? undefined;
@@ -161,6 +175,7 @@ function GameApp({ initialState, mapLayout, session }: GameAppProps) {
   const missionStep = useMemo(() => getStarterMissionStep(state, playerPosition), [playerPosition, state]);
   const routeTask = useMemo(() => selectedRouteTask(state), [state]);
   const activeAlarm = useMemo(() => activeMachineAlarms(state)[0], [state]);
+  const conflicts = useMemo(() => activeConflictEvents(state), [state]);
   const guidanceLocationId = activeAlarm?.locationId ?? routeTask?.locationId ?? missionStep.targetLocationId;
   const guidanceLabel = activeAlarm ? "Machine alarm" : routeTask?.title;
   const report = latestDayReport(state);
@@ -188,6 +203,7 @@ function GameApp({ initialState, mapLayout, session }: GameAppProps) {
     }
 
     lastEventIdRef.current = newestEvent.id;
+    playEventCue(newestEvent.tone);
     addToast({
       title: newestEvent.message.startsWith("ALARM") ? "Machine alarm" : newestEvent.message.startsWith("Alarm missed") ? "Alarm missed" : "Street update",
       message: newestEvent.message,
@@ -244,11 +260,14 @@ function GameApp({ initialState, mapLayout, session }: GameAppProps) {
   }, [restart]);
 
   const handleEnterDistrict = useCallback(() => {
+    unlockGameAudio();
+    startGameAmbience();
     setEntered(true);
   }, []);
 
   const sendCommandAtActiveTarget = useCallback(
     (command: GameCommand) => {
+      unlockGameAudio();
       const nextLocationId = targetLocationId(activeTarget, state);
       if (nextLocationId !== lastServiceLocationIdRef.current) {
         lastServiceLocationIdRef.current = nextLocationId;
@@ -257,6 +276,23 @@ function GameApp({ initialState, mapLayout, session }: GameAppProps) {
 
       const feedback = createSceneFeedback(command, activeTarget, state);
       if (feedback) {
+        playFeedbackCue(feedback.kind);
+        setSceneFeedback({
+          ...feedback,
+          id: `${Date.now()}_${Math.random().toString(36).slice(2)}`
+        });
+      }
+      sendCommand(command);
+    },
+    [activeTarget, sendCommand, state]
+  );
+
+  const sendCommandWithFeedback = useCallback(
+    (command: GameCommand) => {
+      unlockGameAudio();
+      const feedback = createSceneFeedback(command, activeTarget, state);
+      if (feedback) {
+        playFeedbackCue(feedback.kind);
         setSceneFeedback({
           ...feedback,
           id: `${Date.now()}_${Math.random().toString(36).slice(2)}`
@@ -275,12 +311,21 @@ function GameApp({ initialState, mapLayout, session }: GameAppProps) {
   }, [primaryInteraction, save, sendCommandAtActiveTarget]);
 
   useEffect(() => {
+    if (!entered) {
+      return;
+    }
+
+    updateGameAmbience(state.factions[state.playerFactionId].heat, conflicts.length > 0);
+  }, [conflicts.length, entered, state.factions, state.playerFactionId]);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.code !== "KeyE" || event.repeat || !entered) {
         return;
       }
 
       event.preventDefault();
+      unlockGameAudio();
       handlePrimaryInteraction();
     };
 
@@ -320,7 +365,7 @@ function GameApp({ initialState, mapLayout, session }: GameAppProps) {
           </button>
         </div>
       )}
-      <Dashboard state={state} onCommand={sendCommand} />
+      <Dashboard state={state} onCommand={sendCommandWithFeedback} />
       <Minimap state={state} playerPosition={playerPosition} guidanceLocationId={guidanceLocationId} target={activeTarget} />
       <InteractionPanel state={state} target={activeTarget} onCommand={sendCommandAtActiveTarget} onSave={save} onReload={reload} onRestart={handleRestart} />
       {visibleReport && <DayReportModal report={visibleReport} onClose={() => setVisibleReport(null)} />}

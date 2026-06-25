@@ -42,6 +42,16 @@ function timeOfDayMultiplier(worldTimeHours: number, product: Product): number {
   return hour >= 11 && hour <= 16 ? 1.08 : 0.92;
 }
 
+function customizationDemandMultiplier(state: GameState, product: Product): number {
+  const customization = state.economy?.productCustomizations?.[product.id];
+  return Math.max(0.75, 1 + (customization?.demandBonus ?? 0));
+}
+
+function customizedProductHeat(state: GameState, product: Product): number {
+  const customization = state.economy?.productCustomizations?.[product.id];
+  return Math.max(0, product.heat + (customization?.heatDelta ?? 0));
+}
+
 export function runMachineSales(state: GameState, machine: VendingMachine, hours: number): number {
   if ((machine.placementStatus ?? "installed") !== "installed") {
     return 0;
@@ -64,7 +74,7 @@ export function runMachineSales(state: GameState, machine: VendingMachine, hours
       slot.quantity -= soldUnits;
       slot.salesAccumulator -= soldUnits;
       earned += soldUnits * slot.price;
-      machine.heat += product.heat * soldUnits * 0.05 * slotRate.heatMultiplier;
+      machine.heat += customizedProductHeat(state, product) * soldUnits * 0.05 * slotRate.heatMultiplier;
     }
   }
 
@@ -102,6 +112,7 @@ export function estimateMachineSalesPerHour(state: GameState, machine: VendingMa
       tagDemandMultiplier(product, location) *
       districtDemandMultiplier(state, product, location) *
       timeOfDayMultiplier(state.worldTimeHours, product) *
+      customizationDemandMultiplier(state, product) *
       visibility *
       damageMultiplier *
       rivalMultiplier *

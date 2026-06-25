@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createInitialState } from "../content/initialState";
-import { districtUnlockInfo, machineAtLocation, machineStockUnits, routeTasks, selectedRouteTask } from "../core/selectors";
+import { baseStorageCapacity, currentProductCost, districtUnlockInfo, machineAtLocation, machineStockUnits, productLabSlots, routeTasks, selectedRouteTask } from "../core/selectors";
 import type { GameCommand, LocationId } from "../core/types";
 import { reduceCommands, reduceGameState } from "./reducer";
 
@@ -515,6 +515,66 @@ describe("game reducer", () => {
     expect(result.events[0]?.message).toContain("ALARM");
   });
 
+  it("turns player sabotage into an active street chase conflict", () => {
+    const result = reduceCommands(createInitialState(), [
+      visit("rival_corner"),
+      { type: "sabotage_machine", actorId: "player", machineId: "machine_rival_1" }
+    ]);
+    const conflict = Object.values(result.state.conflict.activeEvents)[0]!;
+    const conflictTask = routeTasks(result.state).find((task) => task.type === "conflict");
+
+    expect(conflict).toMatchObject({
+      kind: "street_chase",
+      locationId: "rival_corner",
+      status: "active"
+    });
+    expect(conflictTask).toMatchObject({
+      conflictId: conflict.id,
+      tone: "danger"
+    });
+
+    const resolved = reduceGameState(result.state, {
+      type: "resolve_conflict_event",
+      actorId: "player",
+      eventId: conflict.id,
+      resolution: "melee"
+    }).state;
+
+    expect(resolved.conflict.activeEvents[conflict.id]).toMatchObject({
+      status: "resolved",
+      resolution: "melee"
+    });
+    expect(resolved.conflict.resolvedToday).toBe(1);
+  });
+
+  it("lets guards intercept assigned machine alarms", () => {
+    const initial = withInstalledStarter();
+    initial.factions.player.money = 300;
+    const hired = reduceGameState(initial, { type: "hire_employee", actorId: "player", role: "guard" }).state;
+    const guard = Object.values(hired.employees)[0]!;
+    const assigned = reduceGameState(hired, {
+      type: "assign_employee",
+      actorId: "player",
+      employeeId: guard.id,
+      machineId: "machine_player_1",
+      assigned: true
+    }).state;
+    const alarmed = reduceGameState(assigned, {
+      type: "sabotage_machine",
+      actorId: "rival_redline",
+      machineId: "machine_player_1"
+    }).state;
+    const alarm = Object.values(alarmed.machineAlarms)[0]!;
+
+    const result = reduceGameState(alarmed, { type: "advance_time", actorId: "player", hours: 2 });
+
+    expect(result.state.machineAlarms[alarm.id]).toMatchObject({
+      resolved: true,
+      outcome: "confronted"
+    });
+    expect(result.events.some((event) => event.message.includes("intercepted"))).toBe(true);
+  });
+
   it("requires the player to reach the alarmed machine before fighting the intruder", () => {
     const alarmed = reduceGameState(withInstalledStarter(), {
       type: "sabotage_machine",
@@ -602,5 +662,80 @@ describe("game reducer", () => {
     const upgraded = reduceGameState(upgradedAlarmed, { type: "advance_time", actorId: "player", hours: 1 }).state;
 
     expect(upgraded.machines.machine_player_1.damage).toBeLessThan(baseline.machines.machine_player_1.damage);
+  });
+
+  it("upgrades base facilities and increases storage capacity", () => {
+    const initial = createInitialState();
+    initial.factions.player.money = 500;
+    const beforeCapacity = baseStorageCapacity(initial);
+
+    const result = reduceCommands(initial, [
+      visit("garage"),
+      { type: "upgrade_base_facility", actorId: "player", facilityId: "warehouse" }
+    ]);
+
+    expect(result.state.base.facilities.warehouse.level).toBe(1);
+    expect(baseStorageCapacity(result.state)).toBeGreaterThan(beforeCapacity);
+    expect(result.state.economy.finance.ledger.some((entry) => entry.category === "base")).toBe(true);
+  });
+
+  it("requires a product lab before customizing catalog products", () => {
+    const initial = createInitialState();
+    initial.factions.player.money = 600;
+    const blocked = reduceCommands(initial, [
+      visit("garage"),
+      { type: "customize_product", actorId: "player", productId: "soda", mode: "premium_wrap" }
+    ]);
+    expect(blocked.state.economy.productCustomizations.soda).toBeUndefined();
+
+    const customized = reduceCommands(blocked.state, [
+      { type: "upgrade_base_facility", actorId: "player", facilityId: "product_lab" },
+      { type: "customize_product", actorId: "player", productId: "soda", mode: "premium_wrap" }
+    ]).state;
+
+    expect(productLabSlots(customized)).toBeGreaterThan(0);
+    expect(customized.economy.productCustomizations.soda).toMatchObject({ mode: "premium_wrap" });
+    expect(currentProductCost(customized, "soda")).toBeGreaterThanOrEqual(1);
+  });
+
+  it("charges fuel and adds maintenance when dispatching a vehicle", () => {
+    const initial = createInitialState();
+    initial.factions.player.money = 200;
+    const beforeMoney = initial.factions.player.money;
+
+    const result = reduceGameState(initial, {
+      type: "dispatch_vehicle",
+      actorId: "player",
+      vehicleId: "vehicle_starter_van",
+      locationId: "laundromat"
+    }).state;
+
+    expect(result.factions.player.money).toBeLessThan(beforeMoney);
+    expect(result.vehicles.vehicle_starter_van.condition).toBeLessThan(1);
+    expect(result.economy.traffic.vehicleMaintenanceDue.vehicle_starter_van).toBeGreaterThan(0);
+    expect(result.economy.finance.ledger.some((entry) => entry.category === "fuel")).toBe(true);
+  });
+
+  it("levels employees after repeated successful automation work", () => {
+    const initial = withInstalledStarter();
+    initial.factions.player.money = 400;
+    initial.player.garageStorage.soda = 80;
+    const hired = reduceGameState(initial, { type: "hire_employee", actorId: "player", role: "restocker" }).state;
+    const employee = Object.values(hired.employees)[0]!;
+    const assigned = reduceGameState(hired, {
+      type: "assign_employee",
+      actorId: "player",
+      employeeId: employee.id,
+      machineId: "machine_player_1",
+      assigned: true
+    }).state;
+
+    const worked = reduceCommands(assigned, [
+      { type: "advance_time", actorId: "player", hours: 3 },
+      { type: "advance_time", actorId: "player", hours: 3 }
+    ]).state;
+
+    expect(worked.employees[employee.id].level).toBeGreaterThan(1);
+    expect(worked.machines.machine_player_1.slots.find((slot) => slot.productId === "soda")?.quantity).toBeGreaterThan(0);
   });
 });

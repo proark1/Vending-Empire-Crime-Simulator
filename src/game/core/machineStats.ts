@@ -1,4 +1,5 @@
 import { machineUpgrades } from "../content/machineUpgrades";
+import { machineModels } from "../content/machineModels";
 import type { MachineUpgradeEffects, MachineUpgradeId, VendingMachine } from "./types";
 
 const baseEffects: MachineUpgradeEffects = {
@@ -20,6 +21,17 @@ export function machineHasUpgrade(machine: VendingMachine, upgradeId: MachineUpg
 }
 
 export function getMachineUpgradeEffects(machine: VendingMachine): MachineUpgradeEffects {
+  const model = machineModels[machine.machineModelId] ?? machineModels.basic_snack;
+  const modelEffects: MachineUpgradeEffects = {
+    damageResistance: Math.max(0, model.durabilityBonus),
+    sabotageResistance: 0,
+    securityBonus: model.securityBonus,
+    visibilityBonus: model.visibilityBonus,
+    salesMultiplier: model.capacityBonus > 0 ? Math.min(0.12, model.capacityBonus * 0.012) : 0,
+    heatMultiplier: model.heatMultiplier,
+    remoteMonitoring: machine.machineModelId === "smart_vendor"
+  };
+
   return (machine.upgrades ?? []).reduce<MachineUpgradeEffects>(
     (effects, upgradeId) => {
       const upgrade = machineUpgrades[upgradeId];
@@ -37,7 +49,7 @@ export function getMachineUpgradeEffects(machine: VendingMachine): MachineUpgrad
         remoteMonitoring: effects.remoteMonitoring || Boolean(upgrade.effects.remoteMonitoring)
       };
     },
-    { ...baseEffects }
+    { ...baseEffects, ...modelEffects }
   );
 }
 

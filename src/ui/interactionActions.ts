@@ -1,8 +1,10 @@
 import type { GameCommand, GameState, ProductId } from "../game/core/types";
 import {
   activeAlarmForMachine,
+  activeConflictEvents,
   activeVehicle,
   cargoSpaceRemaining,
+  currentProductCost,
   districtUnlockInfo,
   firstGarageStorageProduct,
   firstVehicleProduct,
@@ -28,7 +30,24 @@ export type PrimaryInteraction =
       disabled?: boolean;
     };
 
-const productPriority: ProductId[] = ["soda", "chips", "energy", "mystery_capsules"];
+const productPriority: ProductId[] = [
+  "soda",
+  "chips",
+  "energy",
+  "water",
+  "coffee_can",
+  "protein_bar",
+  "instant_noodles",
+  "phone_charger",
+  "umbrella",
+  "hygiene_kit",
+  "luxury_snack",
+  "mystery_capsules",
+  "mood_fizz",
+  "glitch_gum",
+  "night_syrup",
+  "focus_cubes"
+];
 
 function firstCarriedProduct(state: GameState, machineId: string): { productId: ProductId; quantity: number } | undefined {
   const machine = state.machines[machineId];
@@ -65,13 +84,17 @@ function recommendedSupplierBuy(state: GameState): { productId: ProductId; quant
   const recommendations: Array<{ productId: ProductId; quantity: number }> = [
     { productId: "soda", quantity: 10 },
     { productId: "chips", quantity: 5 },
+    { productId: "water", quantity: 10 },
     { productId: "energy", quantity: 5 },
-    { productId: "mystery_capsules", quantity: 3 }
+    { productId: "coffee_can", quantity: 5 },
+    { productId: "protein_bar", quantity: 5 },
+    { productId: "mystery_capsules", quantity: 3 },
+    { productId: "mood_fizz", quantity: 3 }
   ];
 
   return recommendations.find(({ productId, quantity }) => {
     const product = state.products[productId];
-    return player.money >= product.cost * quantity && remaining >= product.size * quantity;
+    return player.money >= currentProductCost(state, productId) * quantity && remaining >= product.size * quantity;
   });
 }
 
@@ -82,6 +105,24 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
 
   const actorId = state.playerFactionId;
   const player = state.factions[actorId];
+  const targetLocationId =
+    target.type === "base" || target.type === "supplier" || target.type === "placement"
+      ? target.id
+      : state.machines[target.id]?.locationId;
+  const conflictAtTarget = targetLocationId ? activeConflictEvents(state).find((event) => event.locationId === targetLocationId) : undefined;
+
+  if (conflictAtTarget) {
+    return {
+      kind: "command",
+      label: conflictAtTarget.kind === "base_raid" ? "Trigger lockdown" : conflictAtTarget.kind === "route_ambush" ? "Drive escape" : "Fight through",
+      command: {
+        type: "resolve_conflict_event",
+        actorId,
+        eventId: conflictAtTarget.id,
+        resolution: conflictAtTarget.kind === "base_raid" ? "remote_lockdown" : conflictAtTarget.kind === "route_ambush" ? "drive_escape" : "melee"
+      }
+    };
+  }
 
   if (target.type === "base") {
     if (state.player.carriedCrate) {

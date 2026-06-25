@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import type { DistrictAccess, GameState, GameEventTone, Location, MachineUpgradeId, ProductId, StockCrate, StreetActivity, VendingMachine } from "../../game/core/types";
-import { activeMachineAlarms, activeVehicle, districtProgress, garageStorageUnits, machineAtLocation, machineRoutePressure } from "../../game/core/selectors";
+import { activeConflictEvents, activeMachineAlarms, activeVehicle, carriedCrateUnits, districtProgress, garageStorageUnits, machineAtLocation, machineRoutePressure } from "../../game/core/selectors";
 import {
   districtLabels,
   districtVisualProfiles,
@@ -100,7 +100,19 @@ const productCrateColors: Record<ProductId, string> = {
   soda: "#38bdf8",
   chips: "#f59e0b",
   energy: "#22c55e",
-  mystery_capsules: "#e879f9"
+  water: "#93c5fd",
+  protein_bar: "#a16207",
+  coffee_can: "#7c2d12",
+  instant_noodles: "#fbbf24",
+  phone_charger: "#94a3b8",
+  umbrella: "#0f766e",
+  hygiene_kit: "#f8fafc",
+  luxury_snack: "#f472b6",
+  mystery_capsules: "#e879f9",
+  mood_fizz: "#fb7185",
+  glitch_gum: "#c084fc",
+  night_syrup: "#4c1d95",
+  focus_cubes: "#67e8f9"
 };
 
 const playerRadius = 0.36;
@@ -1205,6 +1217,18 @@ function sceneFeedbackText(event: SceneFeedbackEvent): string {
     return "CLEARED";
   }
 
+  if (event.kind === "melee") {
+    return "PUSHED BACK";
+  }
+
+  if (event.kind === "escape") {
+    return "ESCAPED";
+  }
+
+  if (event.kind === "lockdown") {
+    return "LOCKDOWN";
+  }
+
   if (event.kind === "scout") {
     return "SCOUTED";
   }
@@ -1337,9 +1361,28 @@ function createSceneFeedbackEffect(event: SceneFeedbackEvent, currentState: Game
     group.add(beam);
   }
 
-  if (event.kind === "repair" || event.kind === "upgrade" || event.kind === "sabotage" || event.kind === "fight" || event.kind === "district" || event.kind === "scout") {
-    const sparkColor = event.kind === "sabotage" ? "#fb7185" : event.kind === "fight" ? "#86efac" : event.kind === "upgrade" || event.kind === "district" ? "#38bdf8" : event.kind === "scout" ? "#f59e0b" : "#facc15";
-    const sparkCount = event.kind === "district" || event.kind === "fight" ? 14 : 9;
+  if (
+    event.kind === "repair" ||
+    event.kind === "upgrade" ||
+    event.kind === "sabotage" ||
+    event.kind === "fight" ||
+    event.kind === "melee" ||
+    event.kind === "escape" ||
+    event.kind === "lockdown" ||
+    event.kind === "district" ||
+    event.kind === "scout"
+  ) {
+    const sparkColor =
+      event.kind === "sabotage" || event.kind === "melee"
+        ? "#fb7185"
+        : event.kind === "fight" || event.kind === "escape"
+          ? "#86efac"
+          : event.kind === "upgrade" || event.kind === "district" || event.kind === "lockdown"
+            ? "#38bdf8"
+            : event.kind === "scout"
+              ? "#f59e0b"
+              : "#facc15";
+    const sparkCount = event.kind === "district" || event.kind === "fight" || event.kind === "melee" || event.kind === "lockdown" ? 14 : 9;
     for (let index = 0; index < sparkCount; index += 1) {
       const spark = createSpark(sparkColor);
       const angle = (Math.PI * 2 * index) / sparkCount;
@@ -2123,11 +2166,13 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
   const interactables: Interactable[] = [];
   addDistrictAccessOverlays(group, currentState);
   const activeAlarmByMachine = new Map(activeMachineAlarms(currentState).map((alarm) => [alarm.machineId, alarm]));
+  const activeConflictByLocation = new Map(activeConflictEvents(currentState).map((conflict) => [conflict.locationId, conflict]));
 
   for (const location of Object.values(currentState.locations)) {
     const position = new THREE.Vector3(location.position.x, 0, location.position.z);
     const machinePlacement = machinePlacementForLocation(location);
     const isGuidanceTarget = guidanceLocationId === location.id;
+    const activeConflict = activeConflictByLocation.get(location.id);
     const addGuidanceBeacon = (color: string, beaconPosition = position) => {
       if (!isGuidanceTarget) {
         return;
@@ -2137,6 +2182,22 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       beacon.position.copy(beaconPosition);
       group.add(beacon);
       addLabel(group, "NEXT", color, beaconPosition, 3.75);
+    };
+    const addConflictMarker = (markerPosition = position) => {
+      if (!activeConflict) {
+        return;
+      }
+
+      const conflictRing = createRoutePressureRing("danger");
+      conflictRing.position.set(markerPosition.x, 2.72, markerPosition.z);
+      group.add(conflictRing);
+      addLabel(
+        group,
+        activeConflict.kind === "base_raid" ? "BASE RAID" : activeConflict.kind === "route_ambush" ? "AMBUSH" : "CHASE",
+        "#fb7185",
+        markerPosition,
+        3.42
+      );
     };
 
     if (location.kind === "garage") {
@@ -2154,6 +2215,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       }
       addLabel(group, location.name, "#38bdf8", position, 1.1);
       addGuidanceBeacon("#38bdf8");
+      addConflictMarker(position);
       interactables.push({ radius: 1.35, target: { type: "base", id: "garage", label: location.name }, position });
       continue;
     }
@@ -2162,12 +2224,13 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       const marker = addMarker("#f59e0b");
       marker.position.copy(position);
       group.add(marker);
-      const supplierStack = createCrateStack(["soda", "chips", "energy", "mystery_capsules"]);
+      const supplierStack = createCrateStack(["soda", "chips", "energy", "water", "coffee_can", "mystery_capsules", "mood_fizz", "phone_charger"]);
       supplierStack.position.set(position.x - 0.76, 0.02, position.z - 0.2);
       supplierStack.rotation.y = 0.45;
       group.add(supplierStack);
       addLabel(group, location.name, "#f59e0b", position, 1.1);
       addGuidanceBeacon("#f59e0b");
+      addConflictMarker(position);
       interactables.push({ radius: 1.35, target: { type: "supplier", id: "supplier", label: location.name }, position });
       continue;
     }
@@ -2196,6 +2259,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       }
       addLabel(group, machine.name, owner?.color ?? "#94a3b8", machinePlacement.position, 2.2);
       addGuidanceBeacon(owner?.color ?? "#94a3b8", machinePlacement.position);
+      addConflictMarker(machinePlacement.position);
       interactables.push({ radius: 1.15, target: { type: "machine", id: machine.id, label: machine.name }, position: servicePoint });
     } else {
       const access = districtProgress(currentState, location.districtId).access;
@@ -2205,6 +2269,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       group.add(marker);
       addLabel(group, location.name, markerColor, machinePlacement.position, 1.1);
       addGuidanceBeacon(markerColor, machinePlacement.position);
+      addConflictMarker(machinePlacement.position);
       interactables.push({ radius: 1.2, target: { type: "placement", id: location.id, label: location.name }, position: machinePlacement.position });
     }
   }
@@ -2633,7 +2698,11 @@ export function ThreeScene({ feedbackEvent, guidanceLocationId, mapLayout, state
       const delta = Math.min(0.05, (time - lastTime) / 1000);
       lastTime = time;
 
-      const speed = keys.has("ShiftLeft") || keys.has("ShiftRight") ? 7.5 : 4.2;
+      const currentState = stateRef.current;
+      const carriedUnits = carriedCrateUnits(currentState);
+      const carryLoadRatio = currentState.player.carriedCrate ? carriedUnits / Math.max(1, currentState.player.cargoCapacity) : 0;
+      const carryPenalty = currentState.player.carriedCrate ? Math.min(0.38, 0.08 + carryLoadRatio * 0.3) : 0;
+      const speed = (keys.has("ShiftLeft") || keys.has("ShiftRight") ? 7.5 : 4.2) * (1 - carryPenalty);
       const direction = new THREE.Vector3();
 
       if (keys.has("KeyW") || keys.has("ArrowUp")) direction.z -= 1;

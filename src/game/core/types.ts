@@ -1,6 +1,33 @@
 export type FactionId = "player" | "rival_redline" | string;
-export type ProductId = "soda" | "chips" | "energy" | "mystery_capsules";
+export type ProductId =
+  | "soda"
+  | "chips"
+  | "energy"
+  | "water"
+  | "protein_bar"
+  | "coffee_can"
+  | "instant_noodles"
+  | "phone_charger"
+  | "umbrella"
+  | "hygiene_kit"
+  | "luxury_snack"
+  | "mystery_capsules"
+  | "mood_fizz"
+  | "glitch_gum"
+  | "night_syrup"
+  | "focus_cubes";
 export type MachineUpgradeId = "reinforced_glass" | "smart_lock" | "security_camera" | "cashless_terminal" | "neon_sign" | "remote_monitor";
+export type MachineModelId =
+  | "basic_snack"
+  | "drink_machine"
+  | "combo_machine"
+  | "luxury_vendor"
+  | "discreet_black_market"
+  | "armored_unit"
+  | "smart_vendor"
+  | "hidden_wall_unit"
+  | "mobile_vendor"
+  | "fake_broken_front";
 export type MachineId = string;
 export type VehicleId = string;
 export type EmployeeId = string;
@@ -36,15 +63,31 @@ export interface StockCrate {
 export interface Product {
   id: ProductId;
   name: string;
-  category: "drink" | "snack" | "utility" | "fictional-grey";
+  category: "drink" | "snack" | "utility" | "meal" | "fictional-grey" | "fictional-contraband";
   cost: number;
   basePrice: number;
   size: number;
   demand: number;
   heat: number;
   legality: 0 | 1 | 2;
+  customizable?: boolean;
   demandTags: string[];
+  shelfLifeHours?: number;
   description: string;
+}
+
+export interface MachineModelDefinition {
+  id: MachineModelId;
+  name: string;
+  description: string;
+  baseCost: number;
+  maxSlots: number;
+  capacityBonus: number;
+  durabilityBonus: number;
+  securityBonus: number;
+  visibilityBonus: number;
+  heatMultiplier: number;
+  tags: string[];
 }
 
 export interface MachineUpgradeEffects {
@@ -65,10 +108,57 @@ export interface MachineUpgradeDefinition {
   effects: Partial<MachineUpgradeEffects>;
 }
 
+export type BaseFacilityId =
+  | "garage_storage"
+  | "warehouse"
+  | "office"
+  | "cold_storage"
+  | "employee_lockers"
+  | "security_system"
+  | "product_lab"
+  | "planning_board"
+  | "distribution_center";
+
+export interface BaseFacilityEffects {
+  storageCapacity?: number;
+  coldStorageProtection?: number;
+  employeeCapacity?: number;
+  baseSecurity?: number;
+  supplierDiscount?: number;
+  routeRiskReduction?: number;
+  productLabSlots?: number;
+  managerSlots?: number;
+  frontBusinessIncome?: number;
+  planningIntel?: number;
+}
+
+export interface BaseFacilityDefinition {
+  id: BaseFacilityId;
+  name: string;
+  description: string;
+  maxLevel: number;
+  baseCost: number;
+  costGrowth: number;
+  effectsPerLevel: BaseFacilityEffects;
+}
+
+export interface BaseFacilityState {
+  id: BaseFacilityId;
+  level: number;
+  upgradedHour?: number;
+}
+
+export interface BaseState {
+  facilities: Record<BaseFacilityId, BaseFacilityState>;
+  securityReadiness: number;
+}
+
 export interface Faction {
   id: FactionId;
   name: string;
   type: "player" | "npc" | "remote-player";
+  archetype?: "corporate" | "street_crew" | "black_market" | "former_partner";
+  tactic?: string;
   money: number;
   heat: number;
   publicReputation: number;
@@ -88,6 +178,7 @@ export interface VendingMachine {
   id: MachineId;
   name: string;
   ownerFactionId: FactionId;
+  machineModelId: MachineModelId;
   locationId: LocationId;
   placementStatus: MachinePlacementStatus;
   placementMethod: PlacementMethod;
@@ -120,9 +211,11 @@ export interface Location {
 
 export interface District {
   bounds: Bounds2;
+  customerArchetypes: string[];
   description: string;
   id: DistrictId;
   name: string;
+  riskFlavor: string;
   heatTolerance: number;
   rentMultiplier: number;
   requiredContractsCompleted: number;
@@ -167,6 +260,8 @@ export interface RouteVehicle {
   capacity: number;
   security: number;
   speed: number;
+  escapeRating: number;
+  condition: number;
 }
 
 export interface RoutePlanState {
@@ -203,6 +298,9 @@ export interface DayReport {
   machineRevenueStored: number;
   contractRewards: number;
   contractPenalties: number;
+  operatingRevenue: number;
+  operatingExpenses: number;
+  netCashflow: number;
   contractsCompleted: number;
   contractsFailed: number;
   stockSold: number;
@@ -224,6 +322,86 @@ export interface ProgressionState {
   starterMachinePlaced: boolean;
   firstUndercutTriggered: boolean;
   firstRetaliationTriggered: boolean;
+}
+
+export type FinanceLedgerCategory =
+  | "sales"
+  | "contracts"
+  | "stock"
+  | "wages"
+  | "fuel"
+  | "maintenance"
+  | "rent"
+  | "insurance"
+  | "fines"
+  | "upgrades"
+  | "front_business"
+  | "sabotage"
+  | "base";
+
+export interface FinanceLedgerEntry {
+  id: string;
+  hour: number;
+  category: FinanceLedgerCategory;
+  amount: number;
+  description: string;
+}
+
+export type InsurancePlan = "none" | "basic" | "premium";
+
+export interface FinanceState {
+  ledger: FinanceLedgerEntry[];
+  nextEntryNumber: number;
+  revenueToday: number;
+  expensesToday: number;
+  frontBusinessRevenueToday: number;
+  insurancePlan: InsurancePlan;
+}
+
+export interface SupplyMarketState {
+  nextVolatilityHour: number;
+  volatility: number;
+  priceMultipliers: Partial<Record<ProductId, number>>;
+  supplierMood: "stable" | "discount" | "scarce" | "blackout";
+}
+
+export interface PoliceCheckpoint {
+  id: string;
+  locationId: LocationId;
+  severity: number;
+  expiresHour: number;
+}
+
+export interface TrafficState {
+  nextTrafficHour: number;
+  congestionByLocation: Record<LocationId, number>;
+  fuelPrice: number;
+  checkpoints: Record<string, PoliceCheckpoint>;
+  vehicleMaintenanceDue: Record<VehicleId, number>;
+}
+
+export type ProductCustomizationMode = "value_pack" | "premium_wrap" | "discreet_label";
+
+export interface ProductCustomization {
+  productId: ProductId;
+  mode: ProductCustomizationMode;
+  demandBonus: number;
+  costDelta: number;
+  heatDelta: number;
+  createdHour: number;
+}
+
+export interface SpoilageState {
+  nextSpoilageHour: number;
+  spoiledToday: number;
+}
+
+export interface EconomyState {
+  finance: FinanceState;
+  supply: SupplyMarketState;
+  traffic: TrafficState;
+  spoilage: SpoilageState;
+  productCustomizations: Partial<Record<ProductId, ProductCustomization>>;
 }
 
 export interface NpcController {
@@ -278,6 +456,33 @@ export interface LawState {
   lastInspectionHour: number;
 }
 
+export type ConflictEventKind = "route_ambush" | "base_raid" | "street_chase";
+export type ConflictEventStatus = "active" | "resolved" | "missed";
+export type ConflictResolution = "melee" | "drive_escape" | "remote_lockdown";
+
+export interface ConflictEvent {
+  id: string;
+  kind: ConflictEventKind;
+  locationId: LocationId;
+  threatFactionId: FactionId;
+  startedHour: number;
+  expiresHour: number;
+  intensity: number;
+  status: ConflictEventStatus;
+  message: string;
+  targetMachineId?: MachineId;
+  resolvedHour?: number;
+  resolution?: ConflictResolution;
+}
+
+export interface ConflictState {
+  eventSequence: number;
+  nextConflictHour: number;
+  activeEvents: Record<string, ConflictEvent>;
+  resolvedToday: number;
+  missedToday: number;
+}
+
 export interface PlacementQuote {
   method: PlacementMethod;
   label: string;
@@ -292,16 +497,18 @@ export interface PlacementQuote {
   description: string;
 }
 
-export type EmployeeRole = "restocker" | "collector" | "technician";
+export type EmployeeRole = "restocker" | "collector" | "technician" | "guard" | "scout" | "negotiator" | "runner" | "regional_manager";
 export type EmployeeStatus = "idle" | "working" | "blocked";
 
 export interface Employee {
   assignedMachineIds: MachineId[];
+  betrayed?: boolean;
   criminalTolerance: number;
   employeeNumber: number;
   fear: number;
   id: EmployeeId;
   lastWorkedHour: number;
+  level: number;
   loyalty: number;
   name: string;
   reliability: number;
@@ -311,6 +518,7 @@ export interface Employee {
   status: EmployeeStatus;
   statusDetail: string;
   wagePerDay: number;
+  xp: number;
 }
 
 export type GameEventTone = "neutral" | "good" | "warning" | "danger";
@@ -322,8 +530,8 @@ export interface GameEvent {
   message: string;
 }
 
-export type StreetActivityKind = "customer_purchase" | "customer_complaint" | "rival_scout" | "worker_supply";
-export type StreetActivityActor = "customer" | "rival" | "worker" | "scout";
+export type StreetActivityKind = "customer_purchase" | "customer_complaint" | "rival_scout" | "worker_supply" | "chase" | "base_watch";
+export type StreetActivityActor = "customer" | "rival" | "worker" | "scout" | "guard" | "driver";
 
 export interface StreetActivity {
   id: string;
@@ -367,9 +575,12 @@ export interface GameState {
   vehicles: Record<VehicleId, RouteVehicle>;
   employees: Record<EmployeeId, Employee>;
   contracts: Record<ContractId, ServiceContract>;
+  base: BaseState;
+  economy: EconomyState;
   npcControllers: Record<FactionId, NpcController>;
   machineAlarms: Record<string, MachineAlarm>;
   law: LawState;
+  conflict: ConflictState;
   eventLog: GameEvent[];
   streetLife: StreetLifeState;
   mission: MissionState;
@@ -391,6 +602,10 @@ export type GameCommand =
   | { type: "select_route_task"; actorId: FactionId; taskId: string | null }
   | { type: "scout_district"; actorId: FactionId; districtId: DistrictId }
   | { type: "unlock_district"; actorId: FactionId; districtId: DistrictId }
+  | { type: "upgrade_base_facility"; actorId: FactionId; facilityId: BaseFacilityId }
+  | { type: "set_insurance_plan"; actorId: FactionId; plan: InsurancePlan }
+  | { type: "service_vehicle"; actorId: FactionId; vehicleId: VehicleId }
+  | { type: "customize_product"; actorId: FactionId; productId: ProductId; mode: ProductCustomizationMode }
   | { type: "hire_employee"; actorId: FactionId; role: EmployeeRole }
   | { type: "assign_employee"; actorId: FactionId; employeeId: EmployeeId; machineId: MachineId; assigned: boolean }
   | { type: "stock_machine"; actorId: FactionId; machineId: MachineId; productId: ProductId; quantity: number }
@@ -401,6 +616,7 @@ export type GameCommand =
   | { type: "install_upgrade"; actorId: FactionId; machineId: MachineId; upgradeId: MachineUpgradeId }
   | { type: "sabotage_machine"; actorId: FactionId; machineId: MachineId }
   | { type: "confront_alarm"; actorId: FactionId; alarmId: string }
+  | { type: "resolve_conflict_event"; actorId: FactionId; eventId: string; resolution: ConflictResolution }
   | { type: "resolve_inspection"; actorId: FactionId; inspectionId: string; resolution: LawInspectionResolution }
   | { type: "debug_grant_cash"; actorId: FactionId; amount: number }
   | { type: "debug_complete_requirements"; actorId: FactionId }
