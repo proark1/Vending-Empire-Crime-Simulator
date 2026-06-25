@@ -2121,6 +2121,12 @@ kbd {
   grid-template-columns: 62px 110px 130px 150px 180px minmax(280px, 1.2fr) minmax(220px, 0.9fr) 160px 92px 38px;
 }
 
+.admin-audio-row.voice-text {
+  align-items: stretch;
+  min-width: 1320px;
+  grid-template-columns: 62px 170px 180px 160px minmax(320px, 1.2fr) minmax(230px, 0.85fr) 82px 38px;
+}
+
 .admin-audio-row input,
 .admin-audio-row select,
 .admin-audio-row textarea {

@@ -70,7 +70,17 @@ export const audioTriggerOptions: Array<{ category: AudioCategory; label: string
   { category: "voice", trigger: "voice.district_entry", label: "District entry voice" },
   { category: "voice", trigger: "voice.heat_warning", label: "Heat warning voice" },
   { category: "voice", trigger: "voice.rival_attack", label: "Rival attack voice" },
-  { category: "voice", trigger: "voice.mission_complete", label: "Mission complete voice" }
+  { category: "voice", trigger: "voice.mission_complete", label: "Mission complete voice" },
+  { category: "voice", trigger: "voice.supplier_offer", label: "Supplier offer voice" },
+  { category: "voice", trigger: "voice.fixer_tip", label: "Fixer tip voice" },
+  { category: "voice", trigger: "voice.landlord_pressure", label: "Landlord pressure voice" },
+  { category: "voice", trigger: "voice.rival_boss_threat", label: "Rival boss threat voice" },
+  { category: "voice", trigger: "voice.mechanic_unlock", label: "Mechanic unlock voice" },
+  { category: "voice", trigger: "voice.driver_warning", label: "Driver warning voice" },
+  { category: "voice", trigger: "voice.guard_contact", label: "Guard contact voice" },
+  { category: "voice", trigger: "voice.inspector_notice", label: "Inspector notice voice" },
+  { category: "voice", trigger: "voice.lawyer_notice", label: "Lawyer notice voice" },
+  { category: "voice", trigger: "voice.informant_tip", label: "Informant tip voice" }
 ];
 
 const defaultMixer: AudioMixerSettings = {

@@ -1,4 +1,4 @@
-import { History, KeyRound, Mic2, Music, Play, Plus, RotateCcw, Save, Trash2, Volume2, VolumeX } from "lucide-react";
+import { Copy, History, KeyRound, Mic2, Music, Play, Plus, RotateCcw, Save, Trash2, Volume2, VolumeX } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   audioTriggerOptions,
@@ -115,6 +115,12 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
   const blockingIssues = issues.filter((issue) => issue.severity === "error");
   const providerIssues = useMemo(() => validateAudioProviderSettings(providerSettings), [providerSettings]);
   const providerBlockingIssues = providerIssues.filter((issue) => issue.severity === "error");
+  const voicePromptRows = useMemo(
+    () => providerSettings.generationPrompts
+      .map((prompt, index) => ({ index, prompt }))
+      .filter(({ prompt }) => prompt.purpose === "voice"),
+    [providerSettings.generationPrompts]
+  );
 
   const setNormalizedConfig = useCallback((updater: (current: AudioConfig) => AudioConfig) => {
     setConfig((current) => normalizeAudioConfig(updater(current)));
@@ -329,6 +335,17 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
     preview.addEventListener("ended", () => setPreviewingId(null), { once: true });
   }, [config]);
 
+  const handleCopyPrompt = useCallback((text: string) => {
+    if (!navigator.clipboard) {
+      setStatus("Clipboard is not available in this browser.");
+      return;
+    }
+
+    void navigator.clipboard.writeText(text)
+      .then(() => setStatus("Copied voice prompt text."))
+      .catch(() => setStatus("Copy failed."));
+  }, []);
+
   const handleSave = useCallback(() => {
     const nextConfig = normalizeAudioConfig(config);
     const nextIssues = validateAudioConfig(nextConfig);
@@ -520,6 +537,49 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
                   </label>
                   <button className="danger" onClick={() => handleDeleteVoiceProfile(profile.id)} type="button">
                     <Trash2 size={14} aria-hidden="true" />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="admin-audio-subheading">
+            <h3>Voice Text Prompts</h3>
+            <div className="admin-audio-heading-actions">
+              <button onClick={handleResetGenerationPrompts} type="button">
+                <RotateCcw size={14} aria-hidden="true" />
+                Defaults
+              </button>
+            </div>
+          </div>
+
+          <div className="admin-audio-table voice-prompts">
+            {voicePromptRows.length === 0 ? (
+              <p>No voice text prompts configured.</p>
+            ) : (
+              voicePromptRows.map(({ index, prompt }) => (
+                <div className="admin-audio-row voice-text" key={`voice-text-${prompt.id}-${index}`}>
+                  <label className="admin-audio-compact-check">
+                    <input checked={prompt.enabled} type="checkbox" onChange={(event) => updateGenerationPrompt(index, { enabled: event.target.checked })} />
+                    On
+                  </label>
+                  <input aria-label="Voice prompt label" value={prompt.label} onChange={(event) => updateGenerationPrompt(index, { label: event.target.value })} />
+                  <select aria-label="Voice prompt trigger" value={prompt.trigger} onChange={(event) => updateGenerationPrompt(index, { trigger: event.target.value })}>
+                    {audioTriggerOptions.filter((option) => option.category === "voice").map((option) => (
+                      <option key={option.trigger} value={option.trigger}>{option.label}</option>
+                    ))}
+                  </select>
+                  <select aria-label="Voice prompt profile" value={prompt.voiceProfileId} onChange={(event) => updateGenerationPrompt(index, { voiceProfileId: event.target.value })}>
+                    <option value="">No voice profile</option>
+                    {providerSettings.voiceProfiles.map((profile) => (
+                      <option key={profile.id} value={profile.id}>{profile.label || profile.id}</option>
+                    ))}
+                  </select>
+                  <textarea aria-label="Voice text prompt" value={prompt.prompt} onChange={(event) => updateGenerationPrompt(index, { prompt: event.target.value })} />
+                  <textarea aria-label="Voice direction negative prompt" value={prompt.negativePrompt} onChange={(event) => updateGenerationPrompt(index, { negativePrompt: event.target.value })} />
+                  <input aria-label="Voice duration" max="30" min="0.5" step="0.5" type="number" value={prompt.durationSeconds} onChange={(event) => updateGenerationPrompt(index, { durationSeconds: Number(event.target.value) })} />
+                  <button onClick={() => handleCopyPrompt(prompt.prompt)} type="button">
+                    <Copy size={14} aria-hidden="true" />
                   </button>
                 </div>
               ))

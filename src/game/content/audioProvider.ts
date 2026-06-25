@@ -326,6 +326,116 @@ export const defaultElevenLabsGenerationPrompts: ElevenLabsGenerationPrompt[] = 
     purpose: "voice",
     trigger: "voice.mission_complete",
     voiceProfileId: ""
+  },
+  {
+    durationSeconds: 5,
+    enabled: true,
+    id: "voice_supplier_offer",
+    label: "Supplier offer voice",
+    negativePrompt: "No shouting, no comedy salesman voice, no exaggerated accent.",
+    prompt: "I can get you a clean pallet by midnight. Pay fast, move faster.",
+    purpose: "voice",
+    trigger: "voice.supplier_offer",
+    voiceProfileId: ""
+  },
+  {
+    durationSeconds: 5,
+    enabled: true,
+    id: "voice_fixer_tip",
+    label: "Fixer tip voice",
+    negativePrompt: "No whisper caricature, no villain laugh, no overacting.",
+    prompt: "There is a back door on this deal. It costs extra because it works.",
+    purpose: "voice",
+    trigger: "voice.fixer_tip",
+    voiceProfileId: ""
+  },
+  {
+    durationSeconds: 5,
+    enabled: true,
+    id: "voice_landlord_pressure",
+    label: "Landlord pressure voice",
+    negativePrompt: "No cartoon landlord, no yelling, no slapstick tone.",
+    prompt: "Rent clears by morning, or your machine finds the sidewalk.",
+    purpose: "voice",
+    trigger: "voice.landlord_pressure",
+    voiceProfileId: ""
+  },
+  {
+    durationSeconds: 5,
+    enabled: true,
+    id: "voice_rival_boss_threat",
+    label: "Rival boss threat voice",
+    negativePrompt: "No screaming, no gore, no theatrical villain performance.",
+    prompt: "That corner was ours before your logo touched it. Pull back, or we pull it down.",
+    purpose: "voice",
+    trigger: "voice.rival_boss_threat",
+    voiceProfileId: ""
+  },
+  {
+    durationSeconds: 5,
+    enabled: true,
+    id: "voice_mechanic_unlock",
+    label: "Mechanic unlock voice",
+    negativePrompt: "No goofy mechanic voice, no shouting over tools.",
+    prompt: "I rebuilt the lock assembly. It is ugly, heavy, and exactly what you need.",
+    purpose: "voice",
+    trigger: "voice.mechanic_unlock",
+    voiceProfileId: ""
+  },
+  {
+    durationSeconds: 5,
+    enabled: true,
+    id: "voice_driver_warning",
+    label: "Driver warning voice",
+    negativePrompt: "No panic, no siren imitation, no comedy delivery.",
+    prompt: "Route is hot. I can still make the drop, but I am not waiting twice.",
+    purpose: "voice",
+    trigger: "voice.driver_warning",
+    voiceProfileId: ""
+  },
+  {
+    durationSeconds: 5,
+    enabled: true,
+    id: "voice_guard_contact",
+    label: "Guard contact voice",
+    negativePrompt: "No military parody, no yelling, no radio static over the words.",
+    prompt: "I have eyes on the block. If Redline tests the machine, they pay for it.",
+    purpose: "voice",
+    trigger: "voice.guard_contact",
+    voiceProfileId: ""
+  },
+  {
+    durationSeconds: 5,
+    enabled: true,
+    id: "voice_inspector_notice",
+    label: "Inspector notice voice",
+    negativePrompt: "No cartoon bureaucrat, no comedy, no aggressive shouting.",
+    prompt: "This placement is flagged for inspection. Keep your paperwork close.",
+    purpose: "voice",
+    trigger: "voice.inspector_notice",
+    voiceProfileId: ""
+  },
+  {
+    durationSeconds: 5,
+    enabled: true,
+    id: "voice_lawyer_notice",
+    label: "Lawyer notice voice",
+    negativePrompt: "No courtroom drama, no sarcastic villain tone.",
+    prompt: "Their contract language is sloppy. Give me one day and I can turn it against them.",
+    purpose: "voice",
+    trigger: "voice.lawyer_notice",
+    voiceProfileId: ""
+  },
+  {
+    durationSeconds: 5,
+    enabled: true,
+    id: "voice_informant_tip",
+    label: "Informant tip voice",
+    negativePrompt: "No sneering, no whisper so quiet it is unusable, no parody accent.",
+    prompt: "A scout marked your machine ten minutes ago. They are checking if you are asleep.",
+    purpose: "voice",
+    trigger: "voice.informant_tip",
+    voiceProfileId: ""
   }
 ];
 
