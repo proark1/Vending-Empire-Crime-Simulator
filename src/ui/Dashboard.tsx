@@ -23,6 +23,7 @@ import {
   districtMachineCounts,
   districtUnlockInfo,
   employeeCapacity,
+  endgamePathScores,
   employeeList,
   financeLedger,
   financeSummary,
@@ -43,12 +44,13 @@ import {
   routeDangerScore,
   routeTasks,
   selectedRouteTask,
+  storyArcProgress,
   vehicleInventoryUnits,
   vehicleSpaceRemaining
 } from "../game/core/selectors";
 import { estimateMachineSalesPerHour } from "../game/systems/economy";
 import { machineModels } from "../game/content/machineModels";
-import { endgamePaths, npcRoles, storyMissionArcs } from "../game/content/story";
+import { gameDesignPillars, npcRoles } from "../game/content/story";
 import { baseFacilityList } from "../game/content/baseFacilities";
 
 type DashboardTab = "machines" | "base" | "catalog" | "finance" | "districts" | "jobs" | "route" | "logistics" | "crew" | "law" | "heat" | "conflict" | "rival" | "story" | "debug" | "log";
@@ -146,6 +148,8 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
   const ledger = financeLedger(state).slice(0, 16);
   const territory = rivalTerritoryByDistrict(state);
   const dayReport = latestDayReport(state);
+  const storyProgress = useMemo(() => storyArcProgress(state), [state]);
+  const endingScores = useMemo(() => endgamePathScores(state), [state]);
 
   return (
     <aside className="dashboard">
@@ -158,29 +162,13 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
           <Factory size={16} aria-hidden="true" />
           Base
         </button>
-        <button className={tab === "catalog" ? "tab active" : "tab"} onClick={() => setTab("catalog")} type="button">
-          <FlaskConical size={16} aria-hidden="true" />
-          Catalog
-        </button>
-        <button className={tab === "finance" ? "tab active" : "tab"} onClick={() => setTab("finance")} type="button">
-          <BarChart3 size={16} aria-hidden="true" />
-          Finance
-        </button>
         <button className={tab === "districts" ? "tab active" : "tab"} onClick={() => setTab("districts")} type="button">
           <Building2 size={16} aria-hidden="true" />
           Districts
         </button>
-        <button className={tab === "jobs" ? "tab active" : "tab"} onClick={() => setTab("jobs")} type="button">
-          <ClipboardList size={16} aria-hidden="true" />
-          Jobs
-        </button>
         <button className={tab === "route" ? "tab active" : "tab"} onClick={() => setTab("route")} type="button">
           <Route size={16} aria-hidden="true" />
           Route
-        </button>
-        <button className={tab === "logistics" ? "tab active" : "tab"} onClick={() => setTab("logistics")} type="button">
-          <Boxes size={16} aria-hidden="true" />
-          Logistics
         </button>
         <button className={tab === "crew" ? "tab active" : "tab"} onClick={() => setTab("crew")} type="button">
           <Users size={16} aria-hidden="true" />
@@ -189,18 +177,6 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
         <button className={tab === "law" ? "tab active" : "tab"} onClick={() => setTab("law")} type="button">
           <ShieldAlert size={16} aria-hidden="true" />
           Law
-        </button>
-        <button className={tab === "heat" ? "tab active" : "tab"} onClick={() => setTab("heat")} type="button">
-          <AlertTriangle size={16} aria-hidden="true" />
-          Heat
-        </button>
-        <button className={tab === "conflict" ? "tab active" : "tab"} onClick={() => setTab("conflict")} type="button">
-          <AlertTriangle size={16} aria-hidden="true" />
-          Conflict
-        </button>
-        <button className={tab === "rival" ? "tab active" : "tab"} onClick={() => setTab("rival")} type="button">
-          <ShieldAlert size={16} aria-hidden="true" />
-          Rival
         </button>
         <button className={tab === "story" ? "tab active" : "tab"} onClick={() => setTab("story")} type="button">
           <ClipboardList size={16} aria-hidden="true" />
@@ -308,7 +284,7 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
         </div>
       )}
 
-      {tab === "catalog" && (
+      {tab === "machines" && (
         <div className="panel-list">
           <article className="cargo-summary">
             <FlaskConical size={18} aria-hidden="true" />
@@ -340,7 +316,7 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
         </div>
       )}
 
-      {tab === "finance" && (
+      {tab === "base" && (
         <div className="panel-list">
           <article className="cargo-summary">
             <BarChart3 size={18} aria-hidden="true" />
@@ -432,7 +408,7 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
         </div>
       )}
 
-      {tab === "jobs" && (
+      {tab === "route" && (
         <div className="panel-list">
           {dayReport && (
             <article className={`day-report ${dayReport.contractsFailed > 0 ? "warning" : "good"}`}>
@@ -593,7 +569,7 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
         </div>
       )}
 
-      {tab === "logistics" && (
+      {tab === "base" && (
         <div className="panel-list">
           <div className="cargo-summary">
             <Package size={18} aria-hidden="true" />
@@ -783,7 +759,7 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
         </div>
       )}
 
-      {tab === "heat" && (
+      {tab === "law" && (
         <div className="panel-list">
           <article className="cargo-summary">
             <AlertTriangle size={18} aria-hidden="true" />
@@ -817,7 +793,7 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
         </div>
       )}
 
-      {tab === "conflict" && (
+      {tab === "law" && (
         <div className="panel-list">
           <article className="cargo-summary">
             <AlertTriangle size={18} aria-hidden="true" />
@@ -872,7 +848,7 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
         </div>
       )}
 
-      {tab === "rival" && (
+      {tab === "districts" && (
         <div className="panel-list">
           <article className="cargo-summary">
             <Map size={18} aria-hidden="true" />
@@ -922,16 +898,31 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
         <div className="panel-list">
           <article className="cargo-summary">
             <ClipboardList size={18} aria-hidden="true" />
-            <span>{storyMissionArcs.length} mission arcs · {endgamePaths.length} endings · {npcRoles.length} NPC roles</span>
+            <span>
+              {gameDesignPillars.length} pillars · {storyProgress.length} arcs · leading ending {endingScores[0]?.path.title ?? "unknown"}
+            </span>
           </article>
 
-          {storyMissionArcs.map((arc) => (
-            <article className="route-task good" key={arc.id}>
+          {gameDesignPillars.map((pillar) => (
+            <article className="inventory-row" key={pillar.id}>
               <div>
-                <h3>{arc.title}</h3>
-                <p>{state.districts[arc.districtId]?.name ?? arc.districtId} · {arc.reward}</p>
-                <p>{arc.beats.join(" · ")}</p>
+                <h3>{pillar.title}</h3>
+                <p>{pillar.promise}</p>
               </div>
+              <strong>{pillar.designChecks.length} checks</strong>
+            </article>
+          ))}
+
+          {storyProgress.map((progress) => (
+            <article className={`route-task ${progress.tone}`} key={progress.arc.id}>
+              <div>
+                <h3>{progress.arc.title}</h3>
+                <p>
+                  {state.districts[progress.arc.districtId]?.name ?? progress.arc.districtId} · {progress.stage} · {progress.arc.reward}
+                </p>
+                <p>{progress.signals.length > 0 ? progress.signals.join(" · ") : progress.arc.beats.join(" · ")}</p>
+              </div>
+              <strong>{Math.round(progress.progressRatio * 100)}%</strong>
             </article>
           ))}
 
@@ -940,17 +931,18 @@ export function Dashboard({ state, onCommand }: DashboardProps) {
               <Trophy size={18} aria-hidden="true" />
               <div>
                 <h3>Endgame paths</h3>
-                <p>Current prototype exposes branches as design-ready content.</p>
+                <p>Scores track the direction of the current save, not a final lock-in.</p>
               </div>
             </div>
             <div className="storage-list">
-              {endgamePaths.map((ending) => (
-                <article className="inventory-row" key={ending.id}>
+              {endingScores.map((ending) => (
+                <article className={`inventory-row ${ending.tone === "good" ? "contract-needed" : ""}`} key={ending.path.id}>
                   <div>
-                    <h3>{ending.title}</h3>
-                    <p>{ending.condition}</p>
+                    <h3>{ending.path.title}</h3>
+                    <p>{ending.path.condition}</p>
+                    <p>{ending.signals.join(" · ")}</p>
                   </div>
-                  <strong>{ending.consequence}</strong>
+                  <strong>{ending.score}/100</strong>
                 </article>
               ))}
             </div>

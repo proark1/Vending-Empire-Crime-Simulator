@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { createInitialState } from "../content/initialState";
-import { baseStorageCapacity, currentProductCost, districtUnlockInfo, machineAtLocation, machineStockUnits, productLabSlots, routeTasks, selectedRouteTask } from "../core/selectors";
+import {
+  baseStorageCapacity,
+  currentProductCost,
+  districtUnlockInfo,
+  endgamePathScores,
+  machineAtLocation,
+  machineStockUnits,
+  productLabSlots,
+  routeTasks,
+  selectedRouteTask,
+  storyArcProgress
+} from "../core/selectors";
 import type { GameCommand, LocationId } from "../core/types";
 import { reduceCommands, reduceGameState } from "./reducer";
 
@@ -304,6 +315,47 @@ describe("game reducer", () => {
     expect(result.state.locations.gym.rivalPressure).toBeGreaterThan(initial.locations.gym.rivalPressure);
   });
 
+  it("tracks risky placement as an endgame direction signal", () => {
+    const initial = withInstalledStarter();
+    initial.factions.player.money = 300;
+
+    const result = reduceCommands(initial, [
+      visit("arcade"),
+      { type: "place_machine", actorId: "player", locationId: "arcade", method: "illegal" }
+    ]).state;
+    const syndicate = endgamePathScores(result).find((score) => score.path.id === "syndicate");
+
+    expect(syndicate?.signals.join(" ")).toContain("risky machines");
+    expect(syndicate?.score).toBeGreaterThan(0);
+  });
+
+  it("derives story arc progress from district state and machine footholds", () => {
+    const initial = createInitialState();
+    initial.mission.completed = true;
+    initial.districtProgress.industrial_yards = {
+      access: "scouted",
+      districtId: "industrial_yards",
+      scoutedHour: 9
+    };
+
+    const available = storyArcProgress(initial).find((progress) => progress.arc.id === "yard_leverage");
+    expect(available).toMatchObject({ stage: "available" });
+
+    initial.districtProgress.industrial_yards.access = "unlocked";
+    initial.machines.machine_player_2 = {
+      ...initial.machines.machine_player_1,
+      id: "machine_player_2",
+      name: "Yard Starter",
+      locationId: "freight_depot",
+      placementStatus: "installed",
+      placementMethod: "legal_contract"
+    };
+
+    const active = storyArcProgress(initial).find((progress) => progress.arc.id === "yard_leverage");
+    expect(active).toMatchObject({ stage: "active" });
+    expect(active?.progressRatio).toBeGreaterThan(available?.progressRatio ?? 0);
+  });
+
   it("scouts and opens districts after requirements are met", () => {
     const initial = withInstalledStarter();
     initial.factions.player.money = 400;
@@ -486,6 +538,20 @@ describe("game reducer", () => {
 
     expect(result.state.locations.laundromat.rivalPressure).toBeGreaterThan(state.locations.laundromat.rivalPressure);
     expect(result.state.npcControllers.rival_redline.lastActedHour).toBe(result.state.worldTimeHours);
+  });
+
+  it("gives corporate rivals legal-pressure undercuts instead of generic street pressure", () => {
+    const state = withInstalledStarter();
+    const result = reduceGameState(state, {
+      type: "rival_action",
+      actorId: "rival_glassline",
+      action: "undercut",
+      targetMachineId: "machine_player_1"
+    });
+
+    expect(result.state.locations.laundromat.rivalPressure).toBeGreaterThan(state.locations.laundromat.rivalPressure);
+    expect(result.state.factions.player.publicReputation).toBeLessThan(state.factions.player.publicReputation);
+    expect(result.events.some((event) => event.message.includes("pressuring permits"))).toBe(true);
   });
 
   it("turns NPC sabotage into an active machine alarm route task", () => {

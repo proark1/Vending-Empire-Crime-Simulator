@@ -515,22 +515,69 @@ function createMachineSignTexture(color: string, damage: number): THREE.CanvasTe
   const context = canvas.getContext("2d");
 
   if (context) {
-    context.fillStyle = "#0f172a";
+    const background = context.createLinearGradient(0, 0, canvas.width, canvas.height);
+    background.addColorStop(0, "#020617");
+    background.addColorStop(0.55, "#0f172a");
+    background.addColorStop(1, "#111827");
+    context.fillStyle = background;
     context.fillRect(0, 0, canvas.width, canvas.height);
     context.fillStyle = color;
     context.fillRect(0, 0, canvas.width, 12);
     context.fillRect(0, canvas.height - 12, canvas.width, 12);
+    context.fillStyle = "rgba(248, 250, 252, 0.08)";
+    for (let x = 18; x < canvas.width; x += 36) {
+      context.fillRect(x, 18, 2, canvas.height - 36);
+    }
+    context.strokeStyle = "rgba(248, 250, 252, 0.16)";
+    context.lineWidth = 2;
+    context.strokeRect(14, 20, canvas.width - 28, canvas.height - 40);
     context.fillStyle = damage > 70 ? "#fecdd3" : "#f8fafc";
-    context.font = "900 46px Inter, system-ui, sans-serif";
+    context.font = "900 48px Inter, system-ui, sans-serif";
     context.textAlign = "center";
     context.textBaseline = "middle";
     context.shadowColor = color;
     context.shadowBlur = damage > 70 ? 0 : 16;
-    context.fillText("VEND", canvas.width / 2, 52);
+    context.fillText("VEND-X", canvas.width / 2, 52);
     context.shadowBlur = 0;
     context.fillStyle = "#cbd5e1";
-    context.font = "700 18px Inter, system-ui, sans-serif";
+    context.font = "800 17px Inter, system-ui, sans-serif";
     context.fillText(damage > 70 ? "SERVICE NEEDED" : "COLD STOCK", canvas.width / 2, 92);
+    context.fillStyle = color;
+    context.font = "900 14px Inter, system-ui, sans-serif";
+    context.textAlign = "left";
+    context.fillText("24H", 26, 93);
+    context.textAlign = "right";
+    context.fillText("ROUTE", canvas.width - 26, 93);
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function createMachineDisplayTexture(damage: number): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 192;
+  canvas.height = 128;
+  const context = canvas.getContext("2d");
+
+  if (context) {
+    context.fillStyle = damage > 75 ? "#3f1010" : "#042f2e";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.strokeStyle = damage > 75 ? "#fb7185" : "#22d3ee";
+    context.lineWidth = 8;
+    context.strokeRect(8, 8, canvas.width - 16, canvas.height - 16);
+    context.fillStyle = damage > 75 ? "#fecdd3" : "#ccfbf1";
+    context.font = "900 28px Inter, system-ui, sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(damage > 75 ? "ERR" : "READY", canvas.width / 2, 46);
+    context.font = "800 18px Inter, system-ui, sans-serif";
+    context.fillText(damage > 75 ? "CALL" : "TAP", canvas.width / 2, 82);
+    context.fillStyle = damage > 75 ? "#fb7185" : "#5eead4";
+    for (let i = 0; i < 4; i += 1) {
+      context.fillRect(42 + i * 28, 101, 16, 7);
+    }
   }
 
   const texture = new THREE.CanvasTexture(canvas);
@@ -543,6 +590,7 @@ function createMachineMesh(color: string, damage: number, installedUpgrades: Mac
   const upgrades = new Set(installedUpgrades);
   const trimMaterial = new THREE.MeshStandardMaterial({ color, roughness: 0.38, metalness: 0.12 });
   const darkMaterial = new THREE.MeshStandardMaterial({ color: "#0f172a", roughness: 0.44, metalness: 0.08 });
+  const bodyShadowMaterial = new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.5, metalness: 0.16 });
   const glassMaterial = new THREE.MeshPhysicalMaterial({
     color: damage > 65 ? "#7f1d1d" : "#dffbff",
     emissive: damage > 65 ? "#3f1010" : "#0891b2",
@@ -572,6 +620,23 @@ function createMachineMesh(color: string, damage: number, installedUpgrades: Mac
   body.receiveShadow = true;
   group.add(body);
 
+  const topCap = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.12, 0.58), bodyShadowMaterial);
+  topCap.position.y = 1.77;
+  topCap.castShadow = true;
+  group.add(topCap);
+
+  const kickPlate = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.16, 0.055), new THREE.MeshStandardMaterial({ color: "#1e293b", roughness: 0.42, metalness: 0.26 }));
+  kickPlate.position.set(0, 0.22, -0.285);
+  group.add(kickPlate);
+
+  const cornerMaterial = new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.46, metalness: 0.22 });
+  for (const x of [-0.42, 0.42]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.04, 1.58, 12), cornerMaterial);
+    post.position.set(x, 0.96, -0.265);
+    post.castShadow = true;
+    group.add(post);
+  }
+
   const backPanel = new THREE.Mesh(new THREE.BoxGeometry(0.86, 1.56, 0.035), new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.46, metalness: 0.18 }));
   backPanel.position.set(0, 0.92, 0.265);
   group.add(backPanel);
@@ -589,6 +654,13 @@ function createMachineMesh(color: string, damage: number, installedUpgrades: Mac
   );
   neonBar.position.set(0, 1.53, -0.285);
   group.add(neonBar);
+
+  const interiorGlow = new THREE.Mesh(
+    new THREE.BoxGeometry(0.46, 0.84, 0.018),
+    new THREE.MeshBasicMaterial({ color: damage > 65 ? "#7f1d1d" : "#e0f2fe", transparent: true, opacity: damage > 65 ? 0.13 : 0.26 })
+  );
+  interiorGlow.position.set(-0.08, 1.1, -0.304);
+  group.add(interiorGlow);
 
   const windowPanel = new THREE.Mesh(
     new THREE.BoxGeometry(0.48, 0.86, 0.038),
@@ -622,12 +694,19 @@ function createMachineMesh(color: string, damage: number, installedUpgrades: Mac
     group.add(shelf);
 
     for (let col = 0; col < 4; col += 1) {
-      const product = new THREE.Mesh(
-        new THREE.BoxGeometry(0.055, 0.115, 0.04),
-        new THREE.MeshStandardMaterial({ color: productColors[(row * 2 + col) % productColors.length], roughness: 0.46, metalness: 0.04 })
-      );
+      const productMaterial = new THREE.MeshStandardMaterial({ color: productColors[(row * 2 + col) % productColors.length], roughness: 0.46, metalness: col % 2 === 0 ? 0.04 : 0.18 });
+      const product = col % 2 === 0
+        ? new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.115, 0.04), productMaterial)
+        : new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.12, 12), productMaterial);
       product.position.set(-0.245 + col * 0.11, 0.91 + row * 0.22, -0.312);
+      if (col % 2 !== 0) {
+        product.rotation.z = 0.02;
+      }
       group.add(product);
+
+      const productLabel = new THREE.Mesh(new THREE.BoxGeometry(0.046, 0.022, 0.006), new THREE.MeshBasicMaterial({ color: "#f8fafc", transparent: true, opacity: 0.72 }));
+      productLabel.position.set(product.position.x, product.position.y + 0.012, -0.342);
+      group.add(productLabel);
 
       const coil = new THREE.Mesh(new THREE.TorusGeometry(0.035, 0.004, 6, 16), new THREE.MeshBasicMaterial({ color: "#cbd5e1" }));
       coil.position.set(product.position.x, product.position.y - 0.085, -0.326);
@@ -642,10 +721,15 @@ function createMachineMesh(color: string, damage: number, installedUpgrades: Mac
 
   const display = new THREE.Mesh(
     new THREE.BoxGeometry(0.12, 0.11, 0.023),
-    new THREE.MeshBasicMaterial({ color: damage > 75 ? "#7f1d1d" : "#22d3ee" })
+    new THREE.MeshBasicMaterial({ map: createMachineDisplayTexture(damage) })
   );
   display.position.set(0.26, 1.36, -0.304);
   group.add(display);
+
+  const tapRing = new THREE.Mesh(new THREE.TorusGeometry(0.052, 0.006, 8, 22), new THREE.MeshBasicMaterial({ color: damage > 75 ? "#fb7185" : "#5eead4" }));
+  tapRing.position.set(0.26, 1.245, -0.317);
+  tapRing.rotation.x = Math.PI / 2;
+  group.add(tapRing);
 
   const billSlot = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.025, 0.022), new THREE.MeshStandardMaterial({ color: "#cbd5e1", roughness: 0.28, metalness: 0.42 }));
   billSlot.position.set(0.26, 1.02, -0.314);
@@ -679,6 +763,10 @@ function createMachineMesh(color: string, damage: number, installedUpgrades: Mac
   dropLight.position.set(-0.08, 0.46, -0.318);
   group.add(dropLight);
 
+  const pickupLip = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.045, 0.12), new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.34, metalness: 0.22 }));
+  pickupLip.position.set(-0.08, 0.31, -0.34);
+  group.add(pickupLip);
+
   for (const y of [0.62, 0.95, 1.28]) {
     const hinge = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.18, 10), new THREE.MeshStandardMaterial({ color: "#94a3b8", roughness: 0.36, metalness: 0.55 }));
     hinge.position.set(0.405, y, -0.285);
@@ -702,6 +790,22 @@ function createMachineMesh(color: string, damage: number, installedUpgrades: Mac
   const sideStripe = new THREE.Mesh(new THREE.BoxGeometry(0.05, 1.42, 0.03), new THREE.MeshBasicMaterial({ color }));
   sideStripe.position.set(-0.355, 0.98, -0.285);
   group.add(sideStripe);
+
+  const brandPuck = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.018, 22), new THREE.MeshBasicMaterial({ color }));
+  brandPuck.position.set(-0.33, 1.67, -0.326);
+  brandPuck.rotation.x = Math.PI / 2;
+  group.add(brandPuck);
+
+  const cableCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0.36, 0.18, 0.18),
+    new THREE.Vector3(0.48, 0.13, 0.24),
+    new THREE.Vector3(0.56, 0.09, 0.32)
+  ]);
+  const cable = new THREE.Mesh(
+    new THREE.TubeGeometry(cableCurve, 12, 0.012, 6),
+    new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.58, metalness: 0.12 })
+  );
+  group.add(cable);
 
   if (upgrades.has("reinforced_glass")) {
     const railMaterial = new THREE.MeshStandardMaterial({ color: "#bae6fd", roughness: 0.22, metalness: 0.45 });
@@ -784,8 +888,67 @@ function createMachineMesh(color: string, damage: number, installedUpgrades: Mac
     ];
     const crack = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), crackMaterial);
     group.add(crack);
+
+    const cautionMaterial = new THREE.MeshBasicMaterial({ color: "#facc15" });
+    for (let index = 0; index < 3; index += 1) {
+      const tape = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.026, 0.012), cautionMaterial);
+      tape.position.set(-0.21 + index * 0.12, 0.58 + index * 0.07, -0.338);
+      tape.rotation.z = index % 2 === 0 ? -0.22 : 0.18;
+      group.add(tape);
+    }
   }
 
+  return group;
+}
+
+function createMachinePlacementDressing(placement: { position: THREE.Vector3; rotationY: number }, color: string, occupied: boolean): THREE.Group {
+  const group = new THREE.Group();
+  const padMaterial = new THREE.MeshStandardMaterial({ color: occupied ? "#253142" : "#2d3748", roughness: 0.86, metalness: 0.03 });
+  const trimMaterial = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: occupied ? 0.78 : 0.46 });
+  const darkMaterial = new THREE.MeshStandardMaterial({ color: "#0f172a", roughness: 0.56, metalness: 0.14 });
+
+  const pad = new THREE.Mesh(new THREE.BoxGeometry(1.42, 0.035, 1.18), padMaterial);
+  pad.position.set(0, 0.03, -0.08);
+  pad.receiveShadow = true;
+  group.add(pad);
+
+  for (const z of [-0.66, 0.48]) {
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(1.24, 0.012, 0.035), trimMaterial);
+    stripe.position.set(0, 0.062, z);
+    group.add(stripe);
+  }
+
+  const serviceArc = new THREE.Mesh(
+    new THREE.TorusGeometry(0.62, 0.012, 6, 42, Math.PI),
+    trimMaterial
+  );
+  serviceArc.position.set(0, 0.075, -0.62);
+  serviceArc.rotation.x = Math.PI / 2;
+  serviceArc.rotation.z = Math.PI;
+  group.add(serviceArc);
+
+  for (const x of [-0.66, 0.66]) {
+    const bollard = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 0.5, 12), darkMaterial);
+    bollard.position.set(x, 0.25, -0.56);
+    bollard.castShadow = true;
+    group.add(bollard);
+
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.058, 10, 6), trimMaterial);
+    cap.position.set(x, 0.52, -0.56);
+    group.add(cap);
+  }
+
+  if (!occupied) {
+    const ghostPlate = new THREE.Mesh(
+      new THREE.BoxGeometry(0.78, 0.018, 0.5),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.18 })
+    );
+    ghostPlate.position.set(0, 0.08, 0.01);
+    group.add(ghostPlate);
+  }
+
+  group.position.copy(placement.position);
+  group.rotation.y = placement.rotationY;
   return group;
 }
 
@@ -1714,6 +1877,7 @@ function createBackdropBuilding(definition: CityBackdropBuilding): THREE.Group {
   const group = new THREE.Group();
   const bodyMaterial = new THREE.MeshStandardMaterial({ color: definition.color, roughness: 0.84, metalness: 0.05 });
   const trimMaterial = new THREE.MeshBasicMaterial({ color: "#020617", transparent: true, opacity: 0.5 });
+  const bandMaterial = new THREE.MeshBasicMaterial({ color: "#020617", transparent: true, opacity: 0.32 });
   const litMaterial = new THREE.MeshBasicMaterial({
     color: definition.lit > 0.68 ? "#f0abfc" : definition.lit > 0.46 ? "#93c5fd" : "#fde68a",
     transparent: true,
@@ -1731,13 +1895,19 @@ function createBackdropBuilding(definition: CityBackdropBuilding): THREE.Group {
   roof.position.y = definition.height + 0.08;
   group.add(roof);
 
-  const rows = Math.max(2, Math.min(8, Math.floor(definition.height / 1.15)));
-  const cols = Math.max(2, Math.min(6, Math.floor(definition.width / 0.85)));
+  for (let y = 1.15; y < definition.height - 0.55; y += 1.25) {
+    const band = new THREE.Mesh(new THREE.BoxGeometry(definition.width + 0.05, 0.028, 0.035), bandMaterial);
+    band.position.set(0, y, -definition.depth / 2 - 0.018);
+    group.add(band);
+  }
+
+  const rows = Math.max(2, Math.min(13, Math.floor(definition.height / 1.05)));
+  const cols = Math.max(2, Math.min(9, Math.floor(definition.width / 0.72)));
   const frontZ = -definition.depth / 2 - 0.012;
   for (let row = 0; row < rows; row += 1) {
     for (let col = 0; col < cols; col += 1) {
       const lit = ((row * 5 + col * 3 + Math.round(definition.x + definition.z)) % 10) / 10 < definition.lit;
-      const window = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.22, 0.018), lit ? litMaterial : darkWindowMaterial);
+      const window = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.2, 0.018), lit ? litMaterial : darkWindowMaterial);
       window.position.set(
         -definition.width / 2 + 0.42 + col * ((definition.width - 0.84) / Math.max(1, cols - 1)),
         0.78 + row * ((definition.height - 1.4) / Math.max(1, rows - 1)),
@@ -1747,12 +1917,49 @@ function createBackdropBuilding(definition: CityBackdropBuilding): THREE.Group {
     }
   }
 
+  const sideRows = Math.max(2, Math.min(10, Math.floor(definition.height / 1.25)));
+  const sideCols = Math.max(1, Math.min(5, Math.floor(definition.depth / 0.86)));
+  for (let row = 0; row < sideRows; row += 1) {
+    for (let col = 0; col < sideCols; col += 1) {
+      const z = -definition.depth / 2 + 0.45 + col * ((definition.depth - 0.9) / Math.max(1, sideCols - 1));
+      const y = 0.82 + row * ((definition.height - 1.5) / Math.max(1, sideRows - 1));
+      for (const side of [-1, 1] as const) {
+        const lit = ((row * 2 + col * 5 + side + Math.round(definition.x)) % 10) / 10 < definition.lit * 0.8;
+        const window = new THREE.Mesh(new THREE.BoxGeometry(0.21, 0.18, 0.016), lit ? litMaterial : darkWindowMaterial);
+        window.position.set(side * (definition.width / 2 + 0.012), y, z);
+        window.rotation.y = side > 0 ? Math.PI / 2 : -Math.PI / 2;
+        group.add(window);
+      }
+    }
+  }
+
   const lobbyGlow = new THREE.Mesh(
     new THREE.BoxGeometry(Math.min(definition.width * 0.55, 2.1), 0.42, 0.024),
     new THREE.MeshBasicMaterial({ color: litMaterial.color, transparent: true, opacity: 0.28 + definition.lit * 0.18 })
   );
   lobbyGlow.position.set(0, 0.54, frontZ - 0.005);
   group.add(lobbyGlow);
+
+  const lobbyDoor = new THREE.Mesh(new THREE.BoxGeometry(Math.min(definition.width * 0.22, 0.72), 0.78, 0.028), darkWindowMaterial);
+  lobbyDoor.position.set(0, 0.43, frontZ - 0.018);
+  group.add(lobbyDoor);
+
+  if (definition.height > 10) {
+    const crownHeight = Math.min(1.8, definition.height * 0.12);
+    const crown = new THREE.Mesh(
+      new THREE.BoxGeometry(definition.width * 0.62, crownHeight, definition.depth * 0.72),
+      new THREE.MeshStandardMaterial({ color: definition.color, roughness: 0.78, metalness: 0.08 })
+    );
+    crown.position.y = definition.height + crownHeight / 2 + 0.08;
+    group.add(crown);
+
+    const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.035, 1.35, 8), trimMaterial);
+    antenna.position.set(definition.width * 0.18, definition.height + crownHeight + 0.78, 0);
+    group.add(antenna);
+    const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 6), litMaterial);
+    beacon.position.set(antenna.position.x, antenna.position.y + 0.72, 0);
+    group.add(beacon);
+  }
 
   group.position.set(definition.x, 0, definition.z);
   return group;
@@ -2241,6 +2448,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
     const machine = machineAtLocation(currentState, location.id);
     if (machine) {
       const owner = currentState.factions[machine.ownerFactionId];
+      group.add(createMachinePlacementDressing(machinePlacement, owner?.color ?? "#94a3b8", true));
       const machineGroup = createMachineMesh(owner?.color ?? "#94a3b8", machine.damage, machine.upgrades ?? []);
       machineGroup.position.copy(machinePlacement.position);
       machineGroup.rotation.y = machinePlacement.rotationY;
@@ -2267,6 +2475,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
     } else {
       const access = districtProgress(currentState, location.districtId).access;
       const markerColor = access === "unlocked" ? "#a3e635" : districtAccessColor(access);
+      group.add(createMachinePlacementDressing(machinePlacement, markerColor, false));
       const marker = addMarker(markerColor);
       marker.position.copy(machinePlacement.position);
       group.add(marker);

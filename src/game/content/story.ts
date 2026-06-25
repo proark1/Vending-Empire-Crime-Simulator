@@ -1,3 +1,10 @@
+export interface DesignPillar {
+  id: string;
+  title: string;
+  promise: string;
+  designChecks: string[];
+}
+
 export interface StoryMissionArc {
   id: string;
   title: string;
@@ -18,6 +25,33 @@ export interface NpcRoleDefinition {
   title: string;
   function: string;
 }
+
+export const gameDesignPillars: DesignPillar[] = [
+  {
+    id: "vending_logistics",
+    title: "Vending logistics",
+    promise: "Money comes from real route work: stock, placement, repairs, cash collection, vehicles, and crew coverage.",
+    designChecks: ["Every profitable machine creates a route obligation.", "Automation should reduce chores without deleting risk.", "Dashboard tasks should point to the next practical stop."]
+  },
+  {
+    id: "territory_control",
+    title: "Machines as territory",
+    promise: "Each machine is a public claim on a district, not just a passive income object.",
+    designChecks: ["District pressure should react to player and rival machines.", "Rivals should contest profitable or symbolic stops.", "Expansion should require money, reputation, and local leverage."]
+  },
+  {
+    id: "crime_tradeoffs",
+    title: "Crime tradeoffs",
+    promise: "Illegal and grey choices pay faster, but convert convenience into heat, inspections, confiscation, and retaliation.",
+    designChecks: ["Clean play must be viable but slower.", "Risky placement must have clear upsides and visible consequences.", "Heat should decay, but bad choices should stack if ignored."]
+  },
+  {
+    id: "rival_escalation",
+    title: "Rival escalation",
+    promise: "Different rival archetypes pressure the player in different ways as the route becomes valuable.",
+    designChecks: ["Corporate rivals use law and money.", "Street crews use sabotage and local pressure.", "Black-market rivals punish grey demand success."]
+  }
+];
 
 export const npcRoles: NpcRoleDefinition[] = [
   { id: "supplier", title: "Supplier", function: "Posts stock deals, shortages, and risky bulk offers." },

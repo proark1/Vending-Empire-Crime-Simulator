@@ -23,6 +23,7 @@ import type {
   VendingMachine
 } from "./types";
 import { baseFacilities } from "../content/baseFacilities";
+import { endgamePaths, storyMissionArcs, type EndgamePath, type StoryMissionArc } from "../content/story";
 
 export type RouteTaskType = "supplier" | "garage" | "placement" | "stock" | "collect" | "repair" | "pressure" | "contract" | "alarm" | "inspection" | "conflict";
 
@@ -39,6 +40,23 @@ export interface RouteTask {
   conflictId?: string;
   inspectionId?: string;
   priority: number;
+  tone: "good" | "warning" | "danger";
+}
+
+export type StoryArcStage = "locked" | "available" | "active" | "complete";
+
+export interface StoryArcProgress {
+  arc: StoryMissionArc;
+  progressRatio: number;
+  signals: string[];
+  stage: StoryArcStage;
+  tone: "good" | "warning" | "danger";
+}
+
+export interface EndgamePathScore {
+  path: EndgamePath;
+  score: number;
+  signals: string[];
   tone: "good" | "warning" | "danger";
 }
 
@@ -212,13 +230,13 @@ export function placementQuoteForLocation(state: GameState, location: Location, 
     return {
       method,
       label: placementLabels[method],
-      cost: Math.max(12, Math.round(baseCost * 0.58 + policePressure * 28)),
-      heatDelta: 4,
+      cost: Math.max(12, Math.round(baseCost * 0.52 + policePressure * 34)),
+      heatDelta: 5,
       visibilityDelta: 0,
-      securityDelta: 0,
-      publicReputationDelta: -0.4,
-      streetReputationDelta: 1,
-      rivalPressureDelta: 0.04,
+      securityDelta: -0.01,
+      publicReputationDelta: -0.6,
+      streetReputationDelta: 1.2,
+      rivalPressureDelta: 0.05,
       inspectionRiskLabel: "medium",
       description: "Cheaper paperwork, but every inspection has leverage over you."
     };
@@ -228,14 +246,14 @@ export function placementQuoteForLocation(state: GameState, location: Location, 
     return {
       method,
       label: placementLabels[method],
-      cost: Math.max(0, Math.round(baseCost * 0.18)),
-      heatDelta: 8,
-      visibilityDelta: 0.08,
-      securityDelta: -0.04,
-      publicReputationDelta: -1,
-      streetReputationDelta: 2,
-      rivalPressureDelta: 0.08,
-      inspectionRiskLabel: "high",
+      cost: Math.max(0, Math.round(baseCost * 0.12)),
+      heatDelta: 10,
+      visibilityDelta: 0.12,
+      securityDelta: -0.06,
+      publicReputationDelta: -1.4,
+      streetReputationDelta: 2.4,
+      rivalPressureDelta: 0.1,
+      inspectionRiskLabel: "extreme",
       description: "Fast and cheap with strong sales, heavy fines, and confiscation risk."
     };
   }
@@ -244,13 +262,13 @@ export function placementQuoteForLocation(state: GameState, location: Location, 
     return {
       method,
       label: placementLabels[method],
-      cost: Math.max(10, Math.round(baseCost * 0.72 + 10)),
+      cost: Math.max(10, Math.round(baseCost * 0.68 + 12)),
       heatDelta: 1,
-      visibilityDelta: -0.22,
-      securityDelta: 0.05,
-      publicReputationDelta: 0,
+      visibilityDelta: -0.28,
+      securityDelta: 0.08,
+      publicReputationDelta: -0.1,
       streetReputationDelta: 0,
-      rivalPressureDelta: -0.01,
+      rivalPressureDelta: -0.02,
       inspectionRiskLabel: "low",
       description: "Low profile and safer from inspections, but fewer customers notice it."
     };
@@ -260,13 +278,13 @@ export function placementQuoteForLocation(state: GameState, location: Location, 
     return {
       method,
       label: placementLabels[method],
-      cost: Math.max(15, Math.round(baseCost * 0.45 + rivalPressure * 35)),
-      heatDelta: 6,
+      cost: Math.max(15, Math.round(baseCost * 0.4 + rivalPressure * 42)),
+      heatDelta: 7.5,
       visibilityDelta: 0.02,
-      securityDelta: -0.05,
-      publicReputationDelta: -0.6,
-      streetReputationDelta: 3,
-      rivalPressureDelta: 0.18,
+      securityDelta: -0.06,
+      publicReputationDelta: -0.8,
+      streetReputationDelta: 3.4,
+      rivalPressureDelta: 0.2,
       inspectionRiskLabel: rivalPressure >= 0.45 ? "extreme" : "high",
       description: "A direct challenge to Redline. Good street rep, fast retaliation."
     };
@@ -275,13 +293,13 @@ export function placementQuoteForLocation(state: GameState, location: Location, 
   return {
     method,
     label: placementLabels[method],
-    cost: baseCost,
+    cost: Math.round(baseCost * 1.04),
     heatDelta: 0,
-    visibilityDelta: 0.03,
-    securityDelta: 0.03,
-    publicReputationDelta: 0.6,
+    visibilityDelta: 0.04,
+    securityDelta: 0.04,
+    publicReputationDelta: 0.8,
     streetReputationDelta: 0,
-    rivalPressureDelta: -0.02,
+    rivalPressureDelta: -0.04,
     inspectionRiskLabel: "low",
     description: "Permitted placement with the cleanest inspections and lowest heat."
   };
@@ -494,6 +512,162 @@ export function rivalTerritoryByDistrict(state: GameState): Array<{
       controllingFactionId
     };
   });
+}
+
+function playerMachinesInDistrict(state: GameState, districtId: DistrictId): VendingMachine[] {
+  return installedMachines(state, state.playerFactionId).filter((machine) => state.locations[machine.locationId]?.districtId === districtId);
+}
+
+function riskyPlayerMachines(state: GameState): VendingMachine[] {
+  return installedMachines(state, state.playerFactionId).filter(
+    (machine) =>
+      machine.placementMethod !== "legal_contract" ||
+      machine.slots.some((slot) => {
+        const product = state.products[slot.productId];
+        return Boolean(product && product.legality > 0 && slot.quantity > 0);
+      })
+  );
+}
+
+function clampScore(value: number): number {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+export function storyArcProgress(state: GameState): StoryArcProgress[] {
+  const territory = rivalTerritoryByDistrict(state);
+  const player = state.factions[state.playerFactionId];
+  const completedContracts = state.progression.contractsCompletedTotal ?? state.progression.contractsCompletedToday ?? 0;
+  const guardsOrRunners = employeeList(state).filter((employee) => !employee.betrayed && (employee.role === "guard" || employee.role === "runner")).length;
+
+  return storyMissionArcs.map((arc) => {
+    const progress = districtProgress(state, arc.districtId);
+    const machines = playerMachinesInDistrict(state, arc.districtId);
+    const districtTerritory = territory.find((row) => row.districtId === arc.districtId);
+    const controlled = districtTerritory?.controllingFactionId === state.playerFactionId && (districtTerritory?.playerMachines ?? 0) > 0;
+    const signals: string[] = [];
+    let stage: StoryArcStage = "locked";
+    let progressRatio = 0;
+
+    if (arc.id === "starter_takeover") {
+      const mission = missionProgress(state);
+      progressRatio = state.mission.completed ? 1 : Math.min(0.95, mission.profitableCount / Math.max(1, mission.target));
+      stage = state.mission.completed ? "complete" : "active";
+      signals.push(`${mission.profitableCount}/${mission.target} profitable starter machines`);
+      if (state.progression.firstUndercutTriggered) {
+        signals.push("Redline undercut surfaced");
+      }
+      return {
+        arc,
+        progressRatio,
+        signals,
+        stage,
+        tone: stage === "complete" ? "good" : activeMachineAlarms(state).length > 0 ? "danger" : "warning"
+      };
+    }
+
+    if (progress.access === "locked") {
+      signals.push("District still locked");
+      return { arc, progressRatio, signals, stage, tone: "warning" };
+    }
+
+    stage = progress.access === "scouted" ? "available" : machines.length > 0 ? "active" : "available";
+    progressRatio = progress.access === "scouted" ? 0.25 : 0.4;
+    signals.push(`${progress.access} district`);
+
+    if (machines.length > 0) {
+      signals.push(`${machines.length} owned machines`);
+      progressRatio += Math.min(0.32, machines.length * 0.12);
+    }
+
+    if (completedContracts > 0) {
+      signals.push(`${completedContracts} contracts completed`);
+      progressRatio += Math.min(0.14, completedContracts * 0.025);
+    }
+
+    if (guardsOrRunners > 0 && arc.id === "yard_leverage") {
+      signals.push("route muscle hired");
+      progressRatio += 0.12;
+    }
+
+    if (player.publicReputation >= 12 && arc.id === "downtown_contracts") {
+      signals.push("clean public reputation");
+      progressRatio += 0.12;
+    }
+
+    if (riskyPlayerMachines(state).length > 0 && arc.id === "neon_afterhours") {
+      signals.push("grey-market route active");
+      progressRatio += 0.12;
+    }
+
+    if (controlled) {
+      signals.push("district control signal");
+      progressRatio += 0.18;
+    }
+
+    if (progressRatio >= 0.92) {
+      stage = "complete";
+      progressRatio = 1;
+    }
+
+    return {
+      arc,
+      progressRatio: Math.min(1, progressRatio),
+      signals,
+      stage,
+      tone: stage === "complete" ? "good" : activeConflictEvents(state).length > 0 ? "danger" : "warning"
+    };
+  });
+}
+
+export function endgamePathScores(state: GameState): EndgamePathScore[] {
+  const player = state.factions[state.playerFactionId];
+  const playerMachines = installedMachines(state, state.playerFactionId);
+  const legalMachines = playerMachines.filter((machine) => machine.placementMethod === "legal_contract");
+  const hiddenMachines = playerMachines.filter((machine) => machine.placementMethod === "hidden");
+  const riskyMachines = riskyPlayerMachines(state);
+  const controlledDistricts = rivalTerritoryByDistrict(state).filter((row) => row.controllingFactionId === state.playerFactionId && row.playerMachines > 0);
+  const strongestRival = Object.values(state.factions)
+    .filter((faction) => faction.type === "npc")
+    .sort((a, b) => b.streetReputation - a.streetReputation)[0];
+  const totalDailyFailures = state.progression.contractsFailedToday + state.conflict.missedToday + activeLawInspections(state).length;
+  const legalRatio = playerMachines.length > 0 ? legalMachines.length / playerMachines.length : 0;
+  const riskyRatio = playerMachines.length > 0 ? riskyMachines.length / playerMachines.length : 0;
+  const stability = Math.max(0, 30 - player.heat * 1.6 - totalDailyFailures * 8);
+
+  return endgamePaths
+    .map((path) => {
+      const signals: string[] = [];
+      let score = 0;
+
+      if (path.id === "legit_empire") {
+        score = legalRatio * 38 + player.publicReputation * 3.2 + stability + baseFacilityLevel(state, "office") * 7;
+        signals.push(`${legalMachines.length}/${Math.max(1, playerMachines.length)} legal machines`, `${Math.round(player.publicReputation)} public rep`, `${Math.round(player.heat)} heat`);
+      } else if (path.id === "syndicate") {
+        score = riskyRatio * 34 + player.streetReputation * 4.2 + controlledDistricts.length * 11 + hiddenMachines.length * 4;
+        signals.push(`${riskyMachines.length} risky machines`, `${Math.round(player.streetReputation)} street rep`, `${controlledDistricts.length} controlled districts`);
+      } else if (path.id === "collapse") {
+        const lowCashPressure = player.money < 25 ? 20 : player.money < 75 ? 10 : 0;
+        score = player.heat * 3.4 + totalDailyFailures * 16 + lowCashPressure + state.conflict.missedToday * 8;
+        signals.push(`${Math.round(player.heat)} heat`, `${totalDailyFailures} active failures`, `$${Math.round(player.money)} cash`);
+      } else if (path.id === "kingmaker") {
+        const rivalGap = strongestRival ? strongestRival.streetReputation - player.streetReputation * 0.3 : 0;
+        score = controlledDistricts.length * 8 + Math.max(0, rivalGap) * 4 + player.publicReputation * 1.2 + player.streetReputation * 1.2;
+        signals.push(strongestRival ? `${strongestRival.name} influence` : "no clear faction partner", `${controlledDistricts.length} leverage districts`);
+      } else {
+        score = Math.min(42, player.money * 0.08) + stability + legalRatio * 16 + playerMachines.length * 4;
+        signals.push(`$${Math.round(player.money)} cash`, `${playerMachines.length} active machines`, `${Math.round(stability)} stability`);
+      }
+
+      const tone: EndgamePathScore["tone"] = score >= 65 ? "good" : score >= 35 ? "warning" : "danger";
+
+      return {
+        path,
+        score: clampScore(score),
+        signals,
+        tone
+      };
+    })
+    .sort((a, b) => b.score - a.score);
 }
 
 export function firstGarageStorageProduct(state: GameState): { productId: keyof GameState["products"]; quantity: number } | undefined {

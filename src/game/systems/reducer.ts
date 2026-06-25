@@ -3,6 +3,7 @@ import type {
   CommandResult,
   Employee,
   EmployeeRole,
+  Faction,
   FactionId,
   FinanceLedgerCategory,
   GameCommand,
@@ -764,6 +765,62 @@ function chooseThreatFaction(state: GameState): FactionId {
   return rivals[0]?.id ?? "rival_redline";
 }
 
+function rivalActionProfile(faction: Faction): {
+  expansionCostMultiplier: number;
+  expandPressure: number;
+  sabotageBonus: number;
+  sabotagePressure: number;
+  undercutCost: number;
+  undercutPressure: number;
+  verb: string;
+} {
+  if (faction.archetype === "corporate") {
+    return {
+      expansionCostMultiplier: 0.82,
+      expandPressure: 0.04,
+      sabotageBonus: -4,
+      sabotagePressure: 0.08,
+      undercutCost: 18,
+      undercutPressure: 0.28,
+      verb: "filed complaints around"
+    };
+  }
+
+  if (faction.archetype === "black_market") {
+    return {
+      expansionCostMultiplier: 0.56,
+      expandPressure: 0.1,
+      sabotageBonus: 2,
+      sabotagePressure: 0.18,
+      undercutCost: 10,
+      undercutPressure: 0.26,
+      verb: "copied the grey-stock draw near"
+    };
+  }
+
+  if (faction.archetype === "former_partner") {
+    return {
+      expansionCostMultiplier: 0.62,
+      expandPressure: 0.14,
+      sabotageBonus: 6,
+      sabotagePressure: 0.2,
+      undercutCost: 12,
+      undercutPressure: 0.24,
+      verb: "used old route knowledge against"
+    };
+  }
+
+  return {
+    expansionCostMultiplier: 0.65,
+    expandPressure: 0.12,
+    sabotageBonus: 3,
+    sabotagePressure: 0.16,
+    undercutCost: 12,
+    undercutPressure: 0.22,
+    verb: "leaned on"
+  };
+}
+
 function missConflictEvent(state: GameState, events: GameEvent[], eventId: string): void {
   const event = state.conflict.activeEvents[eventId];
   if (!event || event.status !== "active") {
@@ -1070,8 +1127,9 @@ function applyDailyOperatingEconomy(state: GameState, events: GameEvent[]): void
   ensureEconomyState(state);
   const player = state.factions[state.playerFactionId];
   const officeIncome = (baseFacilities.office.effectsPerLevel.frontBusinessIncome ?? 0) * baseFacilityLevel(state, "office");
-  const legalMachineIncome = installedMachines(state, state.playerFactionId).filter((machine) => machine.placementMethod === "legal_contract").length * 2;
-  const frontIncome = Math.round(officeIncome + legalMachineIncome);
+  const legalMachineIncome = installedMachines(state, state.playerFactionId).filter((machine) => machine.placementMethod === "legal_contract").length * 4;
+  const hiddenLaunderingCost = installedMachines(state, state.playerFactionId).filter((machine) => machine.placementMethod === "hidden" || machine.placementMethod === "bribe").length * 2;
+  const frontIncome = Math.max(0, Math.round(officeIncome + legalMachineIncome - hiddenLaunderingCost));
   if (frontIncome > 0) {
     creditPlayer(state, "front_business", frontIncome, "Front-business daily receipts");
     state.economy.finance.frontBusinessRevenueToday += frontIncome;
@@ -1101,22 +1159,22 @@ function applyDailyOperatingEconomy(state: GameState, events: GameEvent[]): void
 
 function placementRiskScore(method: PlacementMethod): number {
   if (method === "legal_contract") {
-    return 0.2;
+    return 0.12;
   }
 
   if (method === "hidden") {
-    return 0.45;
+    return 0.34;
   }
 
   if (method === "bribe") {
-    return 1.25;
+    return 1.45;
   }
 
   if (method === "rival_territory") {
-    return 1.75;
+    return 2;
   }
 
-  return 2.2;
+  return 2.55;
 }
 
 function inspectionRiskScore(state: GameState, machine: VendingMachine): number {
@@ -1127,13 +1185,20 @@ function inspectionRiskScore(state: GameState, machine: VendingMachine): number 
 
   const stockRisk = machine.slots.reduce((sum, slot) => {
     const product = state.products[slot.productId];
-    return sum + (product?.legality ?? 0) * 1.3 + (product?.heat ?? 0) * 0.22;
+    const stockSignal = Math.max(0.45, Math.min(1.35, slot.quantity / 10));
+    return sum + ((product?.legality ?? 0) * 1.25 + (product?.heat ?? 0) * 0.22) * stockSignal;
   }, 0);
   const heatRisk = machine.heat * 0.38 + (state.factions[machine.ownerFactionId]?.heat ?? 0) * 0.08;
   const policingRisk = location.policePresence * 5 + Math.max(0, 1 - location.safety) * 1.5;
   const visibilityRisk = Math.max(0.2, machine.visibility) * 0.55;
+  const player = state.factions[state.playerFactionId];
+  const paperworkShield = machine.placementMethod === "legal_contract" ? Math.min(0.8, player.publicReputation * 0.035) : 0;
+  const securityShield =
+    machine.security * 0.22 +
+    (machineHasUpgrade(machine, "security_camera") ? 0.22 : 0) +
+    (machineHasUpgrade(machine, "remote_monitor") ? 0.1 : 0);
 
-  return stockRisk + heatRisk + policingRisk + visibilityRisk + placementRiskScore(machine.placementMethod ?? "legal_contract");
+  return Math.max(0, stockRisk + heatRisk + policingRisk + visibilityRisk + placementRiskScore(machine.placementMethod ?? "legal_contract") - paperworkShield - securityShield);
 }
 
 function inspectionReason(machine: VendingMachine): string {
@@ -3281,6 +3346,7 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
 
     case "rival_action": {
       const controller = state.npcControllers[actor.id];
+      const profile = rivalActionProfile(actor);
       if (controller) {
         controller.lastActedHour = state.worldTimeHours;
       }
@@ -3291,15 +3357,15 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       if (command.action === "sabotage" && command.targetMachineId) {
         const target = state.machines[command.targetMachineId];
         if (target && target.ownerFactionId !== actor.id && isMachineInstalled(target)) {
-          const baseDamage = 18 + Math.round((controller?.aggression ?? 0) * 8);
+          const baseDamage = Math.max(8, 18 + Math.round((controller?.aggression ?? 0) * 8) + profile.sabotageBonus);
           if (target.ownerFactionId === state.playerFactionId) {
             createMachineAlarm(state, events, target, actor.id, "sabotage", baseDamage);
             break;
           }
 
           target.damage = Math.min(100, target.damage + sabotageDamage(baseDamage, target));
-          state.locations[target.locationId].rivalPressure = Math.min(1, state.locations[target.locationId].rivalPressure + 0.15);
-          log(state, events, `${actor.name} roughed up ${target.name}.`, "danger");
+          state.locations[target.locationId].rivalPressure = Math.min(1, state.locations[target.locationId].rivalPressure + profile.sabotagePressure);
+          log(state, events, `${actor.name} ${profile.verb} ${target.name}.`, "danger");
         }
       }
 
@@ -3307,26 +3373,33 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
         const target = state.machines[command.targetMachineId];
         if (target && isMachineInstalled(target)) {
           const location = state.locations[target.locationId];
-          location.rivalPressure = Math.min(1, location.rivalPressure + 0.22);
-          actor.money = Math.max(0, actor.money - 12);
+          location.rivalPressure = Math.min(1, location.rivalPressure + profile.undercutPressure);
+          actor.money = Math.max(0, actor.money - profile.undercutCost);
+          if (target.ownerFactionId === state.playerFactionId && actor.archetype === "corporate") {
+            state.factions[state.playerFactionId].publicReputation = Math.max(0, state.factions[state.playerFactionId].publicReputation - 0.25);
+          }
+          if (target.ownerFactionId === state.playerFactionId && actor.archetype === "black_market") {
+            target.heat += 0.8;
+          }
           if (target.id === STARTER_MACHINE_ID && target.ownerFactionId === state.playerFactionId) {
             state.progression.firstUndercutTriggered = true;
             createMachineAlarm(state, events, target, actor.id, "undercut", 12);
           }
-          log(state, events, `${actor.name} is undercutting prices near ${location.name}.`, "warning");
+          log(state, events, `${actor.name} is ${actor.archetype === "corporate" ? "pressuring permits" : "undercutting prices"} near ${location.name}.`, "warning");
         }
       }
 
       if (command.action === "expand" && command.locationId) {
         const location = state.locations[command.locationId];
         if (location && !machineAtLocation(state, location.id) && isDistrictUnlockedForPlacement(state, location.districtId)) {
-          const cost = Math.round(placementCostForLocation(state, location) * 0.65);
+          const cost = Math.round(placementCostForLocation(state, location) * profile.expansionCostMultiplier);
           if (actor.money < cost) {
             break;
           }
 
           createMachine(state, actor.id, location.id, "rival_territory");
           actor.money = Math.max(0, actor.money - cost);
+          location.rivalPressure = Math.min(1, location.rivalPressure + profile.expandPressure);
           log(state, events, `${actor.name} dropped a new machine at ${location.name}.`, "danger");
         }
       }
