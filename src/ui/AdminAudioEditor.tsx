@@ -12,9 +12,11 @@ import {
 } from "../game/content/audioConfig";
 import {
   createDefaultAudioProviderSettings,
+  defaultElevenLabsGenerationPrompts,
   normalizeAudioProviderSettings,
   validateAudioProviderSettings,
   type AudioProviderSettings,
+  type ElevenLabsGenerationPrompt,
   type ElevenLabsVoiceProfile
 } from "../game/content/audioProvider";
 import {
@@ -160,6 +162,13 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
     }));
   }, [setNormalizedProviderSettings]);
 
+  const updateGenerationPrompt = useCallback((index: number, patch: Partial<ElevenLabsGenerationPrompt>) => {
+    setNormalizedProviderSettings((current) => ({
+      ...current,
+      generationPrompts: current.generationPrompts.map((prompt, promptIndex) => promptIndex === index ? { ...prompt, ...patch } : prompt)
+    }));
+  }, [setNormalizedProviderSettings]);
+
   const handleAddAsset = useCallback(() => {
     setNormalizedConfig((current) => {
       const id = nextId("asset", current.assets.map((asset) => asset.id));
@@ -229,6 +238,36 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
     });
   }, [setNormalizedProviderSettings]);
 
+  const handleAddGenerationPrompt = useCallback(() => {
+    setNormalizedProviderSettings((current) => {
+      const id = nextId("prompt", current.generationPrompts.map((prompt) => prompt.id));
+      return {
+        ...current,
+        generationPrompts: [
+          ...current.generationPrompts,
+          {
+            durationSeconds: 3,
+            enabled: true,
+            id,
+            label: "New Prompt",
+            negativePrompt: "",
+            prompt: "",
+            purpose: "sound",
+            trigger: "feedback.cash",
+            voiceProfileId: ""
+          }
+        ]
+      };
+    });
+  }, [setNormalizedProviderSettings]);
+
+  const handleResetGenerationPrompts = useCallback(() => {
+    setNormalizedProviderSettings((current) => ({
+      ...current,
+      generationPrompts: defaultElevenLabsGenerationPrompts.map((prompt) => ({ ...prompt }))
+    }));
+  }, [setNormalizedProviderSettings]);
+
   const handleDeleteAsset = useCallback((assetId: string) => {
     setNormalizedConfig((current) => ({
       ...current,
@@ -248,6 +287,13 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
     setNormalizedProviderSettings((current) => ({
       ...current,
       voiceProfiles: current.voiceProfiles.filter((profile) => profile.id !== profileId)
+    }));
+  }, [setNormalizedProviderSettings]);
+
+  const handleDeleteGenerationPrompt = useCallback((promptId: string) => {
+    setNormalizedProviderSettings((current) => ({
+      ...current,
+      generationPrompts: current.generationPrompts.filter((prompt) => prompt.id !== promptId)
     }));
   }, [setNormalizedProviderSettings]);
 
@@ -473,6 +519,59 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
                     Boost
                   </label>
                   <button className="danger" onClick={() => handleDeleteVoiceProfile(profile.id)} type="button">
+                    <Trash2 size={14} aria-hidden="true" />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="admin-audio-subheading">
+            <h3>Generation Prompts</h3>
+            <div className="admin-audio-heading-actions">
+              <button onClick={handleResetGenerationPrompts} type="button">
+                <RotateCcw size={14} aria-hidden="true" />
+                Defaults
+              </button>
+              <button onClick={handleAddGenerationPrompt} type="button">
+                <Plus size={14} aria-hidden="true" />
+                Add Prompt
+              </button>
+            </div>
+          </div>
+
+          <div className="admin-audio-table prompts">
+            {providerSettings.generationPrompts.length === 0 ? (
+              <p>No ElevenLabs prompts configured.</p>
+            ) : (
+              providerSettings.generationPrompts.map((prompt, index) => (
+                <div className="admin-audio-row prompt" key={`${prompt.id}-${index}`}>
+                  <label className="admin-audio-compact-check">
+                    <input checked={prompt.enabled} type="checkbox" onChange={(event) => updateGenerationPrompt(index, { enabled: event.target.checked })} />
+                    On
+                  </label>
+                  <select value={prompt.purpose} onChange={(event) => updateGenerationPrompt(index, { purpose: event.target.value as AudioCategory })}>
+                    {Object.entries(categoryLabels).map(([category, label]) => (
+                      <option key={category} value={category}>{label}</option>
+                    ))}
+                  </select>
+                  <input aria-label="Prompt id" value={prompt.id} onChange={(event) => updateGenerationPrompt(index, { id: slug(event.target.value, prompt.id || `prompt_${index + 1}`) })} />
+                  <input aria-label="Prompt label" value={prompt.label} onChange={(event) => updateGenerationPrompt(index, { label: event.target.value })} />
+                  <select aria-label="Prompt trigger" value={prompt.trigger} onChange={(event) => updateGenerationPrompt(index, { trigger: event.target.value })}>
+                    {audioTriggerOptions.map((option) => (
+                      <option key={option.trigger} value={option.trigger}>{option.label}</option>
+                    ))}
+                  </select>
+                  <textarea aria-label="ElevenLabs prompt" value={prompt.prompt} onChange={(event) => updateGenerationPrompt(index, { prompt: event.target.value })} />
+                  <textarea aria-label="ElevenLabs negative prompt" value={prompt.negativePrompt} onChange={(event) => updateGenerationPrompt(index, { negativePrompt: event.target.value })} />
+                  <select aria-label="Prompt voice profile" value={prompt.voiceProfileId} onChange={(event) => updateGenerationPrompt(index, { voiceProfileId: event.target.value })}>
+                    <option value="">No voice profile</option>
+                    {providerSettings.voiceProfiles.map((profile) => (
+                      <option key={profile.id} value={profile.id}>{profile.label || profile.id}</option>
+                    ))}
+                  </select>
+                  <input aria-label="Prompt duration" max="180" min="0.5" step="0.5" type="number" value={prompt.durationSeconds} onChange={(event) => updateGenerationPrompt(index, { durationSeconds: Number(event.target.value) })} />
+                  <button className="danger" onClick={() => handleDeleteGenerationPrompt(prompt.id)} type="button">
                     <Trash2 size={14} aria-hidden="true" />
                   </button>
                 </div>

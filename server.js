@@ -876,6 +876,11 @@ function normalizeAudioProviderSettings(candidate, existing = null, options = {}
   const existingSettings = typeof existing === "object" && existing !== null ? existing : {};
   const defaultModelId = normalizeAudioProviderString(input.defaultModelId, normalizeAudioProviderString(existingSettings.defaultModelId, "eleven_multilingual_v2"));
   const profiles = Array.isArray(input.voiceProfiles) ? input.voiceProfiles : [];
+  const prompts = Array.isArray(input.generationPrompts)
+    ? input.generationPrompts
+    : Array.isArray(existingSettings.generationPrompts)
+      ? existingSettings.generationPrompts
+      : null;
   const apiKeyInput = normalizeAudioProviderString(input.apiKey);
   const existingApiKey = normalizeAudioProviderString(existingSettings.apiKey);
   const apiKey = options.clearApiKey ? "" : apiKeyInput || existingApiKey;
@@ -883,6 +888,23 @@ function normalizeAudioProviderSettings(candidate, existing = null, options = {}
   return {
     apiKey,
     defaultModelId,
+    ...(prompts ? {
+      generationPrompts: prompts.map((prompt, index) => {
+        const promptInput = typeof prompt === "object" && prompt !== null ? prompt : {};
+        const label = normalizeAudioProviderString(promptInput.label, `Prompt ${index + 1}`);
+        return {
+          durationSeconds: normalizeAudioProviderNumber(promptInput.durationSeconds, 3, 0.5, 180),
+          enabled: typeof promptInput.enabled === "boolean" ? promptInput.enabled : true,
+          id: normalizeAudioProviderString(promptInput.id, `prompt_${index + 1}`),
+          label,
+          negativePrompt: normalizeAudioProviderString(promptInput.negativePrompt),
+          prompt: normalizeAudioProviderString(promptInput.prompt),
+          purpose: normalizeAudioProviderCategory(promptInput.purpose),
+          trigger: normalizeAudioProviderString(promptInput.trigger),
+          voiceProfileId: normalizeAudioProviderString(promptInput.voiceProfileId)
+        };
+      })
+    } : {}),
     hasApiKey: Boolean(apiKey),
     provider: "elevenlabs",
     voiceProfiles: profiles.map((profile, index) => {

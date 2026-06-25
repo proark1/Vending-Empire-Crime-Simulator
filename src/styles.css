@@ -1792,7 +1792,8 @@ kbd {
 .admin-field-grid select,
 .admin-provider-grid input,
 .admin-audio-row input,
-.admin-audio-row select {
+.admin-audio-row select,
+.admin-audio-row textarea {
   width: 100%;
   min-height: 34px;
   border: 1px solid rgba(226, 232, 240, 0.18);
@@ -1803,10 +1804,16 @@ kbd {
   font: inherit;
 }
 
+.admin-audio-row textarea {
+  min-height: 64px;
+  resize: vertical;
+}
+
 .admin-login button,
 .admin-actions button,
 .admin-section-tabs button,
 .admin-audio-panel-heading button,
+.admin-audio-heading-actions button,
 .admin-provider-grid button,
 .admin-audio-row button,
 .admin-audio-actions button,
@@ -1835,6 +1842,7 @@ kbd {
 .admin-actions button:hover,
 .admin-section-tabs button:hover,
 .admin-audio-panel-heading button:hover,
+.admin-audio-heading-actions button:hover,
 .admin-provider-grid button:hover,
 .admin-audio-row button:hover,
 .admin-audio-actions button:hover,
@@ -1960,6 +1968,20 @@ kbd {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+.admin-audio-subheading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.admin-audio-subheading h3 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 13px;
 }
 
 .admin-audio-heading-actions {
@@ -2093,8 +2115,15 @@ kbd {
   grid-template-columns: 110px 120px 150px minmax(190px, 1fr) minmax(180px, 0.8fr) 84px 104px 84px 82px 38px;
 }
 
+.admin-audio-row.prompt {
+  align-items: stretch;
+  min-width: 1560px;
+  grid-template-columns: 62px 110px 130px 150px 180px minmax(280px, 1.2fr) minmax(220px, 0.9fr) 160px 92px 38px;
+}
+
 .admin-audio-row input,
-.admin-audio-row select {
+.admin-audio-row select,
+.admin-audio-row textarea {
   font-size: 12px;
 }
 
