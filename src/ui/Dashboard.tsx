@@ -1,5 +1,5 @@
 import { AlertTriangle, BarChart3, Boxes, Building2, ClipboardList, Factory, FlaskConical, HandCoins, Landmark, Lock, Map, Navigation, Package, PackagePlus, Route, Search, ShieldAlert, SlidersHorizontal, Trophy, Truck, Unlock, UserPlus, Users, Wrench } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { GameCommand, GameState } from "../game/core/types";
 import { employeeRoleList, employeeRoles } from "../game/content/employees";
 import { getMachineUpgradeEffects } from "../game/core/machineStats";
@@ -61,12 +61,32 @@ interface DashboardProps {
   state: GameState;
   onCommand: (command: GameCommand) => void;
   onGraphicsQualityChange: (quality: GraphicsQuality) => void;
+  showDebug: boolean;
 }
 
 function MiniButton({ children, disabled, onClick }: { children: React.ReactNode; disabled?: boolean; onClick: () => void }) {
   return (
     <button className="mini-button" disabled={disabled} onClick={onClick} type="button">
       {children}
+    </button>
+  );
+}
+
+function DashboardTabButton({
+  active,
+  children,
+  icon,
+  onClick
+}: {
+  active: boolean;
+  children: React.ReactNode;
+  icon: React.ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button className={active ? "tab active" : "tab"} onClick={onClick} type="button">
+      {icon}
+      <span>{children}</span>
     </button>
   );
 }
@@ -103,8 +123,9 @@ function roleIcon(role: string): React.ReactNode {
   return <PackagePlus size={16} aria-hidden="true" />;
 }
 
-export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQualityChange }: DashboardProps) {
+export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQualityChange, showDebug }: DashboardProps) {
   const [tab, setTab] = useState<DashboardTab>("machines");
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const playerMachines = useMemo(() => ownedMachines(state, state.playerFactionId), [state]);
   const installedPlayerMachines = useMemo(() => installedMachines(state, state.playerFactionId), [state]);
   const rivals = useMemo(() => Object.values(state.factions).filter((faction) => faction.type === "npc"), [state.factions]);
@@ -153,65 +174,79 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
   const dayReport = latestDayReport(state);
   const storyProgress = useMemo(() => storyArcProgress(state), [state]);
   const endingScores = useMemo(() => endgamePathScores(state), [state]);
+  const advancedTabs = useMemo<DashboardTab[]>(() => ["catalog", "finance", "logistics", "heat", "conflict", "rival", "story", ...(showDebug ? (["debug"] as DashboardTab[]) : [])], [showDebug]);
+  const visibleTabs = useMemo<Array<{ icon: React.ReactNode; id: DashboardTab; label: string }>>(
+    () => [
+      { id: "machines", label: "Machines", icon: <Map size={16} aria-hidden="true" /> },
+      { id: "jobs", label: "Jobs", icon: <ClipboardList size={16} aria-hidden="true" /> },
+      { id: "route", label: "Route", icon: <Route size={16} aria-hidden="true" /> },
+      { id: "base", label: "Base", icon: <Factory size={16} aria-hidden="true" /> },
+      { id: "districts", label: "Districts", icon: <Building2 size={16} aria-hidden="true" /> },
+      { id: "crew", label: "Crew", icon: <Users size={16} aria-hidden="true" /> },
+      { id: "law", label: "Law", icon: <ShieldAlert size={16} aria-hidden="true" /> },
+      { id: "log", label: "Log", icon: <ClipboardList size={16} aria-hidden="true" /> },
+      ...(showAdvanced
+        ? [
+            { id: "catalog" as DashboardTab, label: "Market", icon: <FlaskConical size={16} aria-hidden="true" /> },
+            { id: "finance" as DashboardTab, label: "Finance", icon: <Landmark size={16} aria-hidden="true" /> },
+            { id: "logistics" as DashboardTab, label: "Stock", icon: <Package size={16} aria-hidden="true" /> },
+            { id: "heat" as DashboardTab, label: "Heat", icon: <AlertTriangle size={16} aria-hidden="true" /> },
+            { id: "conflict" as DashboardTab, label: "Conflict", icon: <ShieldAlert size={16} aria-hidden="true" /> },
+            { id: "rival" as DashboardTab, label: "Rivals", icon: <Map size={16} aria-hidden="true" /> },
+            { id: "story" as DashboardTab, label: "Story", icon: <Trophy size={16} aria-hidden="true" /> },
+            ...(showDebug ? [{ id: "debug" as DashboardTab, label: "Debug", icon: <Wrench size={16} aria-hidden="true" /> }] : [])
+          ]
+        : [])
+    ],
+    [showAdvanced, showDebug]
+  );
+
+  useEffect(() => {
+    if (!showAdvanced && advancedTabs.includes(tab)) {
+      setTab("machines");
+      return;
+    }
+
+    if (tab === "debug" && !showDebug) {
+      setTab("machines");
+    }
+  }, [advancedTabs, showAdvanced, showDebug, tab]);
 
   return (
     <aside className="dashboard">
-      <div className="graphics-quality-control" aria-label="Graphics quality">
-        <span>
-          <SlidersHorizontal size={15} aria-hidden="true" />
-          Graphics
-        </span>
-        <div className="graphics-quality-options" role="group" aria-label="Graphics quality">
-          {graphicsQualityModes.map((quality) => (
-            <button
-              aria-pressed={graphicsQuality === quality}
-              className={graphicsQuality === quality ? "quality-button active" : "quality-button"}
-              key={quality}
-              onClick={() => onGraphicsQualityChange(quality)}
-              type="button"
-            >
-              {graphicsQualityLabels[quality]}
-            </button>
-          ))}
+      <div className="dashboard-header">
+        <div className="graphics-quality-control" aria-label="Graphics quality">
+          <span>
+            <SlidersHorizontal size={15} aria-hidden="true" />
+            Graphics
+          </span>
+          <div className="graphics-quality-options" role="group" aria-label="Graphics quality">
+            {graphicsQualityModes.map((quality) => (
+              <button
+                aria-pressed={graphicsQuality === quality}
+                className={graphicsQuality === quality ? "quality-button active" : "quality-button"}
+                key={quality}
+                onClick={() => onGraphicsQualityChange(quality)}
+                type="button"
+              >
+                {graphicsQualityLabels[quality]}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="dashboard-mode-row">
+          <button aria-pressed={showAdvanced} className={showAdvanced ? "mini-button active" : "mini-button"} onClick={() => setShowAdvanced((current) => !current)} type="button">
+            <SlidersHorizontal size={13} aria-hidden="true" />
+            Advanced
+          </button>
         </div>
       </div>
       <div className="tab-row" role="tablist" aria-label="Operations dashboard">
-        <button className={tab === "machines" ? "tab active" : "tab"} onClick={() => setTab("machines")} type="button">
-          <Map size={16} aria-hidden="true" />
-          Machines
-        </button>
-        <button className={tab === "base" ? "tab active" : "tab"} onClick={() => setTab("base")} type="button">
-          <Factory size={16} aria-hidden="true" />
-          Base
-        </button>
-        <button className={tab === "districts" ? "tab active" : "tab"} onClick={() => setTab("districts")} type="button">
-          <Building2 size={16} aria-hidden="true" />
-          Districts
-        </button>
-        <button className={tab === "route" ? "tab active" : "tab"} onClick={() => setTab("route")} type="button">
-          <Route size={16} aria-hidden="true" />
-          Route
-        </button>
-        <button className={tab === "crew" ? "tab active" : "tab"} onClick={() => setTab("crew")} type="button">
-          <Users size={16} aria-hidden="true" />
-          Crew
-        </button>
-        <button className={tab === "law" ? "tab active" : "tab"} onClick={() => setTab("law")} type="button">
-          <ShieldAlert size={16} aria-hidden="true" />
-          Law
-        </button>
-        <button className={tab === "story" ? "tab active" : "tab"} onClick={() => setTab("story")} type="button">
-          <ClipboardList size={16} aria-hidden="true" />
-          Story
-        </button>
-        <button className={tab === "debug" ? "tab active" : "tab"} onClick={() => setTab("debug")} type="button">
-          <Wrench size={16} aria-hidden="true" />
-          Debug
-        </button>
-        <button className={tab === "log" ? "tab active" : "tab"} onClick={() => setTab("log")} type="button">
-          <ClipboardList size={16} aria-hidden="true" />
-          Log
-        </button>
+        {visibleTabs.map((item) => (
+          <DashboardTabButton active={tab === item.id} icon={item.icon} key={item.id} onClick={() => setTab(item.id)}>
+            {item.label}
+          </DashboardTabButton>
+        ))}
       </div>
 
       {tab === "machines" && (
@@ -306,7 +341,7 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
         </div>
       )}
 
-      {tab === "machines" && (
+      {tab === "catalog" && (
         <div className="panel-list">
           <article className="cargo-summary">
             <FlaskConical size={18} aria-hidden="true" />
@@ -338,7 +373,7 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
         </div>
       )}
 
-      {tab === "base" && (
+      {tab === "finance" && (
         <div className="panel-list">
           <article className="cargo-summary">
             <BarChart3 size={18} aria-hidden="true" />
@@ -430,7 +465,7 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
         </div>
       )}
 
-      {tab === "route" && (
+      {tab === "jobs" && (
         <div className="panel-list">
           {dayReport && (
             <article className={`day-report ${dayReport.contractsFailed > 0 ? "warning" : "good"}`}>
@@ -591,7 +626,7 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
         </div>
       )}
 
-      {tab === "base" && (
+      {tab === "logistics" && (
         <div className="panel-list">
           <div className="cargo-summary">
             <Package size={18} aria-hidden="true" />
@@ -781,7 +816,7 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
         </div>
       )}
 
-      {tab === "law" && (
+      {tab === "heat" && (
         <div className="panel-list">
           <article className="cargo-summary">
             <AlertTriangle size={18} aria-hidden="true" />
@@ -815,7 +850,7 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
         </div>
       )}
 
-      {tab === "law" && (
+      {tab === "conflict" && (
         <div className="panel-list">
           <article className="cargo-summary">
             <AlertTriangle size={18} aria-hidden="true" />
@@ -870,7 +905,7 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
         </div>
       )}
 
-      {tab === "districts" && (
+      {tab === "rival" && (
         <div className="panel-list">
           <article className="cargo-summary">
             <Map size={18} aria-hidden="true" />

@@ -1,4 +1,5 @@
-import { Camera, CreditCard, HandCoins, Lightbulb, Lock, Minus, PackagePlus, Plus, RadioTower, RotateCcw, Save, Shield, ShieldAlert, ShoppingCart, Sparkles, Truck, Wrench, Zap } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Camera, ChevronDown, ChevronUp, CreditCard, HandCoins, Lightbulb, Lock, Minus, PackagePlus, Plus, RadioTower, RotateCcw, Save, Shield, ShieldAlert, ShoppingCart, Sparkles, Truck, Wrench, Zap } from "lucide-react";
 import type { ConflictEvent, GameCommand, GameState, MachineUpgradeId } from "../game/core/types";
 import { machineUpgradeList } from "../game/content/machineUpgrades";
 import { machineModels } from "../game/content/machineModels";
@@ -59,6 +60,15 @@ function ActionButton({
     <button className="action-button" disabled={disabled} onClick={onClick} type="button">
       {icon}
       <span>{children}</span>
+    </button>
+  );
+}
+
+function DetailsToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  return (
+    <button aria-expanded={open} className="details-toggle" onClick={onToggle} type="button">
+      {open ? <ChevronUp size={16} aria-hidden="true" /> : <ChevronDown size={16} aria-hidden="true" />}
+      <span>{open ? "Hide details" : "Details"}</span>
     </button>
   );
 }
@@ -131,6 +141,14 @@ function ConflictActions({ conflict, onCommand, state }: { conflict: ConflictEve
 export function InteractionPanel({ state, target, onCommand, onSave, onReload, onRestart }: InteractionPanelProps) {
   const player = state.factions[state.playerFactionId];
   const primaryInteraction = getPrimaryInteraction(state, target);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const targetKey = target ? `${target.type}:${target.id}` : "none";
+  const panelClassName = `interaction-panel ${detailsOpen ? "details-open" : "details-closed"}`;
+  const detailsToggle = <DetailsToggle open={detailsOpen} onToggle={() => setDetailsOpen((current) => !current)} />;
+
+  useEffect(() => {
+    setDetailsOpen(false);
+  }, [targetKey]);
 
   if (!target) {
     return (
@@ -156,7 +174,7 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
     const storedMachines = storedPlayerMachines(state);
 
     return (
-      <section className="interaction-panel">
+      <section className={panelClassName}>
         <h2>{target.label}</h2>
         {primaryInteraction && (
           <div className="primary-hint">
@@ -164,6 +182,7 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
             <span>{primaryInteraction.label}</span>
           </div>
         )}
+        {detailsToggle}
         {conflictAtTarget && <ConflictActions conflict={conflictAtTarget} onCommand={onCommand} state={state} />}
         {storedMachines.length > 0 && (
           <div className="machine-section">
@@ -366,7 +385,7 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
     const carrying = Boolean(state.player.carriedCrate) || carriedCrateUnits(state) > 0;
 
     return (
-      <section className="interaction-panel">
+      <section className={panelClassName}>
         <h2>{target.label}</h2>
         {primaryInteraction && (
           <div className="primary-hint">
@@ -374,6 +393,7 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
             <span>{primaryInteraction.label}</span>
           </div>
         )}
+        {detailsToggle}
         <div className="action-grid">
           {Object.values(state.products).map((product) => {
             const quantity = product.legality > 0 ? 3 : product.size > 1 ? Math.min(6, Math.floor(state.player.cargoCapacity / product.size)) : Math.min(10, Math.floor(state.player.cargoCapacity / product.size));
@@ -407,7 +427,7 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
     const storedMachine = storedPlayerMachines(state)[0];
     const storedBlocked = Boolean(storedMachine && storedMachine.damage > 0);
     return (
-      <section className="interaction-panel">
+      <section className={panelClassName}>
         <h2>{location.name}</h2>
         {primaryInteraction && (
           <div className="primary-hint">
@@ -415,6 +435,7 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
             <span>{primaryInteraction.label}</span>
           </div>
         )}
+        {detailsToggle}
         {conflictAtTarget && <ConflictActions conflict={conflictAtTarget} onCommand={onCommand} state={state} />}
         <p>
           Traffic {location.footTraffic.toFixed(1)} · Risk {Math.round((1 - location.safety + location.policePresence) * 50)}
@@ -508,7 +529,7 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
   const alarmMinutesLeft = activeAlarm ? Math.max(1, Math.ceil((activeAlarm.expiresHour - state.worldTimeHours) * 60)) : 0;
 
   return (
-    <section className="interaction-panel">
+    <section className={panelClassName}>
       <div className="panel-heading">
         <div>
           <h2>{machine.name}</h2>
@@ -523,6 +544,7 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
           <span>{primaryInteraction.label}</span>
         </div>
       )}
+      {detailsToggle}
       {conflictAtTarget && <ConflictActions conflict={conflictAtTarget} onCommand={onCommand} state={state} />}
 
       <div className="machine-readout">
