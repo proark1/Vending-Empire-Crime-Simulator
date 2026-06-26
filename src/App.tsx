@@ -17,6 +17,7 @@ import { useGame } from "./hooks/useGame";
 import { ToastStack, type ToastMessage } from "./ui/ToastStack";
 import type { GameCommand, GameState, LocationId, ProductId, Vec2 } from "./game/core/types";
 import { createDefaultAudioConfig, normalizeAudioConfig, type AudioConfig } from "./game/content/audioConfig";
+import { clearModelConfig, loadModelConfig, MODEL_CONFIG_KEY, MODEL_CONFIG_UPDATED_EVENT, saveModelConfig, type ModelConfig } from "./game/content/modelConfig";
 import { worldBounds, type WorldMapLayout } from "./game/content/world";
 import { endgamePaths, storyMissionArcs } from "./game/content/story";
 import { products } from "./game/content/products";
@@ -123,6 +124,7 @@ function createSceneFeedback(command: GameCommand, target: SceneTarget | null, s
 interface GameAppProps {
   initialState: GameState;
   mapLayout: WorldMapLayout;
+  modelConfig: ModelConfig;
   onLogout: () => void;
   session: GameSession;
 }
@@ -536,7 +538,7 @@ function LandingWorldPreview({ mapLayout, state }: { mapLayout: WorldMapLayout; 
   );
 }
 
-function GameApp({ initialState, mapLayout, onLogout, session }: GameAppProps) {
+function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: GameAppProps) {
   const multiplayerClient = useMemo(() => new MultiplayerClient(session.token), [session.token]);
   const [multiplayerStatus, setMultiplayerStatus] = useState<MultiplayerStatus>(() => multiplayerClient.getStatus());
   const { state, sendCommand, advanceWorld, save, reload, restart } = useGame({ initialState, multiplayerClient, multiplayerRole: multiplayerStatus.role, session });
@@ -875,6 +877,7 @@ function GameApp({ initialState, mapLayout, onLogout, session }: GameAppProps) {
         graphicsQuality={graphicsQuality}
         guidanceLocationId={guidanceLocationId}
         mapLayout={mapLayout}
+        modelConfig={modelConfig}
         state={state}
         feedbackEvent={sceneFeedback}
         onPlayerPositionChange={setPlayerPosition}
@@ -1106,7 +1109,7 @@ function GameApp({ initialState, mapLayout, onLogout, session }: GameAppProps) {
   );
 }
 
-function GameAccessGate({ mapLayout }: { mapLayout: WorldMapLayout }) {
+function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout; modelConfig: ModelConfig }) {
   const [accessMode, setAccessMode] = useState<"login" | "register">("login");
   const [authState, setAuthState] = useState<
     | { status: "loading" }
@@ -1187,7 +1190,7 @@ function GameAccessGate({ mapLayout }: { mapLayout: WorldMapLayout }) {
   }, []);
 
   if (authState.status === "ready") {
-    return <GameApp key={authState.session.profile.id} initialState={authState.initialState} mapLayout={mapLayout} onLogout={handleLogout} session={authState.session} />;
+    return <GameApp key={authState.session.profile.id} initialState={authState.initialState} mapLayout={mapLayout} modelConfig={modelConfig} onLogout={handleLogout} session={authState.session} />;
   }
 
   return (
@@ -1285,6 +1288,7 @@ function GameAccessGate({ mapLayout }: { mapLayout: WorldMapLayout }) {
 export function App() {
   const [mapLayout, setMapLayout] = useState<WorldMapLayout>(() => loadWorldMapLayout());
   const [audioConfig, setAudioConfig] = useState<AudioConfig>(() => createDefaultAudioConfig());
+  const [modelConfig, setModelConfig] = useState<ModelConfig>(() => loadModelConfig());
   const isAdminRoute = window.location.pathname === "/admin";
 
   useEffect(() => {
@@ -1326,6 +1330,22 @@ export function App() {
     configureGameAudio(audioConfig);
   }, [audioConfig]);
 
+  useEffect(() => {
+    const refreshModelConfig = () => setModelConfig(loadModelConfig());
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === MODEL_CONFIG_KEY) {
+        refreshModelConfig();
+      }
+    };
+
+    window.addEventListener(MODEL_CONFIG_UPDATED_EVENT, refreshModelConfig);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener(MODEL_CONFIG_UPDATED_EVENT, refreshModelConfig);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
+
   const handleSaveMapLayout = useCallback((layout: WorldMapLayout) => {
     saveWorldMapLayout(layout);
     setMapLayout(loadWorldMapLayout());
@@ -1336,18 +1356,31 @@ export function App() {
     setMapLayout(loadWorldMapLayout());
   }, []);
 
+  const handleSaveModelConfig = useCallback((config: ModelConfig) => {
+    saveModelConfig(config);
+    setModelConfig(loadModelConfig());
+  }, []);
+
+  const handleResetModelConfig = useCallback(() => {
+    clearModelConfig();
+    setModelConfig(loadModelConfig());
+  }, []);
+
   if (isAdminRoute) {
     return (
       <AdminMapEditor
         initialAudioConfig={audioConfig}
         initialLayout={mapLayout}
+        modelConfig={modelConfig}
         onAudioSave={setAudioConfig}
         onAudioReset={setAudioConfig}
+        onModelReset={handleResetModelConfig}
+        onModelSave={handleSaveModelConfig}
         onSave={handleSaveMapLayout}
         onReset={handleResetMapLayout}
       />
     );
   }
 
-  return <GameAccessGate mapLayout={mapLayout} />;
+  return <GameAccessGate mapLayout={mapLayout} modelConfig={modelConfig} />;
 }

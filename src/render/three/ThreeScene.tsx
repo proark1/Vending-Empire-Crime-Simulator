@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import type { DistrictAccess, GameState, GameEventTone, Location, MachineId, MachineUpgradeId, ProductId, StockCrate, StreetActivity, VendingMachine } from "../../game/core/types";
 import { activeConflictEvents, activeMachineAlarms, activeVehicle, carriedCrateUnits, districtProgress, garageStorageUnits, machineAtLocation, machineRoutePressure } from "../../game/core/selectors";
+import { modelTransformFor, type ModelConfig, type ModelTransform } from "../../game/content/modelConfig";
 import {
   districtLabels,
   districtVisualProfiles,
@@ -29,6 +30,7 @@ interface ThreeSceneProps {
   graphicsQuality: GraphicsQuality;
   guidanceLocationId?: string;
   mapLayout: WorldMapLayout;
+  modelConfig: ModelConfig;
   state: GameState;
   onPlayerPositionChange: (position: { x: number; z: number }) => void;
   onPlayerHeadingChange: (headingDegrees: number) => void;
@@ -118,6 +120,59 @@ const worldDepth = worldBounds.maxZ - worldBounds.minZ;
 const worldCenterX = (worldBounds.minX + worldBounds.maxX) / 2;
 const worldCenterZ = (worldBounds.minZ + worldBounds.maxZ) / 2;
 const worldChunkSize = 24;
+
+function applyModelTransform(object: THREE.Object3D, transform: ModelTransform): void {
+  object.position.x += transform.offsetX;
+  object.position.y += transform.offsetY;
+  object.position.z += transform.offsetZ;
+  object.rotation.x += transform.rotationX;
+  object.rotation.y += transform.rotationY;
+  object.rotation.z += transform.rotationZ;
+  object.scale.set(
+    object.scale.x * transform.scaleX,
+    object.scale.y * transform.scaleY,
+    object.scale.z * transform.scaleZ
+  );
+
+  const path = Array.isArray(object.userData.walkPath) ? object.userData.walkPath as THREE.Vector3[] : [];
+  path.forEach((point) => {
+    point.x += transform.offsetX;
+    point.y += transform.offsetY;
+    point.z += transform.offsetZ;
+  });
+
+  if (typeof object.userData.baseY === "number") {
+    object.userData.baseY += transform.offsetY;
+  }
+
+  object.userData.modelRotationX = (typeof object.userData.modelRotationX === "number" ? object.userData.modelRotationX : 0) + transform.rotationX;
+  object.userData.modelRotationY = (typeof object.userData.modelRotationY === "number" ? object.userData.modelRotationY : 0) + transform.rotationY;
+  object.userData.modelRotationZ = (typeof object.userData.modelRotationZ === "number" ? object.userData.modelRotationZ : 0) + transform.rotationZ;
+}
+
+function applyModelTransformById(object: THREE.Object3D, modelConfig: ModelConfig, modelId: string): void {
+  applyModelTransform(object, modelTransformFor(modelConfig, modelId));
+}
+
+function applyAnimatedModelRotation(object: THREE.Object3D): void {
+  if (typeof object.userData.modelRotationX === "number") {
+    object.rotation.x = object.userData.modelRotationX;
+  }
+  if (typeof object.userData.modelRotationY === "number") {
+    object.rotation.y += object.userData.modelRotationY;
+  }
+  if (typeof object.userData.modelRotationZ === "number") {
+    object.rotation.z = object.userData.modelRotationZ;
+  }
+}
+
+function unitModelId(variant: "customer" | "rival" | "scout" | "worker"): string {
+  return `unit.${variant}`;
+}
+
+function trafficVehicleModelId(kind: TrafficLoop["kind"]): string {
+  return `vehicle.${kind}`;
+}
 
 function roundedBox(width: number, height: number, depth: number, radius: number, quality: GraphicsQuality): RoundedBoxGeometry {
   return new RoundedBoxGeometry(width, height, depth, quality === "low" ? 1 : 3, radius);
@@ -503,6 +558,7 @@ function updateAnimatedStreetProp(object: THREE.Object3D, time: number): void {
       object.position.x = state.position.x;
       object.position.z = state.position.z;
       object.rotation.y = Math.atan2(state.direction.x, -state.direction.z) + Math.PI;
+      applyAnimatedModelRotation(object);
       isMoving = true;
     }
   }
@@ -524,6 +580,7 @@ function updateTrafficVehicle(object: THREE.Object3D, time: number): void {
   object.position.x = state.position.x;
   object.position.z = state.position.z;
   object.rotation.y = Math.atan2(-state.direction.x, -state.direction.z);
+  applyAnimatedModelRotation(object);
 
   const emergencyLight = object.userData.emergencyLight as THREE.Object3D | undefined;
   if (emergencyLight) {
@@ -1131,7 +1188,7 @@ function createMachinePlacementDressing(placement: { position: THREE.Vector3; ro
   return group;
 }
 
-function createStockCrateMesh(productId: ProductId, quantity: number, compact = false): THREE.Group {
+function createStockCrateMesh(productId: ProductId, quantity: number, compact = false, modelConfig?: ModelConfig): THREE.Group {
   const color = productCrateColors[productId] ?? "#94a3b8";
   const group = new THREE.Group();
   const crate = new THREE.Mesh(
@@ -1157,13 +1214,17 @@ function createStockCrateMesh(productId: ProductId, quantity: number, compact = 
     group.add(bar);
   }
 
+  if (modelConfig) {
+    applyModelTransformById(group, modelConfig, "stock.crate");
+  }
+
   return group;
 }
 
-function createCrateStack(productIds: ProductId[]): THREE.Group {
+function createCrateStack(productIds: ProductId[], modelConfig?: ModelConfig): THREE.Group {
   const group = new THREE.Group();
   productIds.slice(0, 5).forEach((productId, index) => {
-    const crate = createStockCrateMesh(productId, 6);
+    const crate = createStockCrateMesh(productId, 6, false, modelConfig);
     crate.position.set((index % 3) * 0.46 - 0.46, 0.22 + Math.floor(index / 3) * 0.34, Math.floor(index / 3) * 0.18);
     crate.rotation.y = (index % 2 === 0 ? 0.08 : -0.1);
     group.add(crate);
@@ -1171,7 +1232,7 @@ function createCrateStack(productIds: ProductId[]): THREE.Group {
   return group;
 }
 
-function createStorageBay(productIds: ProductId[]): THREE.Group {
+function createStorageBay(productIds: ProductId[], modelConfig?: ModelConfig): THREE.Group {
   const group = new THREE.Group();
   const floorMaterial = new THREE.MeshStandardMaterial({ color: "#334155", roughness: 0.82, metalness: 0.03 });
   const railMaterial = new THREE.MeshStandardMaterial({ color: "#0f172a", roughness: 0.55, metalness: 0.18 });
@@ -1200,7 +1261,7 @@ function createStorageBay(productIds: ProductId[]): THREE.Group {
     group.add(floorStripe);
   }
 
-  const stack = createCrateStack(productIds);
+  const stack = createCrateStack(productIds, modelConfig);
   stack.position.set(0, 0.08, -0.08);
   stack.scale.setScalar(0.78);
   group.add(stack);
@@ -1527,6 +1588,7 @@ function createActivityActor(
   servicePoint: THREE.Vector3,
   currentWorldTime: number,
   quality: GraphicsQuality,
+  modelConfig: ModelConfig,
   laneIndex = 0
 ): THREE.Group {
   const variant = activityActorVariant(activity);
@@ -1555,6 +1617,7 @@ function createActivityActor(
   character.userData.phase = activity.hour * 0.7 + activity.id.length;
   character.userData.walkPath = [start, stop, stop.clone().add(front.clone().multiplyScalar(0.2)), exit];
   character.userData.walkSpeed = activity.kind === "rival_scout" ? 0.26 : activity.kind === "worker_supply" ? 0.34 : 0.42;
+  applyModelTransformById(character, modelConfig, unitModelId(variant));
 
   if (activity.kind === "customer_complaint") {
     const complaint = new THREE.Mesh(
@@ -1568,7 +1631,7 @@ function createActivityActor(
   return character;
 }
 
-function createAmbientMachineActor(machine: VendingMachine, location: Location, index: number, currentWorldTime: number, quality: GraphicsQuality): THREE.Group {
+function createAmbientMachineActor(machine: VendingMachine, location: Location, index: number, currentWorldTime: number, quality: GraphicsQuality, modelConfig: ModelConfig): THREE.Group {
   const variant = machine.ownerFactionId === "player" ? "customer" : "rival";
   const character = createNpcCharacter(variant, quality);
   const placement = machinePlacementForLocation(location);
@@ -1602,10 +1665,11 @@ function createAmbientMachineActor(machine: VendingMachine, location: Location, 
     exit
   ];
   character.userData.walkSpeed = 0.13 + Math.min(0.15, location.footTraffic * 0.04);
+  applyModelTransformById(character, modelConfig, unitModelId(variant));
   return character;
 }
 
-function createAlarmIntruderActor(placement: { position: THREE.Vector3; rotationY: number }, currentWorldTime: number, startedHour: number, quality: GraphicsQuality): THREE.Group {
+function createAlarmIntruderActor(placement: { position: THREE.Vector3; rotationY: number }, currentWorldTime: number, startedHour: number, quality: GraphicsQuality, modelConfig: ModelConfig): THREE.Group {
   const character = createNpcCharacter("rival", quality);
   const servicePoint = machineInteractionPoint(placement);
   const front = machineFrontVector(placement.rotationY).normalize();
@@ -1624,6 +1688,7 @@ function createAlarmIntruderActor(placement: { position: THREE.Vector3; rotation
   character.userData.phase = startedHour * 0.9;
   character.userData.walkPath = [left, servicePoint.clone().add(front.clone().multiplyScalar(0.3)), right, left.clone().add(front.clone().multiplyScalar(0.18))];
   character.userData.walkSpeed = 0.18;
+  applyModelTransformById(character, modelConfig, "unit.rival");
 
   const warning = new THREE.Mesh(new THREE.SphereGeometry(0.065, 12, 8), new THREE.MeshBasicMaterial({ color: "#fb7185" }));
   warning.position.set(0, 1.62, 0);
@@ -2372,7 +2437,7 @@ function createPatrolZone(zone: PatrolZone): THREE.Group {
   return group;
 }
 
-function createPolicePatrolOfficer(patrol: PolicePatrolPath, quality: GraphicsQuality): THREE.Group {
+function createPolicePatrolOfficer(patrol: PolicePatrolPath, quality: GraphicsQuality, modelConfig: ModelConfig): THREE.Group {
   const officer = createNpcCharacter("scout", quality);
   const start = patrol.path[0];
   officer.position.set(start.x, 0, start.z);
@@ -2386,6 +2451,7 @@ function createPolicePatrolOfficer(patrol: PolicePatrolPath, quality: GraphicsQu
   officer.userData.phase = patrol.phase * 0.4;
   officer.userData.walkPath = patrol.path.map((point) => new THREE.Vector3(point.x, 0, point.z));
   officer.userData.walkSpeed = patrol.speed;
+  applyModelTransformById(officer, modelConfig, "unit.scout");
 
   const badge = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.055, 0.028), new THREE.MeshBasicMaterial({ color: patrol.color }));
   badge.position.set(-0.08, 1.08, -0.235);
@@ -2407,12 +2473,12 @@ function createPolicePatrolOfficer(patrol: PolicePatrolPath, quality: GraphicsQu
   return officer;
 }
 
-function createPolicePatrolLayer(patrols: PolicePatrolPath[], maxPatrols: number, quality: GraphicsQuality): { animated: THREE.Object3D[]; group: THREE.Group } {
+function createPolicePatrolLayer(patrols: PolicePatrolPath[], maxPatrols: number, quality: GraphicsQuality, modelConfig: ModelConfig): { animated: THREE.Object3D[]; group: THREE.Group } {
   const group = new THREE.Group();
   const animated: THREE.Object3D[] = [];
 
   patrols.slice(0, maxPatrols).forEach((patrol) => {
-    const officer = createPolicePatrolOfficer(patrol, quality);
+    const officer = createPolicePatrolOfficer(patrol, quality, modelConfig);
     group.add(officer);
     animated.push(officer);
   });
@@ -2553,7 +2619,7 @@ function createTrafficVehicleMesh(loop: TrafficLoop, enableShadows: boolean, qua
   return group;
 }
 
-function createTrafficLayer(loops: TrafficLoop[], roads: WorldRoad[], maxLoops: number, enableShadows: boolean, quality: GraphicsQuality): { animated: THREE.Object3D[]; group: THREE.Group } {
+function createTrafficLayer(loops: TrafficLoop[], roads: WorldRoad[], maxLoops: number, enableShadows: boolean, quality: GraphicsQuality, modelConfig: ModelConfig): { animated: THREE.Object3D[]; group: THREE.Group } {
   const group = new THREE.Group();
   const animated: THREE.Object3D[] = [];
 
@@ -2565,6 +2631,7 @@ function createTrafficLayer(loops: TrafficLoop[], roads: WorldRoad[], maxLoops: 
     vehicle.userData.walkPath = loop.path.map((point) => new THREE.Vector3(point.x, 0.02, point.z));
     vehicle.userData.walkSpeed = loop.speed;
     vehicle.userData.pathOffset = loop.phase;
+    applyModelTransformById(vehicle, modelConfig, trafficVehicleModelId(loop.kind));
     group.add(vehicle);
     animated.push(vehicle);
   });
@@ -2835,7 +2902,7 @@ function addDistrictAccessOverlays(group: THREE.Group, currentState: GameState):
   }
 }
 
-function populateDynamicObjects(group: THREE.Group, currentState: GameState, guidanceLocationId: string | undefined, quality: GraphicsQuality): Interactable[] {
+function populateDynamicObjects(group: THREE.Group, currentState: GameState, guidanceLocationId: string | undefined, quality: GraphicsQuality, modelConfig: ModelConfig): Interactable[] {
   clearGroup(group);
   const interactables: Interactable[] = [];
   addDistrictAccessOverlays(group, currentState);
@@ -2882,9 +2949,10 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
         const storedProductIds = Object.entries(currentState.player.garageStorage)
           .filter(([, quantity]) => quantity > 0)
           .map(([productId]) => productId as ProductId);
-        const storageBay = createStorageBay(storedProductIds);
+        const storageBay = createStorageBay(storedProductIds, modelConfig);
         storageBay.position.set(position.x - 1.02, 0.02, position.z + 0.34);
         storageBay.rotation.y = 0.08;
+        applyModelTransformById(storageBay, modelConfig, "machine.storage_bay");
         group.add(storageBay);
       }
       addLabel(group, location.name, "#38bdf8", position, 1.1);
@@ -2898,7 +2966,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       const marker = addMarker("#f59e0b");
       marker.position.copy(position);
       group.add(marker);
-      const supplierStack = createCrateStack(["soda", "chips", "energy", "water", "coffee_can", "mystery_capsules", "mood_fizz", "phone_charger"]);
+      const supplierStack = createCrateStack(["soda", "chips", "energy", "water", "coffee_can", "mystery_capsules", "mood_fizz", "phone_charger"], modelConfig);
       supplierStack.position.set(position.x - 0.76, 0.02, position.z - 0.2);
       supplierStack.rotation.y = 0.45;
       group.add(supplierStack);
@@ -2912,10 +2980,13 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
     const machine = machineAtLocation(currentState, location.id);
     if (machine) {
       const owner = currentState.factions[machine.ownerFactionId];
-      group.add(createMachinePlacementDressing(machinePlacement, owner?.color ?? "#94a3b8", true));
+      const pad = createMachinePlacementDressing(machinePlacement, owner?.color ?? "#94a3b8", true);
+      applyModelTransformById(pad, modelConfig, "machine.placement_pad");
+      group.add(pad);
       const machineGroup = createMachineMesh(owner?.color ?? "#94a3b8", machine.damage, machine.upgrades ?? [], quality, machineStockRatio(machine), stockedProductIds(machine));
       machineGroup.position.copy(machinePlacement.position);
       machineGroup.rotation.y = machinePlacement.rotationY;
+      applyModelTransformById(machineGroup, modelConfig, "machine.vending");
       group.add(machineGroup);
       const servicePoint = machineInteractionPoint(machinePlacement);
       const pressure = machine.ownerFactionId === currentState.playerFactionId ? machineRoutePressure(currentState, machine) : undefined;
@@ -2930,7 +3001,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
         alarmRing.position.set(machinePlacement.position.x, 2.36, machinePlacement.position.z);
         group.add(alarmRing);
         addLabel(group, "ALARM", "#fb7185", machinePlacement.position, 3.08);
-        group.add(createAlarmIntruderActor(machinePlacement, currentState.worldTimeHours, activeAlarm.startedHour, quality));
+        group.add(createAlarmIntruderActor(machinePlacement, currentState.worldTimeHours, activeAlarm.startedHour, quality, modelConfig));
       }
       addLabel(group, machine.name, owner?.color ?? "#94a3b8", machinePlacement.position, 2.2);
       addGuidanceBeacon(owner?.color ?? "#94a3b8", machinePlacement.position);
@@ -2939,7 +3010,9 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
     } else {
       const access = districtProgress(currentState, location.districtId).access;
       const markerColor = access === "unlocked" ? "#a3e635" : districtAccessColor(access);
-      group.add(createMachinePlacementDressing(machinePlacement, markerColor, false));
+      const pad = createMachinePlacementDressing(machinePlacement, markerColor, false);
+      applyModelTransformById(pad, modelConfig, "machine.placement_pad");
+      group.add(pad);
       const marker = addMarker(markerColor);
       marker.position.copy(machinePlacement.position);
       group.add(marker);
@@ -2970,7 +3043,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
         return;
       }
 
-      group.add(createAmbientMachineActor(machine, location, index, currentState.worldTimeHours, quality));
+      group.add(createAmbientMachineActor(machine, location, index, currentState.worldTimeHours, quality, modelConfig));
     });
 
   renderedActivities
@@ -2994,7 +3067,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
         pulse.userData.phase = index * 0.7;
         group.add(pulse);
 
-        const actor = createActivityActor(activity, placement, servicePoint, currentState.worldTimeHours, quality, index);
+        const actor = createActivityActor(activity, placement, servicePoint, currentState.worldTimeHours, quality, modelConfig, index);
         actor.userData.phase = index * 0.9 + activity.hour;
         group.add(actor);
       }
@@ -3008,13 +3081,14 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
     const vehicleGroup = createVehicleMesh(quality);
     vehicleGroup.position.copy(vehiclePosition);
     vehicleGroup.rotation.y = vehiclePlacement.rotationY;
+    applyModelTransformById(vehicleGroup, modelConfig, "vehicle.route_van");
     group.add(vehicleGroup);
 
     const loadedProductIds = Object.entries(vehicle.inventory)
       .filter(([, quantity]) => quantity > 0)
       .map(([productId]) => productId as ProductId);
     if (loadedProductIds.length > 0) {
-      const trunkStack = createCrateStack(loadedProductIds);
+      const trunkStack = createCrateStack(loadedProductIds, modelConfig);
       trunkStack.position.set(vehiclePosition.x + 0.15, 0.76, vehiclePosition.z);
       trunkStack.scale.setScalar(0.58);
       trunkStack.rotation.y = vehicleGroup.rotation.y;
@@ -3027,7 +3101,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
   return interactables;
 }
 
-export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId, mapLayout, state, onPlayerPositionChange, onPlayerHeadingChange, onTargetChange }: ThreeSceneProps) {
+export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId, mapLayout, modelConfig, state, onPlayerPositionChange, onPlayerHeadingChange, onTargetChange }: ThreeSceneProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const stateRef = useRef(state);
   const dynamicGroupRef = useRef<THREE.Group | null>(null);
@@ -3096,6 +3170,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     updateCarriedCrateMount(carriedCrateMount, stateRef.current.player.carriedCrate ?? null);
 
     const { avatar: playerAvatar, cargoMount: playerAvatarCargoMount } = createPlayerAvatar(renderProfile.detail);
+    applyModelTransformById(playerAvatar, modelConfig, "unit.player");
     playerAvatar.visible = false;
     yaw.add(playerAvatar);
     playerAvatarCargoMountRef.current = playerAvatarCargoMount;
@@ -3179,6 +3254,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
 
       const buildingGroup = createBuilding(building.width, building.depth, building.height, building.style, building.signText, renderProfile.detail);
       buildingGroup.position.set(building.x, 0, building.z);
+      applyModelTransformById(buildingGroup, modelConfig, "building.storefront");
       addStaticObject(buildingGroup, building.x, building.z);
     }
 
@@ -3187,7 +3263,9 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     }
 
     mapLayout.backdropBuildings.slice(0, renderProfile.maxBackdropBuildings).forEach((building) => {
-      addStaticObject(createBackdropBuilding(building, renderProfile.detail), building.x, building.z);
+      const backdrop = createBackdropBuilding(building, renderProfile.detail);
+      applyModelTransformById(backdrop, modelConfig, "building.backdrop");
+      addStaticObject(backdrop, building.x, building.z);
     });
 
     mapLayout.patrolZones.slice(0, renderProfile.maxPatrolZones).forEach((zone) => {
@@ -3195,7 +3273,9 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     });
 
     for (const decoration of mapLayout.decorations.slice(0, renderProfile.decorationLimit)) {
-      addStaticObject(createWorldDecoration(decoration, renderProfile.enableLocalLights, renderProfile.detail), decoration.x, decoration.z);
+      const decorationGroup = createWorldDecoration(decoration, renderProfile.enableLocalLights, renderProfile.detail);
+      applyModelTransformById(decorationGroup, modelConfig, `prop.${decoration.kind}`);
+      addStaticObject(decorationGroup, decoration.x, decoration.z);
     }
 
     for (const label of districtLabels) {
@@ -3232,9 +3312,9 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       addStaticObject(child, worldPosition.x, worldPosition.z);
     });
 
-    const trafficLayer = createTrafficLayer(mapLayout.trafficLoops, mapLayout.roads, renderProfile.maxTrafficLoops, renderProfile.enableShadows, renderProfile.detail);
+    const trafficLayer = createTrafficLayer(mapLayout.trafficLoops, mapLayout.roads, renderProfile.maxTrafficLoops, renderProfile.enableShadows, renderProfile.detail, modelConfig);
     animatedProps.push(...trafficLayer.animated);
-    const policePatrolLayer = createPolicePatrolLayer(mapLayout.policePatrolPaths, renderProfile.maxPolicePatrols, renderProfile.detail);
+    const policePatrolLayer = createPolicePatrolLayer(mapLayout.policePatrolPaths, renderProfile.maxPolicePatrols, renderProfile.detail, modelConfig);
     animatedProps.push(...policePatrolLayer.animated);
     animatedPropsRef.current = animatedProps;
     scene.add(trafficLayer.group);
@@ -3274,7 +3354,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
         return;
       }
 
-      interactablesRef.current = populateDynamicObjects(dynamicGroupRef.current, stateRef.current, guidanceLocationIdRef.current, renderProfile.detail);
+      interactablesRef.current = populateDynamicObjects(dynamicGroupRef.current, stateRef.current, guidanceLocationIdRef.current, renderProfile.detail, modelConfig);
       if (debugVisible && debugGroupRef.current) {
         populateDebugOverlay(debugGroupRef.current, stateRef.current, interactablesRef.current, animatedProps, mapLayout);
       }
@@ -3513,7 +3593,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       carriedCrateSignatureRef.current = null;
       interactablesRef.current = [];
     };
-  }, [graphicsQuality, mapLayout]);
+  }, [graphicsQuality, mapLayout, modelConfig]);
 
   useEffect(() => {
     const dynamicGroup = dynamicGroupRef.current;
@@ -3521,12 +3601,12 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       return;
     }
 
-    interactablesRef.current = populateDynamicObjects(dynamicGroup, state, guidanceLocationId, graphicsQuality);
+    interactablesRef.current = populateDynamicObjects(dynamicGroup, state, guidanceLocationId, graphicsQuality, modelConfig);
     const debugGroup = debugGroupRef.current;
     if (debugGroup?.visible) {
       populateDebugOverlay(debugGroup, state, interactablesRef.current, animatedPropsRef.current, mapLayout);
     }
-  }, [graphicsQuality, guidanceLocationId, mapLayout, state]);
+  }, [graphicsQuality, guidanceLocationId, mapLayout, modelConfig, state]);
 
   useEffect(() => {
     const feedbackGroup = feedbackGroupRef.current;

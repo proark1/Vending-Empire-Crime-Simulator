@@ -1,8 +1,9 @@
-import { AlertTriangle, Building2, CircleDot, Copy, Eye, Gauge, History, Map, Music, Plus, Redo2, RotateCcw, RotateCw, Route, Save, Square, Trash2, Trees, Undo2 } from "lucide-react";
+import { AlertTriangle, Box, Building2, CircleDot, Copy, Eye, Gauge, History, Map, Music, Plus, Redo2, RotateCcw, RotateCw, Route, Save, Square, Trash2, Trees, Undo2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import * as THREE from "three";
 import type { AudioConfig } from "../game/content/audioConfig";
+import type { ModelConfig } from "../game/content/modelConfig";
 import { districts, machinePlacementAnchors, worldBounds, type BuildingVisualStyle, type WorldDecorationKind, type WorldMapLayout } from "../game/content/world";
 import { createDefaultWorldMapLayout, validateWorldMapLayout } from "../game/world/mapLayoutStorage";
 import {
@@ -20,16 +21,20 @@ import {
 } from "../game/save/api";
 import { createBuilding } from "../render/three/proceduralArt";
 import { AdminAudioEditor } from "./AdminAudioEditor";
+import { AdminModelEditor } from "./AdminModelEditor";
 
 type EditableLayer = "roads" | "buildings" | "backdropBuildings" | "decorations" | "patrolZones";
 type AdminViewMode = "2d" | "3d";
-type AdminTab = "map" | "audio";
+type AdminTab = "map" | "models" | "audio";
 
 interface AdminMapEditorProps {
   initialAudioConfig: AudioConfig;
   initialLayout: WorldMapLayout;
+  modelConfig: ModelConfig;
   onAudioReset: (config: AudioConfig) => void;
   onAudioSave: (config: AudioConfig) => void;
+  onModelReset: () => void;
+  onModelSave: (config: ModelConfig) => void;
   onReset: () => void;
   onSave: (layout: WorldMapLayout) => void;
 }
@@ -868,7 +873,7 @@ function AdminThreeMapEditor({ activeLayer, layout, onEditStart, onMove, onSelec
   );
 }
 
-export function AdminMapEditor({ initialAudioConfig, initialLayout, onAudioReset, onAudioSave, onReset, onSave }: AdminMapEditorProps) {
+export function AdminMapEditor({ initialAudioConfig, initialLayout, modelConfig, onAudioReset, onAudioSave, onModelReset, onModelSave, onReset, onSave }: AdminMapEditorProps) {
   const [adminSession, setAdminSession] = useState<AdminSession | null>(() => loadStoredAdminSession());
   const [credentials, setCredentials] = useState({ username: "", password: "" });
   const [loginError, setLoginError] = useState("");
@@ -1263,12 +1268,14 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, onAudioReset
     <main className="admin-shell">
       <header className="admin-header">
         <div>
-          {activeAdminTab === "audio" ? <Music size={20} aria-hidden="true" /> : <Map size={20} aria-hidden="true" />}
+          {activeAdminTab === "audio" ? <Music size={20} aria-hidden="true" /> : activeAdminTab === "models" ? <Box size={20} aria-hidden="true" /> : <Map size={20} aria-hidden="true" />}
           <div>
             <h1>Admin Console</h1>
             <span>
               {activeAdminTab === "audio"
                 ? "Sound, music, and voice controls"
+                : activeAdminTab === "models"
+                  ? "Live 3D model transforms"
                 : blockingIssues.length === 0 ? "Layout valid" : `${blockingIssues.length} blocking issue${blockingIssues.length === 1 ? "" : "s"}`}
             </span>
           </div>
@@ -1305,6 +1312,10 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, onAudioReset
         <button className={activeAdminTab === "map" ? "active" : ""} onClick={() => setActiveAdminTab("map")} type="button">
           <Map size={16} aria-hidden="true" />
           Map
+        </button>
+        <button className={activeAdminTab === "models" ? "active" : ""} onClick={() => setActiveAdminTab("models")} type="button">
+          <Box size={16} aria-hidden="true" />
+          3D Models
         </button>
         <button className={activeAdminTab === "audio" ? "active" : ""} onClick={() => setActiveAdminTab("audio")} type="button">
           <Music size={16} aria-hidden="true" />
@@ -1686,6 +1697,8 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, onAudioReset
           {status && <p className="admin-status">{status}</p>}
         </aside>
       </section>
+      ) : activeAdminTab === "models" ? (
+        <AdminModelEditor config={modelConfig} onReset={onModelReset} onSave={onModelSave} />
       ) : (
         <AdminAudioEditor initialConfig={initialAudioConfig} onReset={onAudioReset} onSave={onAudioSave} session={adminSession} />
       )}
