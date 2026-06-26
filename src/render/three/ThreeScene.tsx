@@ -17,6 +17,8 @@ import {
   type WorldRoad
 } from "../../game/content/world";
 import { pathOnRoads, roadBounds } from "../../game/world/roadGraph";
+import { WORLD_SCALE } from "../../game/world/scale";
+import { sidewalkFootprintsForRoads } from "../../game/world/sidewalks";
 import type { SceneFeedbackEvent, SceneTarget } from "./SceneTargets";
 import { resolveGraphicsProfile, type GraphicsQuality } from "./graphicsQuality";
 import { createAsphaltMaterial, createAtmosphere, createBuilding, createNpcCharacter, createRoadMaterial, createSidewalkMaterial, createSkyDome, createStreetProps } from "./proceduralArt";
@@ -106,7 +108,7 @@ const productCrateColors: Record<ProductId, string> = {
   focus_cubes: "#67e8f9"
 };
 
-const playerRadius = 0.36;
+const playerRadius = WORLD_SCALE.human.radius;
 const playerGroundY = 0;
 const playerJumpVelocity = 5.6;
 const playerGravity = -15.8;
@@ -306,6 +308,35 @@ function machineCollisionBox(placement: { position: THREE.Vector3; rotationY: nu
   return collisionBoxFromCenter(placement.position.x, placement.position.z, halfX * 2, halfZ * 2);
 }
 
+function collisionBoxFromRotatedCenter(x: number, z: number, localWidth: number, localDepth: number, rotationY: number): CollisionBox {
+  const halfWidth = localWidth / 2;
+  const halfDepth = localDepth / 2;
+  const cos = Math.abs(Math.cos(rotationY));
+  const sin = Math.abs(Math.sin(rotationY));
+  const halfX = cos * halfWidth + sin * halfDepth;
+  const halfZ = sin * halfWidth + cos * halfDepth;
+  return collisionBoxFromCenter(x, z, halfX * 2, halfZ * 2);
+}
+
+function activeVehiclePlacementForLocation(location: Location): { position: THREE.Vector3; rotationY: number } {
+  const streetSide = location.position.z > 0 ? -1 : 1;
+  return {
+    position: new THREE.Vector3(location.position.x + 4, 0, location.position.z + streetSide * 2.25),
+    rotationY: location.id === "garage" || location.position.z > 0 ? -Math.PI / 2 : Math.PI / 2
+  };
+}
+
+function vehicleCollisionBox(placement: { position: THREE.Vector3; rotationY: number }): CollisionBox {
+  const clearance = WORLD_SCALE.vehicle.clearance;
+  return collisionBoxFromRotatedCenter(
+    placement.position.x,
+    placement.position.z,
+    WORLD_SCALE.vehicle.length + clearance,
+    WORLD_SCALE.vehicle.width + clearance,
+    placement.rotationY
+  );
+}
+
 function collisionBoxesForState(currentState: GameState, layout: WorldMapLayout): CollisionBox[] {
   const boxes = [...buildingCollisionBoxesForLayout(layout)];
 
@@ -318,7 +349,7 @@ function collisionBoxesForState(currentState: GameState, layout: WorldMapLayout)
   const vehicle = activeVehicle(currentState);
   const vehicleLocation = vehicle ? currentState.locations[vehicle.locationId] : undefined;
   if (vehicle && vehicleLocation) {
-    boxes.push(collisionBoxFromCenter(vehicleLocation.position.x + 1.15, vehicleLocation.position.z + 0.88, 2.35, 1.2));
+    boxes.push(vehicleCollisionBox(activeVehiclePlacementForLocation(vehicleLocation)));
   }
 
   return boxes;

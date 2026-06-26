@@ -8,7 +8,7 @@ import { InteractionPanel } from "./ui/InteractionPanel";
 import { Minimap } from "./ui/Minimap";
 import { MissionTracker } from "./ui/MissionTracker";
 import { GuidanceArrow } from "./ui/GuidanceArrow";
-import { ClipboardList, MousePointer2, X } from "lucide-react";
+import { ClipboardList, Copy, LogOut, Menu, Network, Play, RotateCcw, Save, Users, X } from "lucide-react";
 import { AdminMapEditor } from "./ui/AdminMapEditor";
 import { getStarterMissionStep } from "./game/core/mission";
 import { activeConflictEvents, activeMachineAlarms, latestDayReport, selectedRouteTask } from "./game/core/selectors";
@@ -17,12 +17,15 @@ import { useGame } from "./hooks/useGame";
 import { ToastStack, type ToastMessage } from "./ui/ToastStack";
 import type { GameCommand, GameState, LocationId, Vec2 } from "./game/core/types";
 import { createDefaultAudioConfig, normalizeAudioConfig, type AudioConfig } from "./game/content/audioConfig";
-import type { WorldMapLayout } from "./game/content/world";
+import { worldBounds, type WorldMapLayout } from "./game/content/world";
+import { storyMissionArcs } from "./game/content/story";
 import { clearWorldMapLayout, loadWorldMapLayout, saveWorldMapLayout } from "./game/world/mapLayoutStorage";
 import { clearStoredGameSession, loadRemoteAudioConfig, loadRemoteGame, loadRemoteMapLayout, loadStoredGameSession, loginGame, registerGame, type GameSession } from "./game/save/api";
 import { loadGame } from "./game/save/storage";
 import { createInitialState } from "./game/content/initialState";
 import { configureGameAudio, playEventCue, playFeedbackCue, startGameAmbience, unlockGameAudio, updateGameAmbience } from "./ui/audio";
+import { MultiplayerClient } from "./game/network/multiplayerClient";
+import type { MultiplayerStatus } from "./game/network/protocol";
 
 function targetLocationId(target: SceneTarget | null, state: GameState): LocationId | null {
   if (!target) {
@@ -119,19 +122,80 @@ function createSceneFeedback(command: GameCommand, target: SceneTarget | null, s
 interface GameAppProps {
   initialState: GameState;
   mapLayout: WorldMapLayout;
+  onLogout: () => void;
   session: GameSession;
 }
 
-function GameApp({ initialState, mapLayout, session }: GameAppProps) {
-  const { state, sendCommand, advanceWorld, save, reload, restart } = useGame({ initialState, session });
+function previewCoordinate(value: number, min: number, max: number): number {
+  return ((value - min) / (max - min)) * 100;
+}
+
+function previewRect(rect: { depth: number; width: number; x: number; z: number }): { height: number; width: number; x: number; y: number } {
+  const x = previewCoordinate(rect.x - rect.width / 2, worldBounds.minX, worldBounds.maxX);
+  const y = previewCoordinate(rect.z - rect.depth / 2, worldBounds.minZ, worldBounds.maxZ);
+  const width = (rect.width / (worldBounds.maxX - worldBounds.minX)) * 100;
+  const height = (rect.depth / (worldBounds.maxZ - worldBounds.minZ)) * 100;
+
+  return {
+    x,
+    y,
+    width: Math.max(0.45, width),
+    height: Math.max(0.45, height)
+  };
+}
+
+function previewPoint(position: Vec2): { x: number; y: number } {
+  return {
+    x: previewCoordinate(position.x, worldBounds.minX, worldBounds.maxX),
+    y: previewCoordinate(position.z, worldBounds.minZ, worldBounds.maxZ)
+  };
+}
+
+function LandingWorldPreview({ mapLayout, state }: { mapLayout: WorldMapLayout; state?: GameState }) {
+  const installedMachines = state ? Object.values(state.machines).filter((machine) => machine.placementStatus === "installed").slice(0, 9) : [];
+
+  return (
+    <div className="landing-world-preview" aria-label="In-game city asset preview">
+      <svg viewBox="0 0 100 100" role="img" aria-label="Vendetta Vending city map">
+        <rect className="landing-map-ground" x="1.5" y="1.5" width="97" height="97" rx="4" />
+        {mapLayout.roads.slice(0, 24).map((road) => {
+          const rect = previewRect(road);
+          return <rect className="landing-map-road" key={road.id} x={rect.x} y={rect.y} width={rect.width} height={rect.height} rx="0.7" />;
+        })}
+        {mapLayout.buildings.slice(0, 58).map((building, index) => {
+          const rect = previewRect(building);
+          return <rect className={`landing-map-building ${building.style}`} key={`${building.signText}_${index}`} x={rect.x} y={rect.y} width={rect.width} height={rect.height} rx="0.55" />;
+        })}
+        {installedMachines.map((machine) => {
+          const location = state?.locations[machine.locationId];
+          if (!location) {
+            return null;
+          }
+
+          const point = previewPoint(location.position);
+          const owner = machine.ownerFactionId === state.playerFactionId ? "player" : "rival";
+          return <circle className={`landing-map-machine ${owner}`} key={machine.id} cx={point.x} cy={point.y} r="1.75" />;
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function GameApp({ initialState, mapLayout, onLogout, session }: GameAppProps) {
+  const multiplayerClient = useMemo(() => new MultiplayerClient(session.token), [session.token]);
+  const [multiplayerStatus, setMultiplayerStatus] = useState<MultiplayerStatus>(() => multiplayerClient.getStatus());
+  const { state, sendCommand, advanceWorld, save, reload, restart } = useGame({ initialState, multiplayerClient, multiplayerRole: multiplayerStatus.role, session });
   const [target, setTarget] = useState<SceneTarget | null>(null);
   const [entered, setEntered] = useState(false);
   const [dashboardOpen, setDashboardOpen] = useState(false);
+  const [gameMenuOpen, setGameMenuOpen] = useState(false);
+  const [roomCodeInput, setRoomCodeInput] = useState("");
   const [playerPosition, setPlayerPosition] = useState<Vec2>({ x: -9, z: 5.9 });
   const [playerHeadingDegrees, setPlayerHeadingDegrees] = useState(-180);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [sceneFeedback, setSceneFeedback] = useState<SceneFeedbackEvent | null>(null);
   const [graphicsQuality, setGraphicsQualityState] = useState<GraphicsQuality>(() => loadGraphicsQuality());
+  const gameMenuRef = useRef<HTMLDivElement | null>(null);
   const lastEventIdRef = useRef(state.eventLog[0]?.id ?? null);
   const lastMissionStepIdRef = useRef<string | null>(null);
   const lastServiceLocationIdRef = useRef<LocationId | null>(state.player.currentLocationId);
@@ -146,7 +210,21 @@ function GameApp({ initialState, mapLayout, session }: GameAppProps) {
   const guidanceLabel = activeAlarm ? "Machine alarm" : routeTask?.title;
   const nextActionLabel = activeAlarm ? "Answer machine alarm" : routeTask?.title ?? missionStep.title;
   const report = latestDayReport(state);
+  const playerFaction = state.factions[state.playerFactionId];
+  const installedPlayerMachines = Object.values(state.machines).filter((machine) => machine.ownerFactionId === state.playerFactionId && machine.placementStatus === "installed").length;
+  const rivalMachines = Object.values(state.machines).filter((machine) => machine.ownerFactionId !== state.playerFactionId && machine.placementStatus === "installed").length;
+  const starterArc = storyMissionArcs[0];
   const showDebugTools = useMemo(() => new URLSearchParams(window.location.search).has("debug"), []);
+  const multiplayerRoom = multiplayerStatus.room;
+  const multiplayerStatusLabel = multiplayerRoom
+    ? multiplayerStatus.role === "host"
+      ? `Hosting ${multiplayerRoom.code}`
+      : `Joined ${multiplayerRoom.code}`
+    : multiplayerStatus.connection === "connecting"
+      ? "Connecting"
+      : multiplayerStatus.connection === "error"
+        ? "Connection failed"
+        : "Not in a room";
 
   const addToast = useCallback((toast: Omit<ToastMessage, "id">) => {
     const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -160,6 +238,85 @@ function GameApp({ initialState, mapLayout, session }: GameAppProps) {
     saveGraphicsQuality(quality);
     setGraphicsQualityState(quality);
   }, []);
+
+  useEffect(() => {
+    const unsubscribe = multiplayerClient.onStatus(setMultiplayerStatus);
+    return () => {
+      unsubscribe();
+      multiplayerClient.disconnect();
+    };
+  }, [multiplayerClient]);
+
+  const handleCreateRoom = useCallback(() => {
+    multiplayerClient.createRoom();
+    addToast({
+      title: "Multiplayer",
+      message: "Creating a co-op room.",
+      tone: "neutral"
+    });
+  }, [addToast, multiplayerClient]);
+
+  const handleJoinRoom = useCallback(() => {
+    const roomCode = roomCodeInput.trim().toUpperCase();
+    if (!roomCode) {
+      return;
+    }
+
+    multiplayerClient.joinRoom(roomCode);
+    addToast({
+      title: "Multiplayer",
+      message: `Joining room ${roomCode}.`,
+      tone: "neutral"
+    });
+  }, [addToast, multiplayerClient, roomCodeInput]);
+
+  const handleLeaveRoom = useCallback(() => {
+    multiplayerClient.leaveRoom();
+    addToast({
+      title: "Multiplayer",
+      message: "Left co-op room.",
+      tone: "neutral"
+    });
+  }, [addToast, multiplayerClient]);
+
+  const handleCopyRoomCode = useCallback(() => {
+    if (!multiplayerRoom) {
+      return;
+    }
+
+    if (navigator.clipboard) {
+      void navigator.clipboard.writeText(multiplayerRoom.code);
+    }
+    addToast({
+      title: "Room code",
+      message: `${multiplayerRoom.code} ready to share.`,
+      tone: "good"
+    });
+  }, [addToast, multiplayerRoom]);
+
+  useEffect(() => {
+    if (!gameMenuOpen) {
+      return;
+    }
+
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (gameMenuRef.current && !gameMenuRef.current.contains(event.target as Node)) {
+        setGameMenuOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setGameMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [gameMenuOpen]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -239,6 +396,33 @@ function GameApp({ initialState, mapLayout, session }: GameAppProps) {
       restart();
     }
   }, [restart]);
+
+  const handleManualSave = useCallback(() => {
+    if (multiplayerStatus.role === "guest") {
+      addToast({
+        title: "Host controls save",
+        message: "This co-op room is saved by the host.",
+        tone: "warning"
+      });
+      setGameMenuOpen(false);
+      return;
+    }
+
+    save();
+    addToast({
+      title: "Game saved",
+      message: "Local save updated. Remote sync will run when the server is available.",
+      tone: "good"
+    });
+    setGameMenuOpen(false);
+  }, [addToast, multiplayerStatus.role, save]);
+
+  const handleLogout = useCallback(() => {
+    multiplayerClient.disconnect();
+    save();
+    setGameMenuOpen(false);
+    onLogout();
+  }, [multiplayerClient, onLogout, save]);
 
   const handleEnterDistrict = useCallback(() => {
     unlockGameAudio();
@@ -343,9 +527,116 @@ function GameApp({ initialState, mapLayout, session }: GameAppProps) {
         onTargetChange={setTarget}
       />
       <div className="world-vignette" aria-hidden="true" />
-      <Hud feedbackEvent={sceneFeedback} nextActionLabel={nextActionLabel} state={state} />
-      <MissionTracker state={state} playerPosition={playerPosition} />
-      <div className="crosshair" aria-hidden="true" />
+      {entered && <Hud feedbackEvent={sceneFeedback} nextActionLabel={nextActionLabel} state={state} />}
+      {entered && <MissionTracker state={state} playerPosition={playerPosition} />}
+      {entered && <div className="crosshair" aria-hidden="true" />}
+      <div className="game-menu" ref={gameMenuRef}>
+        <button
+          aria-expanded={gameMenuOpen}
+          aria-label={gameMenuOpen ? "Close game menu" : "Open game menu"}
+          className={gameMenuOpen ? "game-menu-button active" : "game-menu-button"}
+          onClick={() => setGameMenuOpen((current) => !current)}
+          type="button"
+        >
+          {gameMenuOpen ? <X size={20} aria-hidden="true" /> : <Menu size={20} aria-hidden="true" />}
+        </button>
+        {gameMenuOpen && (
+          <div className="game-menu-popover" role="menu">
+            <div className="game-menu-profile">
+              <span>Signed in</span>
+              <strong>{session.profile.name}</strong>
+            </div>
+            <div className="multiplayer-menu-panel" role="group" aria-label="Multiplayer room">
+              <div className="multiplayer-menu-heading">
+                <Network size={16} aria-hidden="true" />
+                <div>
+                  <span>Co-op room</span>
+                  <strong>{multiplayerStatusLabel}</strong>
+                </div>
+              </div>
+              {multiplayerRoom ? (
+                <>
+                  <div className="multiplayer-room-code">
+                    <span>{multiplayerRoom.code}</span>
+                    <button aria-label="Copy room code" onClick={handleCopyRoomCode} type="button">
+                      <Copy size={15} aria-hidden="true" />
+                    </button>
+                  </div>
+                  <div className="multiplayer-peer-list" aria-label="Connected players">
+                    {multiplayerRoom.peers.map((peer) => (
+                      <span key={peer.id}>
+                        <Users size={14} aria-hidden="true" />
+                        {peer.profile.name}
+                        {peer.id === multiplayerRoom.hostPeerId ? " host" : ""}
+                      </span>
+                    ))}
+                  </div>
+                  <span className="multiplayer-connection-note">
+                    {multiplayerStatus.directConnections > 0 ? `${multiplayerStatus.directConnections} direct peer link${multiplayerStatus.directConnections === 1 ? "" : "s"}` : "Using server relay until peer link opens"}
+                  </span>
+                  <button onClick={handleLeaveRoom} type="button">
+                    <LogOut size={16} aria-hidden="true" />
+                    Leave room
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button disabled={multiplayerStatus.connection === "connecting"} onClick={handleCreateRoom} type="button">
+                    <Network size={16} aria-hidden="true" />
+                    Create room
+                  </button>
+                  <div className="multiplayer-join-row">
+                    <input
+                      aria-label="Room code"
+                      maxLength={8}
+                      placeholder="ROOM"
+                      value={roomCodeInput}
+                      onChange={(event) => setRoomCodeInput(event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
+                    />
+                    <button disabled={!roomCodeInput.trim() || multiplayerStatus.connection === "connecting"} onClick={handleJoinRoom} type="button">
+                      Join
+                    </button>
+                  </div>
+                </>
+              )}
+              {multiplayerStatus.message && <p>{multiplayerStatus.message}</p>}
+            </div>
+            {entered && (
+              <button
+                onClick={() => {
+                  setDashboardOpen((current) => !current);
+                  setGameMenuOpen(false);
+                }}
+                role="menuitem"
+                type="button"
+              >
+                <ClipboardList size={16} aria-hidden="true" />
+                {dashboardOpen ? "Close ops" : "Open ops"}
+              </button>
+            )}
+            <button onClick={handleManualSave} role="menuitem" type="button">
+              <Save size={16} aria-hidden="true" />
+              Save game
+            </button>
+            <button
+              disabled={multiplayerStatus.role === "guest"}
+              onClick={() => {
+                setGameMenuOpen(false);
+                handleRestart();
+              }}
+              role="menuitem"
+              type="button"
+            >
+              <RotateCcw size={16} aria-hidden="true" />
+              Restart run
+            </button>
+            <button className="danger" onClick={handleLogout} role="menuitem" type="button">
+              <LogOut size={16} aria-hidden="true" />
+              Logout
+            </button>
+          </div>
+        )}
+      </div>
       {entered && <GuidanceArrow label={guidanceLabel} state={state} targetLocationId={guidanceLocationId} playerHeadingDegrees={playerHeadingDegrees} playerPosition={playerPosition} />}
       {entered && activeTarget && primaryInteraction && (
         <div className={`target-prompt ${primaryInteraction.disabled ? "disabled" : ""}`}>
@@ -358,31 +649,55 @@ function GameApp({ initialState, mapLayout, session }: GameAppProps) {
         </div>
       )}
       {!entered && (
-        <div className="entry-overlay">
-          <div className="entry-start">
-            <button className="entry-button" onClick={handleEnterDistrict} type="button">
-              Enter District
-            </button>
-            <div className="entry-controls" aria-label="Basic controls">
-              <span>
-                <kbd>WASD</kbd>
-                Move
-              </span>
-              <span>
-                <MousePointer2 size={15} aria-hidden="true" />
-                Look
-              </span>
-              <span>
-                <kbd>E</kbd>
-                Act
-              </span>
-              <span>
-                <kbd>M</kbd>
-                Ops
-              </span>
+        <section className="entry-overlay landing-overlay" aria-label="Vendetta Vending landing page">
+          <div className="landing-panel">
+            <div className="landing-copy">
+              <span className="landing-kicker">Cinderblock Row is open</span>
+              <h1>Vendetta Vending</h1>
+              <p>
+                A busted starter machine, a storage garage, and a city full of claimed corners. Build the legal route, lean into the grey market, or turn every glowing machine into a street-level flag before the rival vendors close in.
+              </p>
+              <button className="entry-button landing-primary" onClick={handleEnterDistrict} type="button">
+                <Play size={18} aria-hidden="true" />
+                Enter District
+              </button>
+              <div className="landing-story-beats" aria-label="Opening story beats">
+                {starterArc.beats.slice(0, 5).map((beat, index) => (
+                  <div className="landing-beat" key={beat}>
+                    <span>{index + 1}</span>
+                    <strong>{beat}</strong>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="landing-side">
+              <LandingWorldPreview mapLayout={mapLayout} state={state} />
+              <div className="landing-intel-grid" aria-label="Current route status">
+                <div>
+                  <span>Bankroll</span>
+                  <strong>${Math.round(playerFaction.money)}</strong>
+                </div>
+                <div>
+                  <span>Your machines</span>
+                  <strong>{installedPlayerMachines}</strong>
+                </div>
+                <div>
+                  <span>Rival claims</span>
+                  <strong>{rivalMachines}</strong>
+                </div>
+              </div>
+              <div className="landing-arc-list" aria-label="Story districts">
+                {storyMissionArcs.slice(1, 4).map((arc) => (
+                  <article className="landing-arc" key={arc.id}>
+                    <span>{state.districts[arc.districtId]?.name ?? arc.title}</span>
+                    <h2>{arc.title}</h2>
+                    <p>{arc.reward}</p>
+                  </article>
+                ))}
+              </div>
             </div>
           </div>
-        </div>
+        </section>
       )}
       {entered && (
         <button
@@ -484,62 +799,88 @@ function GameAccessGate({ mapLayout }: { mapLayout: WorldMapLayout }) {
     setAuthState((current) => (current.status === "login" ? { status: "login" } : current));
   }, []);
 
+  const handleLogout = useCallback(() => {
+    clearStoredGameSession();
+    setAccessMode("login");
+    setSubmitting(false);
+    setCredentials({ name: "", pin: "" });
+    setAuthState({ status: "login", message: "Logged out. Enter your name and PIN to continue." });
+  }, []);
+
   if (authState.status === "ready") {
-    return <GameApp key={authState.session.profile.id} initialState={authState.initialState} mapLayout={mapLayout} session={authState.session} />;
+    return <GameApp key={authState.session.profile.id} initialState={authState.initialState} mapLayout={mapLayout} onLogout={handleLogout} session={authState.session} />;
   }
 
   return (
     <main className="access-shell">
-      <form className="access-panel" onSubmit={handleLogin}>
-        <div>
+      <section className="access-landing" aria-label="Vendetta Vending access">
+        <div className="access-hero">
+          <span className="landing-kicker">Professional route crime sim</span>
           <h1>Vendetta Vending</h1>
-          <span>{authState.status === "loading" ? "Loading protected save" : accessMode === "register" ? "Create game profile" : "Load game profile"}</span>
+          <p className="access-story">
+            Start with a dented snack machine in Cinderblock Row and scale into a citywide vending empire where every placement creates cash flow, heat, and rival attention.
+          </p>
+          <LandingWorldPreview mapLayout={mapLayout} />
+          <div className="access-story-grid" aria-label="Campaign story arcs">
+            {storyMissionArcs.slice(0, 3).map((arc) => (
+              <article key={arc.id}>
+                <span>{arc.title}</span>
+                <p>{arc.beats.slice(0, 2).join(" / ")}</p>
+              </article>
+            ))}
+          </div>
         </div>
-        <div className="access-mode-tabs" aria-label="Game access mode">
-          <button
-            aria-pressed={accessMode === "login"}
-            disabled={authState.status === "loading" || submitting}
-            onClick={() => switchAccessMode("login")}
-            type="button"
-          >
-            Login
+        <form className="access-panel" onSubmit={handleLogin}>
+          <div>
+            <h2>Game Profile</h2>
+            <span>{authState.status === "loading" ? "Loading protected save" : accessMode === "register" ? "Create game profile" : "Load game profile"}</span>
+          </div>
+          <div className="access-mode-tabs" aria-label="Game access mode">
+            <button
+              aria-pressed={accessMode === "login"}
+              disabled={authState.status === "loading" || submitting}
+              onClick={() => switchAccessMode("login")}
+              type="button"
+            >
+              Login
+            </button>
+            <button
+              aria-pressed={accessMode === "register"}
+              disabled={authState.status === "loading" || submitting}
+              onClick={() => switchAccessMode("register")}
+              type="button"
+            >
+              Register
+            </button>
+          </div>
+          <label>
+            Player name
+            <input
+              autoComplete="username"
+              disabled={authState.status === "loading" || submitting}
+              maxLength={36}
+              value={credentials.name}
+              onChange={(event) => setCredentials((current) => ({ ...current, name: event.target.value }))}
+            />
+          </label>
+          <label>
+            PIN
+            <input
+              autoComplete={accessMode === "register" ? "new-password" : "current-password"}
+              disabled={authState.status === "loading" || submitting}
+              inputMode="numeric"
+              maxLength={12}
+              type="password"
+              value={credentials.pin}
+              onChange={(event) => setCredentials((current) => ({ ...current, pin: event.target.value }))}
+            />
+          </label>
+          {authState.status === "login" && authState.message && <p>{authState.message}</p>}
+          <button disabled={authState.status === "loading" || submitting} type="submit">
+            {submitting ? `${actionLabel}...` : actionLabel}
           </button>
-          <button
-            aria-pressed={accessMode === "register"}
-            disabled={authState.status === "loading" || submitting}
-            onClick={() => switchAccessMode("register")}
-            type="button"
-          >
-            Register
-          </button>
-        </div>
-        <label>
-          Player name
-          <input
-            autoComplete="username"
-            disabled={authState.status === "loading" || submitting}
-            maxLength={36}
-            value={credentials.name}
-            onChange={(event) => setCredentials((current) => ({ ...current, name: event.target.value }))}
-          />
-        </label>
-        <label>
-          PIN
-          <input
-            autoComplete={accessMode === "register" ? "new-password" : "current-password"}
-            disabled={authState.status === "loading" || submitting}
-            inputMode="numeric"
-            maxLength={12}
-            type="password"
-            value={credentials.pin}
-            onChange={(event) => setCredentials((current) => ({ ...current, pin: event.target.value }))}
-          />
-        </label>
-        {authState.status === "login" && authState.message && <p>{authState.message}</p>}
-        <button disabled={authState.status === "loading" || submitting} type="submit">
-          {submitting ? `${actionLabel}...` : actionLabel}
-        </button>
-      </form>
+        </form>
+      </section>
     </main>
   );
 }

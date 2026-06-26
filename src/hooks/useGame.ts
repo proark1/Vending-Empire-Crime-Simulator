@@ -6,9 +6,13 @@ import { loadGame, saveGame, clearSave } from "../game/save/storage";
 import { ApiError, loadRemoteGame, saveRemoteGame, saveRemoteGameBeacon, updateStoredGameSessionSaveRevision, type GameSession } from "../game/save/api";
 import { planNpcCommands } from "../game/ai/rivalAi";
 import { reduceCommands, reduceGameState } from "../game/systems/reducer";
+import type { MultiplayerClient } from "../game/network/multiplayerClient";
+import type { MultiplayerRole } from "../game/network/protocol";
 
 export interface UseGameOptions {
   initialState?: GameState;
+  multiplayerClient?: MultiplayerClient | null;
+  multiplayerRole?: MultiplayerRole;
   session?: GameSession | null;
 }
 
@@ -28,6 +32,13 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
   const sessionRef = useRef<GameSession | null>(options.session ?? null);
   const remoteSaveRevisionRef = useRef<number | null>(options.session?.saveRevision ?? null);
   const saveTimerRef = useRef<number | null>(null);
+  const multiplayerClientRef = useRef<MultiplayerClient | null>(options.multiplayerClient ?? null);
+  const multiplayerRoleRef = useRef<MultiplayerRole>(options.multiplayerRole ?? "idle");
+  const multiplayerSnapshotSequenceRef = useRef(0);
+  const lastRemoteSnapshotSequenceRef = useRef(0);
+  const lastRoomPeerCountRef = useRef(0);
+  const sentCommandSequenceRef = useRef(0);
+  const seenRemoteCommandIdsRef = useRef(new Set<string>());
   const transport = useMemo(() => new LocalTransport(), []);
 
   useEffect(() => {
@@ -38,6 +49,14 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
     sessionRef.current = options.session ?? null;
     remoteSaveRevisionRef.current = options.session?.saveRevision ?? null;
   }, [options.session]);
+
+  useEffect(() => {
+    multiplayerClientRef.current = options.multiplayerClient ?? null;
+  }, [options.multiplayerClient]);
+
+  useEffect(() => {
+    multiplayerRoleRef.current = options.multiplayerRole ?? "idle";
+  }, [options.multiplayerRole]);
 
   const loadLatestRemoteSave = useCallback((session: GameSession) => {
     void loadRemoteGame(session)
@@ -54,6 +73,10 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
   }, []);
 
   const persistState = useCallback((mode: "normal" | "beacon" = "normal") => {
+    if (multiplayerRoleRef.current === "guest") {
+      return;
+    }
+
     const currentState = stateRef.current;
     const session = sessionRef.current;
     saveGame(currentState);
@@ -88,6 +111,10 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
   }, [loadLatestRemoteSave]);
 
   useEffect(() => {
+    if (options.multiplayerRole === "guest") {
+      return;
+    }
+
     saveGame(state);
 
     if (saveTimerRef.current) {
@@ -104,7 +131,7 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
         saveTimerRef.current = null;
       }
     };
-  }, [persistState, state]);
+  }, [options.multiplayerRole, persistState, state]);
 
   useEffect(() => {
     const saveBeforeLeaving = () => {
@@ -141,8 +168,85 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
     transport.connect(applyCommand);
   }, [applyCommand, transport]);
 
+  useEffect(() => {
+    const client = options.multiplayerClient;
+    if (!client) {
+      return;
+    }
+
+    return client.onGameMessage((message) => {
+      if (message.type === "snapshot") {
+        if (multiplayerRoleRef.current !== "guest" || message.sequence <= lastRemoteSnapshotSequenceRef.current) {
+          return;
+        }
+
+        lastRemoteSnapshotSequenceRef.current = message.sequence;
+        saveTimerRef.current && window.clearTimeout(saveTimerRef.current);
+        setState(message.state);
+        transport.emitSnapshot(message.state);
+        return;
+      }
+
+      if (message.type !== "command" || multiplayerRoleRef.current !== "host" || seenRemoteCommandIdsRef.current.has(message.commandId)) {
+        return;
+      }
+
+      seenRemoteCommandIdsRef.current.add(message.commandId);
+      if (seenRemoteCommandIdsRef.current.size > 500) {
+        seenRemoteCommandIdsRef.current = new Set([...seenRemoteCommandIdsRef.current].slice(-250));
+      }
+      transport.sendCommand(message.command);
+    });
+  }, [options.multiplayerClient, transport]);
+
+  useEffect(() => {
+    const client = options.multiplayerClient;
+    if (!client) {
+      return;
+    }
+
+    return client.onStatus((status) => {
+      if (status.role !== "host" || !status.room) {
+        lastRoomPeerCountRef.current = 0;
+        return;
+      }
+
+      const peerCount = status.room.peers.length;
+      if (peerCount === lastRoomPeerCountRef.current) {
+        return;
+      }
+
+      lastRoomPeerCountRef.current = peerCount;
+      client.sendGameMessage({
+        sequence: ++multiplayerSnapshotSequenceRef.current,
+        state: stateRef.current,
+        type: "snapshot"
+      });
+    });
+  }, [options.multiplayerClient]);
+
+  useEffect(() => {
+    const client = multiplayerClientRef.current;
+    if (!client || multiplayerRoleRef.current !== "host" || !client.getStatus().room) {
+      return;
+    }
+
+    client.sendGameMessage({
+      sequence: ++multiplayerSnapshotSequenceRef.current,
+      state,
+      type: "snapshot"
+    });
+  }, [state]);
+
   const sendCommand = useCallback(
     (command: GameCommand) => {
+      const client = multiplayerClientRef.current;
+      if (multiplayerRoleRef.current === "guest" && client?.getStatus().room) {
+        const commandId = `${client.getStatus().localPeer?.id ?? "guest"}_${Date.now()}_${++sentCommandSequenceRef.current}`;
+        client.sendGameMessage({ command, commandId, type: "command" });
+        return;
+      }
+
       transport.sendCommand(command);
     },
     [transport]
@@ -150,6 +254,10 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
 
   const advanceWorld = useCallback(
     (hours: number) => {
+      if (multiplayerRoleRef.current === "guest") {
+        return;
+      }
+
       setState((current) => {
         const timeResult = reduceGameState(current, { type: "advance_time", actorId: current.playerFactionId, hours });
         const npcCommands = planNpcCommands(timeResult.state);
@@ -168,6 +276,10 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
   }, [persistState]);
 
   const reload = useCallback(() => {
+    if (multiplayerRoleRef.current === "guest") {
+      return;
+    }
+
     const session = sessionRef.current;
     if (!session) {
       setState(loadGame());
@@ -178,6 +290,10 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
   }, [loadLatestRemoteSave]);
 
   const restart = useCallback(() => {
+    if (multiplayerRoleRef.current === "guest") {
+      return;
+    }
+
     const nextState = createInitialState();
     clearSave();
     saveGame(nextState);

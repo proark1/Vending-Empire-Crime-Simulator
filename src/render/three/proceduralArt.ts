@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { WORLD_SCALE } from "../../game/world/scale";
 import type { GraphicsQuality } from "./graphicsQuality";
 
 type TexturePainter = (context: CanvasRenderingContext2D, size: number) => void;
@@ -270,37 +271,45 @@ function addWindows(group: THREE.Group, width: number, height: number, depth: nu
   const mullionMaterial = new THREE.MeshBasicMaterial({ color: "#020617", transparent: true, opacity: 0.78 });
   const sillMaterial = new THREE.MeshStandardMaterial({ color: "#cbd5e1", roughness: 0.7, metalness: 0.05 });
 
-  const cols = Math.max(2, Math.floor(width / (quality === "high" ? 1.08 : quality === "low" ? 1.8 : 1.3)));
-  const rows = Math.max(1, Math.floor(buildingHeight / (quality === "high" ? 1.02 : quality === "low" ? 1.75 : 1.25)));
+  if (buildingHeight < WORLD_SCALE.building.minimumStorefrontHeight + 0.55) {
+    return;
+  }
+
+  const upperWindow = WORLD_SCALE.building.upperWindow;
+  const firstRowY = 2.75;
+  const rowSpacing = WORLD_SCALE.building.floorHeight;
+  const cols = Math.max(1, Math.floor((width - 0.8) / (quality === "high" ? 1.25 : quality === "low" ? 2.0 : 1.45)));
+  const rows = Math.max(1, Math.floor((buildingHeight - firstRowY + rowSpacing * 0.45) / rowSpacing));
+  const usableWidth = Math.max(0.1, width - 1.1);
   for (let row = 0; row < rows; row += 1) {
     for (let col = 0; col < cols; col += 1) {
       if ((row + col) % (quality === "low" ? 2 : 3) === 0 && style !== "arcade") {
         continue;
       }
 
-      const x = -width / 2 + 0.55 + col * ((width - 1.1) / Math.max(1, cols - 1));
-      const y = 0.95 + row * 0.82;
-      if (y > height - 0.4) {
+      const x = cols === 1 ? 0 : -usableWidth / 2 + col * (usableWidth / Math.max(1, cols - 1));
+      const y = firstRowY + row * rowSpacing;
+      if (y + upperWindow.frameHeight / 2 > height - 0.35) {
         continue;
       }
       const lit = style === "arcade" || ((row * 7 + col * 5 + Math.round(width * 10)) % 9) < 5;
       const windowMaterial = litWindowMaterial(style, lit);
-      addPlane(group, 0.48, 0.42, frameMaterial, new THREE.Vector3(x, y, -depth / 2 - 0.012), 0);
-      addPlane(group, 0.38, 0.32, windowMaterial, new THREE.Vector3(x, y, -depth / 2 - 0.011), 0);
+      addPlane(group, upperWindow.frameWidth, upperWindow.frameHeight, frameMaterial, new THREE.Vector3(x, y, -depth / 2 - 0.012), 0);
+      addPlane(group, upperWindow.width, upperWindow.height, windowMaterial, new THREE.Vector3(x, y, -depth / 2 - 0.011), 0);
       if (quality !== "low") {
-        addPlane(group, 0.024, 0.32, mullionMaterial, new THREE.Vector3(x, y, -depth / 2 - 0.018), 0);
-        addPlane(group, 0.38, 0.018, mullionMaterial, new THREE.Vector3(x, y, -depth / 2 - 0.019), 0);
-        const glint = addPlane(group, 0.028, 0.28, new THREE.MeshBasicMaterial({ color: "#f8fafc", transparent: true, opacity: lit ? 0.18 : 0.05 }), new THREE.Vector3(x - 0.12, y + 0.01, -depth / 2 - 0.02), 0);
+        addPlane(group, 0.028, upperWindow.height, mullionMaterial, new THREE.Vector3(x, y, -depth / 2 - 0.018), 0);
+        addPlane(group, upperWindow.width, 0.024, mullionMaterial, new THREE.Vector3(x, y, -depth / 2 - 0.019), 0);
+        const glint = addPlane(group, 0.035, upperWindow.height * 0.82, new THREE.MeshBasicMaterial({ color: "#f8fafc", transparent: true, opacity: lit ? 0.18 : 0.05 }), new THREE.Vector3(x - upperWindow.width * 0.28, y + 0.01, -depth / 2 - 0.02), 0);
         glint.rotation.z = -0.28;
-        const sill = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.045, 0.12), sillMaterial);
-        sill.position.set(x, y - 0.21, -depth / 2 - 0.045);
+        const sill = new THREE.Mesh(new THREE.BoxGeometry(upperWindow.frameWidth + 0.12, upperWindow.sillHeight, 0.12), sillMaterial);
+        sill.position.set(x, y - upperWindow.frameHeight / 2 - upperWindow.sillHeight / 2, -depth / 2 - 0.045);
         sill.castShadow = true;
         group.add(sill);
       }
 
       if (quality === "high" && row % 2 === 1) {
-        const awning = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.055, 0.2), new THREE.MeshStandardMaterial({ color: style === "rival" ? "#fb7185" : "#38bdf8", roughness: 0.58, metalness: 0.06 }));
-        awning.position.set(x, y + 0.27, -depth / 2 - 0.09);
+        const awning = new THREE.Mesh(new THREE.BoxGeometry(upperWindow.frameWidth + 0.18, 0.055, 0.2), new THREE.MeshStandardMaterial({ color: style === "rival" ? "#fb7185" : "#38bdf8", roughness: 0.58, metalness: 0.06 }));
+        awning.position.set(x, y + upperWindow.frameHeight / 2 + 0.1, -depth / 2 - 0.09);
         awning.castShadow = true;
         group.add(awning);
       }
@@ -311,11 +320,11 @@ function addWindows(group: THREE.Group, width: number, height: number, depth: nu
     return;
   }
 
-  const sideRows = Math.max(1, Math.floor(buildingHeight / 1.55));
+  const sideRows = Math.max(1, Math.floor((buildingHeight - firstRowY + rowSpacing * 0.45) / rowSpacing));
   const sideCols = Math.max(1, Math.floor(depth / 1.45));
   for (let row = 0; row < sideRows; row += 1) {
-    const y = 1.05 + row * 0.92;
-    if (y > height - 0.45) {
+    const y = firstRowY + row * rowSpacing;
+    if (y + upperWindow.frameHeight / 2 > height - 0.45) {
       continue;
     }
 
@@ -329,12 +338,12 @@ function addWindows(group: THREE.Group, width: number, height: number, depth: nu
         const x = side * (width / 2 + 0.012);
         const lit = style === "arcade" || ((row * 4 + col * 3 + side + Math.round(depth * 10)) % 8) < 4;
         const windowMaterial = litWindowMaterial(style, lit);
-        addPlane(group, 0.38, 0.34, frameMaterial, new THREE.Vector3(x, y, z), side > 0 ? Math.PI / 2 : -Math.PI / 2);
-        addPlane(group, 0.3, 0.26, windowMaterial, new THREE.Vector3(x + side * 0.002, y, z), side > 0 ? Math.PI / 2 : -Math.PI / 2);
-        addPlane(group, 0.3, 0.016, mullionMaterial, new THREE.Vector3(x + side * 0.004, y, z), side > 0 ? Math.PI / 2 : -Math.PI / 2);
+        addPlane(group, upperWindow.frameWidth * 0.88, upperWindow.frameHeight * 0.9, frameMaterial, new THREE.Vector3(x, y, z), side > 0 ? Math.PI / 2 : -Math.PI / 2);
+        addPlane(group, upperWindow.width * 0.86, upperWindow.height * 0.88, windowMaterial, new THREE.Vector3(x + side * 0.002, y, z), side > 0 ? Math.PI / 2 : -Math.PI / 2);
+        addPlane(group, upperWindow.width * 0.86, 0.018, mullionMaterial, new THREE.Vector3(x + side * 0.004, y, z), side > 0 ? Math.PI / 2 : -Math.PI / 2);
         if (quality === "high" && (row + col + side) % 3 === 0) {
           const ac = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.16, 0.22), new THREE.MeshStandardMaterial({ color: "#94a3b8", roughness: 0.52, metalness: 0.32 }));
-          ac.position.set(x + side * 0.055, y - 0.24, z);
+          ac.position.set(x + side * 0.055, y - upperWindow.frameHeight / 2 - 0.08, z);
           ac.rotation.y = side > 0 ? Math.PI / 2 : -Math.PI / 2;
           ac.castShadow = true;
           group.add(ac);
@@ -347,8 +356,8 @@ function addWindows(group: THREE.Group, width: number, height: number, depth: nu
   for (let col = 0; col < rearCols; col += 1) {
     const x = -width / 2 + 0.7 + col * ((width - 1.4) / Math.max(1, rearCols - 1));
     const windowMaterial = litWindowMaterial(style, col % 2 === 0);
-    addPlane(group, 0.4, 0.34, frameMaterial, new THREE.Vector3(x, Math.min(height - 0.55, 1.3), depth / 2 + 0.012), Math.PI);
-    addPlane(group, 0.31, 0.25, windowMaterial, new THREE.Vector3(x, Math.min(height - 0.55, 1.3), depth / 2 + 0.014), Math.PI);
+    addPlane(group, upperWindow.frameWidth * 0.88, upperWindow.frameHeight * 0.9, frameMaterial, new THREE.Vector3(x, Math.min(height - 0.75, firstRowY), depth / 2 + 0.012), Math.PI);
+    addPlane(group, upperWindow.width * 0.86, upperWindow.height * 0.88, windowMaterial, new THREE.Vector3(x, Math.min(height - 0.75, firstRowY), depth / 2 + 0.014), Math.PI);
   }
 }
 
@@ -385,7 +394,7 @@ function addFacadeDetails(group: THREE.Group, width: number, depth: number, heig
   foundation.receiveShadow = true;
   group.add(foundation);
 
-  for (let y = 1.65; y < height - 0.36; y += 0.92) {
+  for (let y = 2.75; y < height - 0.36; y += WORLD_SCALE.building.floorHeight) {
     const band = new THREE.Mesh(new THREE.BoxGeometry(width + 0.08, 0.045, 0.08), darkMaterial);
     band.position.set(0, y, frontZ - 0.045);
     group.add(band);
@@ -398,23 +407,27 @@ function addFacadeDetails(group: THREE.Group, width: number, depth: number, heig
     group.add(corner);
   }
 
-  const storefrontY = 0.82;
+  const doorScale = WORLD_SCALE.building.door;
+  const storefrontWindow = WORLD_SCALE.building.storefrontWindow;
+  const doorBottom = 0.08;
+  const doorY = doorBottom + doorScale.height / 2;
+  const frameY = doorBottom + doorScale.frameHeight / 2;
   const doorX = -Math.min(width * 0.28, 1.1);
-  const doorFrame = new THREE.Mesh(new THREE.BoxGeometry(0.76, 1.44, 0.08), darkMaterial);
-  doorFrame.position.set(doorX, storefrontY, frontZ - 0.055);
+  const doorFrame = new THREE.Mesh(new THREE.BoxGeometry(doorScale.frameWidth, doorScale.frameHeight, 0.08), darkMaterial);
+  doorFrame.position.set(doorX, frameY, frontZ - 0.055);
   doorFrame.castShadow = true;
   group.add(doorFrame);
 
-  const door = new THREE.Mesh(new THREE.BoxGeometry(0.56, 1.22, 0.035), glassMaterial);
-  door.position.set(doorX, storefrontY, frontZ - 0.106);
+  const door = new THREE.Mesh(new THREE.BoxGeometry(doorScale.width, doorScale.height, 0.035), glassMaterial);
+  door.position.set(doorX, doorY, frontZ - 0.106);
   group.add(door);
 
   const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.18, 8), new THREE.MeshBasicMaterial({ color: "#f8fafc" }));
-  handle.position.set(doorX + 0.17, storefrontY, frontZ - 0.13);
+  handle.position.set(doorX + doorScale.width * 0.32, 1.08, frontZ - 0.13);
   handle.rotation.x = Math.PI / 2;
   group.add(handle);
 
-  const threshold = new THREE.Mesh(new THREE.BoxGeometry(0.88, 0.08, 0.22), concreteMaterial);
+  const threshold = new THREE.Mesh(new THREE.BoxGeometry(doorScale.frameWidth + 0.16, 0.08, 0.22), concreteMaterial);
   threshold.position.set(doorX, 0.11, frontZ - 0.22);
   threshold.castShadow = true;
   threshold.receiveShadow = true;
@@ -426,25 +439,27 @@ function addFacadeDetails(group: THREE.Group, width: number, depth: number, heig
 
   const displayWidth = Math.min(width * 0.44, 1.9);
   const displayX = Math.min(width * 0.18, 1.0);
-  const displayFrame = new THREE.Mesh(new THREE.BoxGeometry(displayWidth + 0.18, 0.94, 0.075), darkMaterial);
-  displayFrame.position.set(displayX, 0.9, frontZ - 0.054);
+  const displayFrameY = storefrontWindow.sillHeight + storefrontWindow.frameHeight / 2;
+  const displayGlassY = storefrontWindow.sillHeight + storefrontWindow.height / 2;
+  const displayFrame = new THREE.Mesh(new THREE.BoxGeometry(displayWidth + 0.18, storefrontWindow.frameHeight, 0.075), darkMaterial);
+  displayFrame.position.set(displayX, displayFrameY, frontZ - 0.054);
   displayFrame.castShadow = true;
   group.add(displayFrame);
 
-  const displayGlass = new THREE.Mesh(new THREE.BoxGeometry(displayWidth, 0.76, 0.034), glassMaterial);
-  displayGlass.position.set(displayX, 0.9, frontZ - 0.104);
+  const displayGlass = new THREE.Mesh(new THREE.BoxGeometry(displayWidth, storefrontWindow.height, 0.034), glassMaterial);
+  displayGlass.position.set(displayX, displayGlassY, frontZ - 0.104);
   group.add(displayGlass);
 
-  const displayGlare = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.68, 0.012), new THREE.MeshBasicMaterial({ color: "#f8fafc", transparent: true, opacity: 0.18 }));
-  displayGlare.position.set(displayX - displayWidth * 0.32, 0.9, frontZ - 0.126);
+  const displayGlare = new THREE.Mesh(new THREE.BoxGeometry(0.035, storefrontWindow.height * 0.86, 0.012), new THREE.MeshBasicMaterial({ color: "#f8fafc", transparent: true, opacity: 0.18 }));
+  displayGlare.position.set(displayX - displayWidth * 0.32, displayGlassY, frontZ - 0.126);
   displayGlare.rotation.z = -0.26;
   group.add(displayGlare);
 
   if (style === "garage" || style === "supplier") {
-    const rollup = new THREE.Mesh(new THREE.BoxGeometry(displayWidth + 0.04, 0.78, 0.03), new THREE.MeshStandardMaterial({ color: style === "garage" ? "#64748b" : "#92400e", roughness: 0.56, metalness: 0.18 }));
-    rollup.position.set(displayX, 0.9, frontZ - 0.132);
+    const rollup = new THREE.Mesh(new THREE.BoxGeometry(displayWidth + 0.04, storefrontWindow.height, 0.03), new THREE.MeshStandardMaterial({ color: style === "garage" ? "#64748b" : "#92400e", roughness: 0.56, metalness: 0.18 }));
+    rollup.position.set(displayX, displayGlassY, frontZ - 0.132);
     group.add(rollup);
-    for (let y = 0.56; y <= 1.22; y += 0.12) {
+    for (let y = storefrontWindow.sillHeight + 0.1; y <= storefrontWindow.sillHeight + storefrontWindow.height - 0.1; y += 0.16) {
       const slat = new THREE.Mesh(new THREE.BoxGeometry(displayWidth + 0.08, 0.018, 0.012), darkMaterial);
       slat.position.set(displayX, y, frontZ - 0.154);
       group.add(slat);
@@ -464,7 +479,7 @@ function addFacadeDetails(group: THREE.Group, width: number, depth: number, heig
   group.add(pipe);
 
   const vent = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.25, 0.08), new THREE.MeshStandardMaterial({ color: "#64748b", roughness: 0.54, metalness: 0.32 }));
-  vent.position.set(-width / 2 + 0.55, Math.min(height - 0.45, 1.95), frontZ - 0.075);
+  vent.position.set(-width / 2 + 0.55, Math.min(height - 0.45, 2.35), frontZ - 0.075);
   vent.castShadow = true;
   group.add(vent);
   for (let i = 0; i < 4; i += 1) {
@@ -524,7 +539,7 @@ function addFacadeDetails(group: THREE.Group, width: number, depth: number, heig
   if (quality === "high") {
     const stairMaterial = new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.55, metalness: 0.32 });
     for (let step = 0; step < 4; step += 1) {
-      const tread = new THREE.Mesh(new THREE.BoxGeometry(0.94 - step * 0.08, 0.045, 0.26), stairMaterial);
+      const tread = new THREE.Mesh(new THREE.BoxGeometry(doorScale.frameWidth + 0.08 - step * 0.08, 0.045, 0.26), stairMaterial);
       tread.position.set(doorX, 0.14 + step * 0.075, frontZ - 0.36 - step * 0.17);
       tread.castShadow = true;
       tread.receiveShadow = true;
@@ -560,6 +575,7 @@ function addFacadeDetails(group: THREE.Group, width: number, depth: number, heig
 
 export function createBuilding(width: number, depth: number, height: number, style: BuildingStyle, signText: string, quality: GraphicsQuality = "medium"): THREE.Group {
   const group = new THREE.Group();
+  const visualHeight = Math.max(height, WORLD_SCALE.building.minimumStorefrontHeight);
   const materialByStyle: Record<BuildingStyle, THREE.MeshStandardMaterial> = {
     garage: createWallMaterial("#475569", "rgba(15, 23, 42, 0.26)", quality),
     supplier: createWallMaterial("#6b3f17", "rgba(15, 23, 42, 0.28)", quality),
@@ -579,14 +595,14 @@ export function createBuilding(width: number, depth: number, height: number, sty
     rival: "#fb7185"
   };
 
-  const body = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), materialByStyle[style]);
-  body.position.y = height / 2;
+  const body = new THREE.Mesh(new THREE.BoxGeometry(width, visualHeight, depth), materialByStyle[style]);
+  body.position.y = visualHeight / 2;
   body.castShadow = quality !== "low";
   body.receiveShadow = true;
   group.add(body);
 
-  addFacadeDetails(group, width, depth, height, style, signAccent[style], quality);
-  addWindows(group, width, height, depth, height, style, quality);
+  addFacadeDetails(group, width, depth, visualHeight, style, signAccent[style], quality);
+  addWindows(group, width, visualHeight, depth, visualHeight, style, quality);
 
   const signMaterial = new THREE.MeshStandardMaterial({
     map: createSignTexture(signText, "rgba(15, 23, 42, 0.96)", signAccent[style]),
@@ -595,11 +611,12 @@ export function createBuilding(width: number, depth: number, height: number, sty
     transparent: true,
     roughness: 0.35
   });
-  addPlane(group, Math.min(width * 0.72, 3.8), 0.58, signMaterial, new THREE.Vector3(0, Math.min(height - 0.55, 2.2), -depth / 2 - 0.025), 0);
+  const signY = Math.min(visualHeight - 0.46, Math.max(2.52, WORLD_SCALE.building.door.frameHeight + 0.34));
+  addPlane(group, Math.min(width * 0.72, 3.8), 0.58, signMaterial, new THREE.Vector3(0, signY, -depth / 2 - 0.025), 0);
 
   const awningMaterial = new THREE.MeshStandardMaterial({ color: signAccent[style], roughness: 0.62, metalness: 0.08 });
   const awning = new THREE.Mesh(new THREE.BoxGeometry(Math.min(width * 0.55, 3.2), 0.12, 0.48), awningMaterial);
-  awning.position.set(0, Math.min(height - 0.95, 1.55), -depth / 2 - 0.22);
+  awning.position.set(0, Math.min(visualHeight - 0.95, WORLD_SCALE.building.door.frameHeight + 0.05), -depth / 2 - 0.22);
   awning.castShadow = true;
   group.add(awning);
 
