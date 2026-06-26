@@ -18,20 +18,28 @@ import {
 } from "../game/core/selectors";
 import type { SceneTarget } from "../render/three/SceneTargets";
 
+export type PrimaryInteractionTone = "neutral" | "good" | "warning" | "danger";
+
+interface PrimaryInteractionWork {
+  durationMs?: number;
+  holdVerb?: string;
+  tone?: PrimaryInteractionTone;
+}
+
 export type PrimaryInteraction =
-  | {
+  | ({
       kind: "command";
       label: string;
       command: GameCommand;
       disabled?: boolean;
       disabledReason?: string;
-    }
-  | {
+    } & PrimaryInteractionWork)
+  | ({
       kind: "save";
       label: string;
       disabled?: boolean;
       disabledReason?: string;
-    };
+    } & PrimaryInteractionWork);
 
 const productPriority: ProductId[] = [
   "soda",
@@ -158,6 +166,9 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     return {
       kind: "command",
       label: conflictAtTarget.kind === "street_chase" ? "Push escape" : "Strike back",
+      durationMs: conflictAtTarget.kind === "street_chase" ? 900 : 850,
+      holdVerb: conflictAtTarget.kind === "street_chase" ? "Pushing escape" : "Fighting through",
+      tone: "danger",
       command: {
         type: "player_conflict_action",
         actorId,
@@ -169,7 +180,7 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
 
   if (target.type === "base") {
     if (state.player.carriedCrate) {
-      return { kind: "command", label: "Store crate", command: { type: "deposit_crate", actorId } };
+      return { kind: "command", label: "Store crate", durationMs: 950, holdVerb: "Storing crate", tone: "good", command: { type: "deposit_crate", actorId } };
     }
 
     const storedMachine = storedPlayerMachines(state).find((machine) => machine.damage > 0);
@@ -178,6 +189,9 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
       return {
         kind: "command",
         label: `Repair ${storedMachine.name}`,
+        durationMs: 1900,
+        holdVerb: "Repairing",
+        tone: "good",
         disabled: player.money < repairCost,
         disabledReason: player.money < repairCost ? shortageLabel(repairCost, player.money) : undefined,
         command: { type: "repair_machine", actorId, machineId: storedMachine.id }
@@ -190,6 +204,9 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
       return {
         kind: "command",
         label: `Carry ${product.name}`,
+        durationMs: 850,
+        holdVerb: "Loading crate",
+        tone: "good",
         command: {
           type: "load_crate",
           actorId,
@@ -212,6 +229,9 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     return {
       kind: "command",
       label: `Buy ${product.name}`,
+      durationMs: 900,
+      holdVerb: "Buying stock",
+      tone: "good",
       command: { type: "buy_product", actorId, productId: recommendation.productId, quantity: recommendation.quantity }
     };
   }
@@ -223,12 +243,13 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     const districtInfo = districtUnlockInfo(state, location.districtId);
     const unlocked = isDistrictUnlockedForPlacement(state, location.districtId);
     const placementQuote = placementQuoteForLocation(state, location, "legal_contract");
-    const storedMachine = storedPlayerMachines(state)[0];
+    const storedMachines = storedPlayerMachines(state);
+    const storedMachine = storedMachines.find((machine) => machine.damage <= 0);
     const placementDisabledReason = occupied
       ? "Spot occupied"
-      : !storedMachine
+      : storedMachines.length === 0
         ? "No stored machine"
-        : storedMachine.damage > 0
+        : !storedMachine
           ? "Repair before placing"
           : player.money < placementQuote.cost
             ? shortageLabel(placementQuote.cost, player.money)
@@ -238,6 +259,9 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
         return {
           kind: "command",
           label: district ? `Scout ${district.name}` : "Scout district",
+          durationMs: 1200,
+          holdVerb: "Scouting",
+          tone: "neutral",
           disabled: !districtInfo.canScout,
           disabledReason: !districtInfo.canScout && district ? shortageLabel(district.scoutCost, player.money) : undefined,
           command: { type: "scout_district", actorId, districtId: location.districtId }
@@ -247,6 +271,9 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
       return {
         kind: "command",
         label: districtInfo.canUnlock && district ? `Open ${district.name}` : "Requirements unmet",
+        durationMs: 1300,
+        holdVerb: "Opening district",
+        tone: "good",
         disabled: !districtInfo.canUnlock,
         disabledReason: !districtInfo.canUnlock && districtInfo.unmetRequirements.length > 0
           ? districtInfo.unmetRequirements.join(", ")
@@ -260,6 +287,9 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     return {
       kind: "command",
       label: storedMachine ? `Install ${storedMachine.name}` : "Legal install",
+      durationMs: 2300,
+      holdVerb: "Installing",
+      tone: "good",
       disabled: Boolean(placementDisabledReason),
       disabledReason: placementDisabledReason,
       command: { type: "place_machine", actorId, locationId: location.id, method: "legal_contract", machineId: storedMachine?.id }
@@ -279,6 +309,9 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
       return {
         kind: "command",
         label: `Scout ${district.name}`,
+        durationMs: 1200,
+        holdVerb: "Scouting",
+        tone: "neutral",
         disabled: !districtInfo.canScout,
         disabledReason: !districtInfo.canScout ? shortageLabel(district.scoutCost, player.money) : undefined,
         command: { type: "scout_district", actorId, districtId: district.id }
@@ -288,6 +321,9 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     return {
       kind: "command",
       label: districtInfo.canUnlock ? `Open ${district.name}` : "Requirements unmet",
+      durationMs: 1300,
+      holdVerb: "Opening district",
+      tone: "good",
       disabled: !districtInfo.canUnlock,
       disabledReason: !districtInfo.canUnlock && districtInfo.unmetRequirements.length > 0
         ? districtInfo.unmetRequirements.join(", ")
@@ -325,6 +361,9 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     return {
       kind: "command",
       label,
+      durationMs: contact.action === "source_contraband" ? 1500 : 1200,
+      holdVerb: contact.action === "source_contraband" ? "Taking grey stock" : contact.action === "arrange_bribe" ? "Arranging bribe" : "Buying tip",
+      tone: contact.action === "source_contraband" ? "danger" : "good",
       disabled: Boolean(disabledReason),
       disabledReason,
       command: { type: "work_crime_contact", actorId, contactId: contact.id, action: contact.action }
@@ -343,6 +382,9 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     return {
       kind: "command",
       label: "Expose operation",
+      durationMs: 1400,
+      holdVerb: "Gathering evidence",
+      tone: "warning",
       disabled: player.money < exposeCost,
       disabledReason: player.money < exposeCost ? shortageLabel(exposeCost, player.money) : undefined,
       command: { type: "pressure_rival_operation", actorId, operationId: operation.id, approach: "expose" }
@@ -363,6 +405,9 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     return {
       kind: "command",
       label: "Jam rival display",
+      durationMs: 1800,
+      holdVerb: "Jamming display",
+      tone: "danger",
       command: { type: "sabotage_machine", actorId, machineId: machine.id }
     };
   }
@@ -372,6 +417,9 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     return {
       kind: "command",
       label: "Fight intruder",
+      durationMs: 1000,
+      holdVerb: "Fighting intruder",
+      tone: "danger",
       command: { type: "confront_alarm", actorId, alarmId: activeAlarm.id }
     };
   }
@@ -382,6 +430,9 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     return {
       kind: "command",
       label: "Repair machine",
+      durationMs: 1700,
+      holdVerb: "Repairing",
+      tone: "good",
       command: { type: "repair_machine", actorId, machineId: machine.id },
       disabled: player.money < repairCost,
       disabledReason: player.money < repairCost ? shortageLabel(repairCost, player.money) : undefined
@@ -394,6 +445,9 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     return {
       kind: "command",
       label: `Stock ${product.name}`,
+      durationMs: 1100,
+      holdVerb: "Stocking",
+      tone: "good",
       command: {
         type: "stock_machine",
         actorId,
@@ -411,6 +465,9 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     return {
       kind: "command",
       label: `Carry ${product.name} from van`,
+      durationMs: 800,
+      holdVerb: "Unloading van",
+      tone: "good",
       command: {
         type: "take_vehicle_crate",
         actorId,
@@ -425,6 +482,9 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     return {
       kind: "command",
       label: "Collect cash",
+      durationMs: 900,
+      holdVerb: "Collecting cash",
+      tone: "good",
       command: { type: "collect_revenue", actorId, machineId: machine.id }
     };
   }
@@ -434,6 +494,9 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     return {
       kind: "command",
       label: "Repair machine",
+      durationMs: 1700,
+      holdVerb: "Repairing",
+      tone: "good",
       command: { type: "repair_machine", actorId, machineId: machine.id },
       disabled: player.money < repairCost,
       disabledReason: player.money < repairCost ? shortageLabel(repairCost, player.money) : undefined

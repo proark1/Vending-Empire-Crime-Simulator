@@ -13,7 +13,7 @@ import { ClipboardList, Copy, DollarSign, Flame, LogOut, Map, Menu, Network, Pac
 import { AdminMapEditor } from "./ui/AdminMapEditor";
 import { getStarterMissionStep } from "./game/core/mission";
 import { activeConflictEvents, activeMachineAlarms, latestDayReport, selectedRouteTask } from "./game/core/selectors";
-import { executePrimaryInteraction, getPrimaryInteraction } from "./ui/interactionActions";
+import { executePrimaryInteraction, getPrimaryInteraction, type PrimaryInteraction, type PrimaryInteractionTone } from "./ui/interactionActions";
 import { useGame } from "./hooks/useGame";
 import { ToastStack, type ToastMessage } from "./ui/ToastStack";
 import type { GameCommand, GameState, LocationId, ProductId, Vec2, VehicleId } from "./game/core/types";
@@ -169,12 +169,33 @@ function createSceneFeedback(command: GameCommand, target: SceneTarget | null, s
   }
 }
 
+function primaryInteractionSignature(interaction: PrimaryInteraction | null): string {
+  if (!interaction) {
+    return "none";
+  }
+
+  if (interaction.kind === "save") {
+    return `save:${interaction.label}:${interaction.disabled ? "disabled" : "ready"}`;
+  }
+
+  return `command:${interaction.label}:${interaction.disabled ? "disabled" : "ready"}:${JSON.stringify(interaction.command)}`;
+}
+
 interface GameAppProps {
   initialState: GameState;
   mapLayout: WorldMapLayout;
   modelConfig: ModelConfig;
   onLogout: () => void;
   session: GameSession;
+}
+
+interface ServiceHoldState {
+  durationMs: number;
+  label: string;
+  progress: number;
+  startedAt: number;
+  tone: PrimaryInteractionTone;
+  verb: string;
 }
 
 interface LandingFeature {
@@ -568,26 +589,20 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
   const [playerHeadingDegrees, setPlayerHeadingDegrees] = useState(-180);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [sceneFeedback, setSceneFeedback] = useState<SceneFeedbackEvent | null>(null);
+  const [serviceHold, setServiceHold] = useState<ServiceHoldState | null>(null);
   const [graphicsQuality, setGraphicsQualityState] = useState<GraphicsQuality>(() => loadGraphicsQuality());
   const gameMenuRef = useRef<HTMLDivElement | null>(null);
   const lastEventIdRef = useRef(state.eventLog[0]?.id ?? null);
-  const lastInteractionAtRef = useRef(0);
   const lastMissionStepIdRef = useRef<string | null>(null);
   const lastServiceLocationIdRef = useRef<LocationId | null>(state.player.currentLocationId);
   const lastReportIdRef = useRef<string | null>(null);
+  const serviceHoldTimeoutRef = useRef<number | null>(null);
+  const serviceHoldIntervalRef = useRef<number | null>(null);
+  const serviceHoldInteractionRef = useRef<PrimaryInteraction | null>(null);
   const activeTarget = entered ? target : null;
   const primaryInteraction = useMemo(() => getPrimaryInteraction(state, activeTarget), [activeTarget, state]);
-  const repeatablePrimaryInteraction = primaryInteraction?.kind === "command" && [
-    "buy_product",
-    "deposit_crate",
-    "load_crate",
-    "load_vehicle",
-    "unload_vehicle",
-    "take_vehicle_crate",
-    "stock_machine",
-    "collect_revenue",
-    "repair_machine"
-  ].includes(primaryInteraction.command.type);
+  const primaryInteractionKey = useMemo(() => primaryInteractionSignature(primaryInteraction), [primaryInteraction]);
+  const holdPrimaryInteraction = Boolean(primaryInteraction?.durationMs && primaryInteraction.durationMs > 0 && !primaryInteraction.disabled);
   const missionStep = useMemo(() => getStarterMissionStep(state, playerPosition), [playerPosition, state]);
   const routeTask = useMemo(() => selectedRouteTask(state), [state]);
   const activeAlarm = useMemo(() => activeMachineAlarms(state)[0], [state]);
@@ -854,6 +869,78 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
     [activeTarget, sendCommand, state]
   );
 
+  const clearServiceHoldTimers = useCallback(() => {
+    if (serviceHoldTimeoutRef.current !== null) {
+      window.clearTimeout(serviceHoldTimeoutRef.current);
+      serviceHoldTimeoutRef.current = null;
+    }
+
+    if (serviceHoldIntervalRef.current !== null) {
+      window.clearInterval(serviceHoldIntervalRef.current);
+      serviceHoldIntervalRef.current = null;
+    }
+  }, []);
+
+  const cancelServiceHold = useCallback(() => {
+    clearServiceHoldTimers();
+    serviceHoldInteractionRef.current = null;
+    setServiceHold(null);
+  }, [clearServiceHoldTimers]);
+
+  const completeServiceHold = useCallback(() => {
+    const interaction = serviceHoldInteractionRef.current;
+    clearServiceHoldTimers();
+    serviceHoldInteractionRef.current = null;
+    setServiceHold(null);
+
+    if (!interaction) {
+      return;
+    }
+
+    executePrimaryInteraction(interaction, {
+      onCommand: sendCommandAtActiveTarget,
+      onSave: save
+    });
+  }, [clearServiceHoldTimers, save, sendCommandAtActiveTarget]);
+
+  const startServiceHold = useCallback(
+    (interaction: PrimaryInteraction) => {
+      const durationMs = Math.max(250, interaction.durationMs ?? 0);
+      if (durationMs <= 250 || interaction.disabled) {
+        executePrimaryInteraction(interaction, {
+          onCommand: sendCommandAtActiveTarget,
+          onSave: save
+        });
+        return;
+      }
+
+      unlockGameAudio();
+      clearServiceHoldTimers();
+      serviceHoldInteractionRef.current = interaction;
+      const startedAt = performance.now();
+      const nextHold: ServiceHoldState = {
+        durationMs,
+        label: interaction.label,
+        progress: 0,
+        startedAt,
+        tone: interaction.tone ?? "neutral",
+        verb: interaction.holdVerb ?? interaction.label
+      };
+      setServiceHold(nextHold);
+
+      serviceHoldIntervalRef.current = window.setInterval(() => {
+        const elapsed = performance.now() - startedAt;
+        const progress = Math.min(1, elapsed / durationMs);
+        setServiceHold((current) => (current ? { ...current, progress } : current));
+      }, 45);
+
+      serviceHoldTimeoutRef.current = window.setTimeout(() => {
+        completeServiceHold();
+      }, durationMs);
+    },
+    [clearServiceHoldTimers, completeServiceHold, save, sendCommandAtActiveTarget]
+  );
+
   const handleVehicleDrive = useCallback(
     (vehicleId: VehicleId, position: Vec2, heading: number, distance: number) => {
       sendCommand({
@@ -869,11 +956,20 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
   );
 
   const handlePrimaryInteraction = useCallback(() => {
+    if (primaryInteraction?.disabled) {
+      return;
+    }
+
+    if (primaryInteraction?.durationMs && primaryInteraction.durationMs > 0) {
+      startServiceHold(primaryInteraction);
+      return;
+    }
+
     executePrimaryInteraction(primaryInteraction, {
       onCommand: sendCommandAtActiveTarget,
       onSave: save
     });
-  }, [primaryInteraction, save, sendCommandAtActiveTarget]);
+  }, [primaryInteraction, save, sendCommandAtActiveTarget, startServiceHold]);
 
   useEffect(() => {
     if (!entered) {
@@ -882,6 +978,12 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
 
     updateGameAmbience(state.factions[state.playerFactionId].heat, conflicts.length > 0);
   }, [conflicts.length, entered, state.factions, state.playerFactionId]);
+
+  useEffect(() => () => clearServiceHoldTimers(), [clearServiceHoldTimers]);
+
+  useEffect(() => {
+    cancelServiceHold();
+  }, [cancelServiceHold, entered, primaryInteractionKey]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -905,20 +1007,32 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
         return;
       }
 
-      const now = performance.now();
-      if (event.repeat && now - lastInteractionAtRef.current < 360) {
+      if (event.repeat) {
         event.preventDefault();
         return;
       }
-      lastInteractionAtRef.current = now;
+
       event.preventDefault();
       unlockGameAudio();
       handlePrimaryInteraction();
     };
 
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.code !== "KeyE") {
+        return;
+      }
+
+      event.preventDefault();
+      cancelServiceHold();
+    };
+
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [entered, handlePrimaryInteraction]);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, [cancelServiceHold, entered, handlePrimaryInteraction]);
 
   return (
     <main className="game-shell">
@@ -1047,12 +1161,23 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
       </div>
       {entered && <GuidanceArrow label={guidanceLabel} state={state} targetLocationId={guidanceLocationId} playerHeadingDegrees={playerHeadingDegrees} playerPosition={playerPosition} />}
       {entered && activeTarget && primaryInteraction && (
-        <div className={`target-prompt ${primaryInteraction.disabled ? "disabled" : ""}`}>
+        <div className={`target-prompt ${primaryInteraction.disabled ? "disabled" : ""} ${serviceHold ? "working" : ""}`}>
           <span className="target-name">{activeTarget.label}</span>
           <span className="target-action">
-            <kbd>{repeatablePrimaryInteraction ? "HOLD E" : "E"}</kbd>
+            <kbd>{holdPrimaryInteraction ? "HOLD E" : "E"}</kbd>
             {primaryInteraction.label}
           </span>
+          {serviceHold && (
+            <span className={`target-work-meter ${serviceHold.tone}`} aria-label={`${serviceHold.verb} ${Math.round(serviceHold.progress * 100)}%`}>
+              <span>
+                {serviceHold.verb}
+                <strong>{Math.round(serviceHold.progress * 100)}%</strong>
+              </span>
+              <i aria-hidden="true">
+                <b style={{ width: `${serviceHold.progress * 100}%` }} />
+              </i>
+            </span>
+          )}
           {primaryInteraction.disabled && primaryInteraction.disabledReason && <span className="target-reason">{primaryInteraction.disabledReason}</span>}
         </div>
       )}

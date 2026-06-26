@@ -1,4 +1,16 @@
-import type { DistrictProgress, EmpireAssetState, Faction, GameState, RivalOrganizationState, RouteVehicle, SupplierRelationshipState, VendingMachine } from "../core/types";
+import type {
+  CustomerMarketState,
+  DistrictProgress,
+  EmpireAssetState,
+  Faction,
+  GameState,
+  LocationRightsState,
+  MachineFleetState,
+  RivalOrganizationState,
+  RouteVehicle,
+  SupplierRelationshipState,
+  VendingMachine
+} from "../core/types";
 import { createInitialBaseFacilities } from "./baseFacilities";
 import { empireAssetList } from "./empire";
 import { products } from "./products";
@@ -320,6 +332,44 @@ function createInitialSuppliers(): Record<string, SupplierRelationshipState> {
   );
 }
 
+function createInitialFleet(): MachineFleetState {
+  return {
+    modelExperience: {
+      basic_snack: 1
+    },
+    procurementSequence: 1,
+    totalPurchased: 1,
+    unlockedModelIds: ["basic_snack", "drink_machine", "combo_machine"],
+    vendorReputation: 8
+  };
+}
+
+function createInitialCustomerMarket(): CustomerMarketState {
+  return {
+    complaintsByLocation: {},
+    decisionSequence: 1,
+    loyaltyByLocation: {},
+    nextDecisionHour: 8.32,
+    recentDecisions: []
+  };
+}
+
+function createInitialLocationRights(): Record<string, LocationRightsState> {
+  return Object.fromEntries(
+    Object.values(locations).map((location) => [
+      location.id,
+      {
+        corporatePressure: Math.max(0, Math.round((location.rentCost * 0.12 + location.policePresence * 24) * 10) / 10),
+        landlordDisposition: Math.max(18, Math.min(82, Math.round(42 + location.safety * 30 - location.rivalPressure * 20 - location.policePresence * 10))),
+        legalPressure: Math.max(0, Math.round((location.policePresence * 44 + (1 - location.safety) * 10) * 10) / 10),
+        locationId: location.id,
+        permitStatus: "none",
+        rightsTier: "none"
+      } satisfies LocationRightsState
+    ])
+  );
+}
+
 export function createInitialState(): GameState {
   return {
     version: 1,
@@ -388,6 +438,9 @@ export function createInitialState(): GameState {
         nextSpoilageHour: 14,
         spoiledToday: 0
       },
+      fleet: createInitialFleet(),
+      customers: createInitialCustomerMarket(),
+      locationRights: createInitialLocationRights(),
       productCustomizations: {}
     },
     npcControllers: {

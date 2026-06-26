@@ -1,6 +1,7 @@
 import { CheckCircle2, Circle, ClipboardList } from "lucide-react";
 import type { GameState, Vec2 } from "../game/core/types";
 import { getStarterMissionStep, getStarterTutorialSteps } from "../game/core/mission";
+import { activeConflictEvents, activeMachineAlarms, playerHeatTier } from "../game/core/selectors";
 
 interface MissionTrackerProps {
   state: GameState;
@@ -11,6 +12,17 @@ export function MissionTracker({ state, playerPosition }: MissionTrackerProps) {
   const step = getStarterMissionStep(state, playerPosition);
   const tutorialSteps = getStarterTutorialSteps(state);
   const showTutorial = !state.mission.completed && tutorialSteps.some((tutorialStep) => !tutorialStep.completed);
+  const alarm = activeMachineAlarms(state)[0];
+  const conflict = activeConflictEvents(state)[0];
+  const heatTier = playerHeatTier(state);
+  const pressureLine = alarm
+    ? `Alarm: ${state.machines[alarm.machineId]?.name ?? "machine"} at ${state.locations[alarm.locationId]?.name ?? "route stop"}`
+    : conflict
+      ? `${conflict.kind.replace("_", " ")}: ${state.locations[conflict.locationId]?.name ?? "route stop"}`
+      : heatTier.tone !== "good"
+        ? `${heatTier.label}: ${heatTier.action}`
+        : null;
+  const pressureTone = alarm || conflict ? "danger" : heatTier.tone;
 
   return (
     <section className="mission-tracker" aria-label="Current mission">
@@ -20,6 +32,7 @@ export function MissionTracker({ state, playerPosition }: MissionTrackerProps) {
       </div>
       <p>{step.objective}</p>
       <span className="mission-guidance">{step.guidance}</span>
+      {pressureLine && <span className={`mission-threat ${pressureTone}`}>{pressureLine}</span>}
       <div className="mission-progress" aria-hidden="true">
         <span style={{ width: `${step.progressRatio * 100}%` }} />
       </div>

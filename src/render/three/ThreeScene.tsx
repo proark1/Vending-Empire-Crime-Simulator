@@ -1653,7 +1653,15 @@ function activityLabel(activity: StreetActivity): string {
   }
 
   if (activity.kind === "customer_complaint") {
-    return "EMPTY";
+    return "COMPLAINT";
+  }
+
+  if (activity.kind === "customer_walkaway") {
+    return "WALKAWAY";
+  }
+
+  if (activity.kind === "customer_tipoff") {
+    return "TIPOFF";
   }
 
   if (activity.kind === "rival_scout") {
@@ -1731,6 +1739,13 @@ function createActivityPulse(activity: StreetActivity): THREE.Group {
     group.add(marker);
   }
 
+  if (activity.kind === "customer_walkaway" || activity.kind === "customer_tipoff") {
+    const marker = new THREE.Mesh(new THREE.RingGeometry(0.07, 0.1, 16), new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide }));
+    marker.position.set(0, 0.72, -0.16);
+    marker.rotation.x = Math.PI / 2;
+    group.add(marker);
+  }
+
   return group;
 }
 
@@ -1775,8 +1790,8 @@ function createActivityActor(
   const exit = approach.clone().add(side.clone().multiplyScalar((-2.15 - laneIndex * 0.12) * sideDirection)).add(front.clone().multiplyScalar(0.7));
 
   character.position.copy(start);
-  character.scale.setScalar(activity.kind === "customer_complaint" ? 1.02 : 0.96);
-  character.userData.action = activity.kind === "worker_supply" ? "carry" : activity.kind === "rival_scout" ? "scan" : "walk";
+  character.scale.setScalar(activity.kind === "customer_complaint" || activity.kind === "customer_tipoff" ? 1.02 : 0.96);
+  character.userData.action = activity.kind === "worker_supply" ? "carry" : activity.kind === "rival_scout" || activity.kind === "customer_tipoff" ? "scan" : "walk";
   character.userData.baseY = 0;
   character.userData.dynamicNpc = true;
   character.userData.floatAmount = 0.006;
@@ -1787,7 +1802,7 @@ function createActivityActor(
   character.userData.walkSpeed = activity.kind === "rival_scout" ? 0.26 : activity.kind === "worker_supply" ? 0.34 : 0.42;
   applyModelTransformById(character, modelConfig, unitModelId(variant));
 
-  if (activity.kind === "customer_complaint") {
+  if (activity.kind === "customer_complaint" || activity.kind === "customer_tipoff") {
     const complaint = new THREE.Mesh(
       new THREE.SphereGeometry(0.055, 10, 8),
       new THREE.MeshBasicMaterial({ color: "#fb7185" })

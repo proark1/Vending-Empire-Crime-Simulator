@@ -1873,6 +1873,7 @@ button {
 }
 
 .mission-guidance,
+.mission-threat,
 .mission-progress-label {
   display: block;
   margin-top: 5px;
@@ -1884,6 +1885,20 @@ button {
 .mission-progress-label {
   color: #bae6fd;
   font-weight: 800;
+}
+
+.mission-threat {
+  padding-top: 5px;
+  color: #fde68a;
+  font-weight: 900;
+}
+
+.mission-threat.danger {
+  color: #fecdd3;
+}
+
+.mission-threat.good {
+  color: #bbf7d0;
 }
 
 .mission-progress {
@@ -2044,6 +2059,69 @@ button {
 
 .target-prompt.disabled {
   opacity: 0.82;
+}
+
+.target-prompt.working .target-action {
+  border: 1px solid rgba(45, 212, 191, 0.28);
+  box-shadow: 0 0 24px rgba(45, 212, 191, 0.16);
+}
+
+.target-work-meter {
+  display: grid;
+  gap: 5px;
+  width: min(260px, calc(100vw - 48px));
+  padding: 7px 9px;
+  border: 1px solid rgba(45, 212, 191, 0.3);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.88);
+  color: #ccfbf1;
+  font-size: 12px;
+  font-weight: 900;
+  box-shadow: 0 14px 48px rgba(0, 0, 0, 0.32);
+}
+
+.target-work-meter > span {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.target-work-meter strong {
+  color: #f8fafc;
+  font-size: 11px;
+}
+
+.target-work-meter i {
+  display: block;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.2);
+}
+
+.target-work-meter b {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2dd4bf, #a3e635);
+}
+
+.target-work-meter.warning {
+  border-color: rgba(251, 191, 36, 0.34);
+  color: #fde68a;
+}
+
+.target-work-meter.warning b {
+  background: linear-gradient(90deg, #f59e0b, #facc15);
+}
+
+.target-work-meter.danger {
+  border-color: rgba(251, 113, 133, 0.42);
+  color: #fecdd3;
+}
+
+.target-work-meter.danger b {
+  background: linear-gradient(90deg, #fb7185, #f59e0b);
 }
 
 kbd {
@@ -2494,6 +2572,26 @@ kbd {
   color: #cbd5e1;
   font-size: 12px;
   line-height: 1.3;
+}
+
+.employee-trait,
+.heat-tier-note,
+.rival-intel {
+  color: #bae6fd;
+  font-weight: 800;
+}
+
+.heat-tier-note.warning,
+.rival-intel {
+  color: #fde68a;
+}
+
+.heat-tier-note.danger {
+  color: #fecdd3;
+}
+
+.heat-tier-note.good {
+  color: #bbf7d0;
 }
 
 .vehicle-meter {

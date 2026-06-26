@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { createInitialState } from "../content/initialState";
 import {
+  activeLocationRights,
   baseStorageCapacity,
   campaignMissionProgress,
   currentProductCost,
   districtUnlockInfo,
   endgamePathScores,
   empireAssetLevel,
+  fleetSummary,
+  locationRightsFor,
   machineAtLocation,
+  machineProcurementQuotes,
   machineStockUnits,
   narrativeQuestProgress,
   productLabSlots,
@@ -301,10 +305,71 @@ describe("game reducer", () => {
     expect(result.state.contracts.contract_1).toMatchObject({ locationId: "laundromat", productId: "soda", status: "active" });
   });
 
+  it("buys and resells stored machine inventory through the fleet economy", () => {
+    const initial = createInitialState();
+    initial.factions.player.money = 500;
+    const comboQuote = machineProcurementQuotes(initial).find((quote) => quote.model.id === "combo_machine");
+    expect(comboQuote?.unlocked).toBe(true);
+
+    const bought = reduceCommands(initial, [
+      visit("garage"),
+      { type: "buy_machine_model", actorId: "player", modelId: "combo_machine", quantity: 1 }
+    ]).state;
+    const storedCombo = Object.values(bought.machines).find((machine) => machine.machineModelId === "combo_machine" && machine.placementStatus === "stored")!;
+    expect(storedCombo).toBeDefined();
+    expect(fleetSummary(bought).storedCount).toBeGreaterThanOrEqual(2);
+    expect(bought.economy.fleet.vendorReputation).toBeGreaterThan(initial.economy.fleet.vendorReputation);
+
+    const sold = reduceGameState(bought, { type: "sell_stored_machine", actorId: "player", machineId: storedCombo.id }).state;
+    expect(sold.machines[storedCombo.id]).toBeUndefined();
+    expect(fleetSummary(sold).storedCount).toBe(fleetSummary(bought).storedCount - 1);
+  });
+
+  it("requires stored inventory before placing a new player machine", () => {
+    const initial = withInstalledStarter();
+    initial.factions.player.money = 500;
+
+    const result = reduceCommands(initial, [
+      visit("gym"),
+      { type: "place_machine", actorId: "player", locationId: "gym" }
+    ]);
+
+    expect(machineAtLocation(result.state, "gym")).toBeUndefined();
+    expect(result.events.some((event) => event.message.includes("Buy a machine model"))).toBe(true);
+  });
+
+  it("negotiates permits and exclusives as location-rights gameplay", () => {
+    const initial = withInstalledStarter();
+    initial.factions.player.money = 1000;
+    const beforeLegalPressure = locationRightsFor(initial, "gym").legalPressure;
+
+    const permitted = reduceCommands(initial, [
+      visit("gym"),
+      { type: "negotiate_location_rights", actorId: "player", locationId: "gym", approach: "permit_filing" }
+    ]).state;
+    const permitRights = locationRightsFor(permitted, "gym");
+    expect(permitRights.permitStatus).toBe("active");
+    expect(permitRights.legalPressure).toBeLessThan(beforeLegalPressure);
+    expect(activeLocationRights(permitted).some((rights) => rights.locationId === "gym")).toBe(true);
+
+    const exclusive = reduceGameState(permitted, { type: "negotiate_location_rights", actorId: "player", locationId: "gym", approach: "exclusive_contract" }).state;
+    const blockedRival = reduceGameState(exclusive, {
+      type: "rival_action",
+      actorId: "rival_redline",
+      action: "expand",
+      locationId: "gym"
+    }).state;
+
+    expect(locationRightsFor(blockedRival, "gym").exclusiveContractHolderId).toBe("player");
+    expect(machineAtLocation(blockedRival, "gym")).toBeUndefined();
+  });
+
   it("applies placement method tradeoffs when installing a new machine", () => {
     const initial = withInstalledStarter();
-    initial.factions.player.money = 200;
+    initial.factions.player.money = 500;
     const result = reduceCommands(initial, [
+      visit("garage"),
+      { type: "buy_machine_model", actorId: "player", modelId: "combo_machine", quantity: 1 },
       visit("gym"),
       { type: "place_machine", actorId: "player", locationId: "gym", method: "illegal" }
     ]);
@@ -322,9 +387,11 @@ describe("game reducer", () => {
 
   it("tracks risky placement as an endgame direction signal", () => {
     const initial = withInstalledStarter();
-    initial.factions.player.money = 300;
+    initial.factions.player.money = 500;
 
     const result = reduceCommands(initial, [
+      visit("garage"),
+      { type: "buy_machine_model", actorId: "player", modelId: "combo_machine", quantity: 1 },
       visit("arcade"),
       { type: "place_machine", actorId: "player", locationId: "arcade", method: "illegal" }
     ]).state;
@@ -363,11 +430,13 @@ describe("game reducer", () => {
 
   it("scouts and opens districts after requirements are met", () => {
     const initial = withInstalledStarter();
-    initial.factions.player.money = 400;
+    initial.factions.player.money = 1000;
     initial.factions.player.streetReputation = 1;
     initial.progression.contractsCompletedTotal = 1;
 
     const result = reduceCommands(initial, [
+      visit("garage"),
+      { type: "buy_machine_model", actorId: "player", modelId: "combo_machine", quantity: 2 },
       visit("gym"),
       { type: "place_machine", actorId: "player", locationId: "gym" },
       { type: "scout_district", actorId: "player", districtId: "industrial_yards" },
@@ -513,6 +582,12 @@ describe("game reducer", () => {
       machineId: "machine_player_1",
       productId: "soda"
     });
+    expect(result.state.economy.customers.recentDecisions[0]).toMatchObject({
+      outcome: "purchase",
+      machineId: "machine_player_1",
+      productId: "soda"
+    });
+    expect(result.state.economy.customers.loyaltyByLocation.laundromat).toBeGreaterThan(0);
   });
 
   it("turns bad machine conditions into customer complaints and local pressure", () => {

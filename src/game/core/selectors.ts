@@ -17,8 +17,12 @@ import type {
   LawInspection,
   Location,
   LocationId,
+  LocationRightsApproach,
+  LocationRightsState,
   MachineAlarm,
   MachineId,
+  MachineModelDefinition,
+  MachineModelId,
   PlacementMethod,
   PlacementQuote,
   ProductId,
@@ -29,6 +33,7 @@ import type {
 } from "./types";
 import { baseFacilities } from "../content/baseFacilities";
 import { empireAssets, type EmpireAssetEffects } from "../content/empire";
+import { machineModelList, machineModels } from "../content/machineModels";
 import { narrativeQuestDefinitions, type NarrativeQuestDefinition } from "../content/quests";
 import { supplierDefinitions } from "../content/suppliers";
 import { endgamePaths, storyMissionArcs, type EndgamePath, type StoryMissionArc, type StoryMissionObjective } from "../content/story";
@@ -86,6 +91,99 @@ export interface NarrativeQuestProgress {
   tone: "good" | "warning" | "danger";
 }
 
+export type HeatTierId = "quiet" | "noticed" | "watched" | "hot" | "raid_weather";
+
+export interface HeatTier {
+  action: string;
+  description: string;
+  id: HeatTierId;
+  label: string;
+  tone: "good" | "warning" | "danger";
+}
+
+export function heatTierFor(heat: number): HeatTier {
+  if (heat >= 35) {
+    return {
+      action: "Run legal placements, cool routes, and keep bribe cash ready.",
+      description: "Raids, checkpoints, and rival tips can stack quickly.",
+      id: "raid_weather",
+      label: "Raid weather",
+      tone: "danger"
+    };
+  }
+
+  if (heat >= 22) {
+    return {
+      action: "Repair permits, avoid grey stock, and answer inspections fast.",
+      description: "Inspectors are watching repeat stops and suspicious stock.",
+      id: "hot",
+      label: "Hot route",
+      tone: "danger"
+    };
+  }
+
+  if (heat >= 12) {
+    return {
+      action: "Use legal installs and bribes sparingly.",
+      description: "Law pressure is active enough to interrupt profitable runs.",
+      id: "watched",
+      label: "Watched",
+      tone: "warning"
+    };
+  }
+
+  if (heat >= 5) {
+    return {
+      action: "Keep records clean before expanding.",
+      description: "The business is visible but not yet a priority.",
+      id: "noticed",
+      label: "Noticed",
+      tone: "warning"
+    };
+  }
+
+  return {
+    action: "Expand while the route is quiet.",
+    description: "Customers and landlords see a normal vending route.",
+    id: "quiet",
+    label: "Quiet",
+    tone: "good"
+  };
+}
+
+export function playerHeatTier(state: GameState): HeatTier {
+  return heatTierFor(state.factions[state.playerFactionId]?.heat ?? 0);
+}
+
+export interface MachineProcurementQuote {
+  cost: number;
+  installedCount: number;
+  model: MachineModelDefinition;
+  reason: string;
+  storedCount: number;
+  unlocked: boolean;
+  valueScore: number;
+}
+
+export interface FleetSummary {
+  averageCondition: number;
+  installedCount: number;
+  modelVariety: number;
+  storedCount: number;
+  totalFleetValue: number;
+  vendorReputation: number;
+}
+
+export interface LocationRightsQuote {
+  approach: LocationRightsApproach;
+  canNegotiate: boolean;
+  cost: number;
+  description: string;
+  disabledReason?: string;
+  label: string;
+  tone: "good" | "warning" | "danger";
+}
+
 export function inventoryUnits(inventory: Inventory, state: GameState): number {
   return Object.entries(inventory).reduce((total, [productId, quantity]) => {
     const product = state.products[productId as keyof typeof state.products];
@@ -107,6 +205,250 @@ export function installedMachines(state: GameState, factionId?: FactionId): Vend
 
 export function storedPlayerMachines(state: GameState): VendingMachine[] {
   return ownedMachines(state, state.playerFactionId).filter((machine) => !isMachineInstalled(machine));
+}
+
+export function defaultLocationRights(location: Location): LocationRightsState {
+  return {
+    corporatePressure: Math.max(0, Math.round((location.rentCost * 0.12 + location.policePresence * 24) * 10) / 10),
+    landlordDisposition: Math.max(18, Math.min(82, Math.round(42 + location.safety * 30 - location.rivalPressure * 20 - location.policePresence * 10))),
+    legalPressure: Math.max(0, Math.round((location.policePresence * 44 + (1 - location.safety) * 10) * 10) / 10),
+    locationId: location.id,
+    permitStatus: "none",
+    rightsTier: "none"
+  };
+}
+
+export function locationRightsFor(state: GameState, locationId: LocationId): LocationRightsState {
+  const location = state.locations[locationId];
+  const current = state.economy?.locationRights?.[locationId];
+  if (!location) {
+    return {
+      corporatePressure: 0,
+      landlordDisposition: 0,
+      legalPressure: 0,
+      locationId,
+      permitStatus: "none",
+      rightsTier: "none"
+    };
+  }
+
+  return {
+    ...defaultLocationRights(location),
+    ...(current ?? {}),
+    locationId
+  };
+}
+
+export function activeLocationRights(state: GameState): LocationRightsState[] {
+  return Object.values(state.locations)
+    .map((location) => locationRightsFor(state, location.id))
+    .filter(
+      (rights) =>
+        rights.rightsTier !== "none" ||
+        rights.permitStatus !== "none" ||
+        Boolean(rights.exclusiveUntilHour && rights.exclusiveUntilHour > state.worldTimeHours) ||
+        rights.legalPressure >= 35 ||
+        rights.corporatePressure >= 25
+    )
+    .sort((a, b) => b.legalPressure + b.corporatePressure - (a.legalPressure + a.corporatePressure));
+}
+
+export function machineResaleValue(state: GameState, machine: VendingMachine): number {
+  const model = machineModels[machine.machineModelId] ?? machineModels.basic_snack;
+  const condition = Math.max(0.25, 1 - machine.damage / 120);
+  const reputationLift = Math.min(0.12, (state.economy?.fleet?.vendorReputation ?? 0) * 0.002);
+  return Math.max(8, Math.round(model.baseCost * condition * (0.46 + reputationLift)));
+}
+
+export function fleetSummary(state: GameState): FleetSummary {
+  const machines = ownedMachines(state, state.playerFactionId);
+  const installed = machines.filter(isMachineInstalled);
+  const stored = machines.filter((machine) => !isMachineInstalled(machine));
+  const totalFleetValue = machines.reduce((sum, machine) => sum + machineResaleValue(state, machine), 0);
+  const averageCondition =
+    machines.length === 0 ? 1 : machines.reduce((sum, machine) => sum + Math.max(0, 1 - machine.damage / 100), 0) / Math.max(1, machines.length);
+  return {
+    averageCondition,
+    installedCount: installed.length,
+    modelVariety: new Set(machines.map((machine) => machine.machineModelId)).size,
+    storedCount: stored.length,
+    totalFleetValue,
+    vendorReputation: state.economy?.fleet?.vendorReputation ?? 0
+  };
+}
+
+function modelUnlockRequirement(state: GameState, model: MachineModelDefinition): { unlocked: boolean; reason: string } {
+  const fleet = state.economy?.fleet;
+  if (fleet?.unlockedModelIds?.includes(model.id)) {
+    return { unlocked: true, reason: "Available from current fleet supplier." };
+  }
+
+  const installedCount = installedMachines(state, state.playerFactionId).length;
+  const streetRep = state.factions[state.playerFactionId]?.streetReputation ?? 0;
+  const publicRep = state.factions[state.playerFactionId]?.publicReputation ?? 0;
+  const warehouseLevel = empireAssetLevel(state, "warehouse_network");
+  const shellLevel = empireAssetLevel(state, "shell_company");
+  const vendorReputation = fleet?.vendorReputation ?? 0;
+
+  if (model.id === "luxury_vendor") {
+    return publicRep >= 10 || installedCount >= 3
+      ? { unlocked: true, reason: "Unlocked by public reputation or a three-machine route." }
+      : { unlocked: false, reason: "Needs public rep 10 or three installed machines." };
+  }
+
+  if (model.id === "armored_unit") {
+    return streetRep >= 2 || installedCount >= 4
+      ? { unlocked: true, reason: "Unlocked by street reputation or a larger route footprint." }
+      : { unlocked: false, reason: "Needs street rep 2 or four installed machines." };
+  }
+
+  if (model.id === "smart_vendor") {
+    return baseFacilityLevel(state, "office") > 0 || vendorReputation >= 18
+      ? { unlocked: true, reason: "Unlocked by office systems or fleet vendor reputation." }
+      : { unlocked: false, reason: "Needs Office level 1 or vendor rep 18." };
+  }
+
+  if (model.id === "hidden_wall_unit") {
+    return warehouseLevel > 0 || streetRep >= 4
+      ? { unlocked: true, reason: "Unlocked by warehouse crews or street reputation." }
+      : { unlocked: false, reason: "Needs Warehouse Network level 1 or street rep 4." };
+  }
+
+  if (model.id === "discreet_black_market") {
+    const hasPipeline = Object.values(state.economy?.supply?.suppliers ?? {}).some((supplier) => supplier.blackMarketTier > 1 || supplier.unlockedProductIds.some((productId) => state.products[productId]?.legality > 0));
+    return hasPipeline || streetRep >= 5
+      ? { unlocked: true, reason: "Unlocked by grey-stock supplier pipelines." }
+      : { unlocked: false, reason: "Needs a grey-stock pipeline or street rep 5." };
+  }
+
+  if (model.id === "mobile_vendor") {
+    return installedCount >= 2 || vendorReputation >= 12
+      ? { unlocked: true, reason: "Unlocked by route scale or vendor reputation." }
+      : { unlocked: false, reason: "Needs two installed machines or vendor rep 12." };
+  }
+
+  if (model.id === "fake_broken_front") {
+    return shellLevel > 0 || state.empire?.shellCover >= 0.12
+      ? { unlocked: true, reason: "Unlocked by shell-company cover." }
+      : { unlocked: false, reason: "Needs Shell Company level 1 or shell cover." };
+  }
+
+  return { unlocked: true, reason: "Available from starter fleet supplier." };
+}
+
+export function machineProcurementCost(state: GameState, modelId: MachineModelId): number {
+  const model = machineModels[modelId] ?? machineModels.basic_snack;
+  const fleet = state.economy?.fleet;
+  const experience = fleet?.modelExperience?.[modelId] ?? 0;
+  const storedSameModel = storedPlayerMachines(state).filter((machine) => machine.machineModelId === modelId).length;
+  const installedCount = installedMachines(state, state.playerFactionId).length;
+  const vendorDiscount = Math.min(0.16, (fleet?.vendorReputation ?? 0) * 0.0035);
+  const experienceDiscount = Math.min(0.1, experience * 0.015);
+  const scarcityMarkup = storedSameModel * 0.06 + Math.max(0, installedCount - 4) * 0.025;
+  return Math.max(18, Math.round(model.baseCost * (1 - vendorDiscount - experienceDiscount + scarcityMarkup)));
+}
+
+export function machineProcurementQuotes(state: GameState): MachineProcurementQuote[] {
+  const installedCount = installedMachines(state, state.playerFactionId).length;
+  return machineModelList.map((model) => {
+    const storedCount = storedPlayerMachines(state).filter((machine) => machine.machineModelId === model.id).length;
+    const unlock = modelUnlockRequirement(state, model);
+    const cost = machineProcurementCost(state, model.id);
+    const valueScore = Math.round((model.maxSlots * 12 + model.capacityBonus * 2 + model.securityBonus * 120 + model.visibilityBonus * 80 - model.heatMultiplier * 8) * 10) / 10;
+    return {
+      cost,
+      installedCount,
+      model,
+      reason: unlock.reason,
+      storedCount,
+      unlocked: unlock.unlocked,
+      valueScore
+    };
+  });
+}
+
+export function locationRightsNegotiationCost(state: GameState, location: Location, approach: LocationRightsApproach): number {
+  const district = state.districts[location.districtId];
+  const rights = locationRightsFor(state, location.id);
+  const districtMultiplier = district?.rentMultiplier ?? 1;
+  const pressureMarkup = 1 + Math.max(0, rights.legalPressure + rights.corporatePressure - 40) * 0.006;
+  const dispositionDiscount = Math.max(0.82, 1 - Math.max(0, rights.landlordDisposition - 50) * 0.004);
+  const base = Math.max(8, location.rentCost + location.placementCost * 0.32);
+
+  if (approach === "landlord_meeting") {
+    return Math.round((base * 0.52 + 8) * districtMultiplier * dispositionDiscount);
+  }
+
+  if (approach === "permit_filing") {
+    return Math.round((base * 0.86 + location.policePresence * 30 + 14) * districtMultiplier * pressureMarkup);
+  }
+
+  if (approach === "exclusive_contract") {
+    return Math.round((base * 1.55 + location.footTraffic * 22 + rights.corporatePressure * 0.8) * districtMultiplier * pressureMarkup);
+  }
+
+  return Math.round((base * 1.25 + 32 + rights.legalPressure * 0.7) * districtMultiplier);
+}
+
+export function locationRightsQuotesForLocation(state: GameState, location: Location): LocationRightsQuote[] {
+  const player = state.factions[state.playerFactionId];
+  const rights = locationRightsFor(state, location.id);
+  const districtUnlocked = isDistrictUnlockedForPlacement(state, location.districtId);
+  const activeExclusive = Boolean(rights.exclusiveUntilHour && rights.exclusiveUntilHour > state.worldTimeHours && rights.exclusiveContractHolderId === state.playerFactionId);
+  const approaches: Array<{
+    approach: LocationRightsApproach;
+    label: string;
+    description: string;
+    tone: "good" | "warning" | "danger";
+  }> = [
+    {
+      approach: "landlord_meeting",
+      label: "Landlord meeting",
+      description: "Raise disposition, reduce rent friction, and cool local corporate complaints.",
+      tone: "good"
+    },
+    {
+      approach: "permit_filing",
+      label: "File permit",
+      description: "Create active paperwork that lowers inspection heat for legal placements.",
+      tone: "good"
+    },
+    {
+      approach: "exclusive_contract",
+      label: "Exclusive contract",
+      description: "Lock the stop against rival expansion and make legal installs cheaper while it lasts.",
+      tone: "warning"
+    },
+    {
+      approach: "corporate_shell",
+      label: "Shell paperwork",
+      description: "Use corporate cover to absorb legal pressure, at the cost of political attention.",
+      tone: "danger"
+    }
+  ];
+
+  return approaches.map((definition) => {
+    const cost = locationRightsNegotiationCost(state, location, definition.approach);
+    let disabledReason: string | undefined;
+    if (!districtUnlocked) {
+      disabledReason = "District locked.";
+    } else if (player.money < cost) {
+      disabledReason = `Needs $${cost}.`;
+    } else if (definition.approach === "permit_filing" && rights.permitStatus === "active" && (rights.permitExpiresHour ?? 0) > state.worldTimeHours + 6) {
+      disabledReason = "Permit already active.";
+    } else if (definition.approach === "exclusive_contract" && activeExclusive) {
+      disabledReason = "Exclusive already active.";
+    } else if (definition.approach === "corporate_shell" && empireAssetLevel(state, "shell_company") <= 0 && (state.empire?.shellCover ?? 0) < 0.08) {
+      disabledReason = "Needs shell-company cover.";
+    }
+
+    return {
+      ...definition,
+      canNegotiate: !disabledReason,
+      cost,
+      disabledReason
+    };
+  });
 }
 
 export function employeeList(state: GameState): Employee[] {
@@ -374,7 +716,12 @@ export function isDistrictUnlockedForPlacement(state: GameState, districtId: Dis
 
 export function placementCostForLocation(state: GameState, location: Location): number {
   const district = state.districts[location.districtId];
-  return Math.round(location.placementCost * (district?.rentMultiplier ?? 1));
+  const rights = state.economy?.locationRights?.[location.id];
+  const permitDiscount = rights?.permitStatus === "active" ? 0.9 : rights?.permitStatus === "challenged" ? 1.12 : 1;
+  const exclusivityDiscount = rights?.exclusiveUntilHour && rights.exclusiveUntilHour > state.worldTimeHours ? 0.82 : 1;
+  const landlordDiscount = rights ? Math.max(0.84, 1 - Math.max(0, rights.landlordDisposition - 50) * 0.004) : 1;
+  const pressureMarkup = rights ? 1 + Math.max(0, rights.legalPressure + rights.corporatePressure - 55) * 0.004 : 1;
+  return Math.round(location.placementCost * (district?.rentMultiplier ?? 1) * permitDiscount * exclusivityDiscount * landlordDiscount * pressureMarkup);
 }
 
 const placementLabels: Record<PlacementMethod, string> = {
@@ -389,13 +736,17 @@ export function placementQuoteForLocation(state: GameState, location: Location, 
   const baseCost = placementCostForLocation(state, location);
   const rivalPressure = location.rivalPressure;
   const policePressure = location.policePresence;
+  const rights = locationRightsFor(state, location.id);
+  const permitShield = rights.permitStatus === "active" ? 1 : rights.permitStatus === "challenged" ? -0.5 : 0;
+  const exclusiveShield = rights.exclusiveUntilHour && rights.exclusiveUntilHour > state.worldTimeHours ? 1 : 0;
+  const legalPressure = Math.max(0, rights.legalPressure + rights.corporatePressure * 0.45 - rights.landlordDisposition * 0.18);
 
   if (method === "bribe") {
     return {
       method,
       label: placementLabels[method],
-      cost: Math.max(12, Math.round(baseCost * 0.52 + policePressure * 34)),
-      heatDelta: 5,
+      cost: Math.max(12, Math.round(baseCost * 0.52 + policePressure * 34 + legalPressure * 0.28)),
+      heatDelta: Math.max(3, 5 + legalPressure * 0.025 - permitShield),
       visibilityDelta: 0,
       securityDelta: -0.01,
       publicReputationDelta: -0.6,
@@ -411,7 +762,7 @@ export function placementQuoteForLocation(state: GameState, location: Location, 
       method,
       label: placementLabels[method],
       cost: Math.max(0, Math.round(baseCost * 0.12)),
-      heatDelta: 10,
+      heatDelta: 10 + Math.max(0, legalPressure * 0.04),
       visibilityDelta: 0.12,
       securityDelta: -0.06,
       publicReputationDelta: -1.4,
@@ -426,8 +777,8 @@ export function placementQuoteForLocation(state: GameState, location: Location, 
     return {
       method,
       label: placementLabels[method],
-      cost: Math.max(10, Math.round(baseCost * 0.68 + 12)),
-      heatDelta: 1,
+      cost: Math.max(10, Math.round(baseCost * 0.68 + 12 + Math.max(0, rights.corporatePressure - 20) * 0.4)),
+      heatDelta: Math.max(0.4, 1 + Math.max(0, legalPressure - 30) * 0.015),
       visibilityDelta: -0.28,
       securityDelta: 0.08,
       publicReputationDelta: -0.1,
@@ -443,7 +794,7 @@ export function placementQuoteForLocation(state: GameState, location: Location, 
       method,
       label: placementLabels[method],
       cost: Math.max(15, Math.round(baseCost * 0.4 + rivalPressure * 42)),
-      heatDelta: 7.5,
+      heatDelta: 7.5 + Math.max(0, legalPressure * 0.025),
       visibilityDelta: 0.02,
       securityDelta: -0.06,
       publicReputationDelta: -0.8,
@@ -457,15 +808,15 @@ export function placementQuoteForLocation(state: GameState, location: Location, 
   return {
     method,
     label: placementLabels[method],
-    cost: Math.round(baseCost * 1.04),
-    heatDelta: 0,
+    cost: Math.round(baseCost * (rights.permitStatus === "active" ? 0.86 : 1.04) + Math.max(0, legalPressure - 35) * 0.35),
+    heatDelta: Math.max(0, legalPressure * 0.01 - permitShield - exclusiveShield * 0.4),
     visibilityDelta: 0.04,
     securityDelta: 0.04,
-    publicReputationDelta: 0.8,
+    publicReputationDelta: 0.8 + permitShield * 0.2 + exclusiveShield * 0.2,
     streetReputationDelta: 0,
-    rivalPressureDelta: -0.04,
-    inspectionRiskLabel: "low",
-    description: "Permitted placement with the cleanest inspections and lowest heat."
+    rivalPressureDelta: exclusiveShield ? -0.1 : -0.04,
+    inspectionRiskLabel: rights.permitStatus === "active" ? "low" : legalPressure >= 50 ? "medium" : "low",
+    description: rights.permitStatus === "active" ? "Permitted placement backed by filed paperwork and cleaner inspections." : "Permitted placement with the cleanest inspections and lowest heat."
   };
 }
 

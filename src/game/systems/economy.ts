@@ -1,5 +1,6 @@
 import type { GameState, Location, Product, VendingMachine } from "../core/types";
 import { effectiveMachineDamage, effectiveMachineVisibility, getMachineUpgradeEffects, priceDemandMultiplier } from "../core/machineStats";
+import { locationRightsFor } from "../core/selectors";
 
 function tagDemandMultiplier(product: Product, location: Location): number {
   const tagMatches = product.demandTags.filter((tag) => location.demandTags.includes(tag)).length;
@@ -73,6 +74,25 @@ function customizedProductHeat(state: GameState, product: Product): number {
   return Math.max(0, product.heat + (customization?.heatDelta ?? 0) - (customization?.riskMasking ?? 0) * 0.08);
 }
 
+function customerMarketDemandMultiplier(state: GameState, location: Location): number {
+  const loyalty = state.economy?.customers?.loyaltyByLocation?.[location.id] ?? 0;
+  const complaints = state.economy?.customers?.complaintsByLocation?.[location.id] ?? 0;
+  return Math.max(0.55, Math.min(1.35, 1 + loyalty * 0.004 - complaints * 0.035));
+}
+
+function locationRightsDemandMultiplier(state: GameState, machine: VendingMachine, location: Location): number {
+  const rights = locationRightsFor(state, location.id);
+  const activeExclusive = Boolean(rights.exclusiveUntilHour && rights.exclusiveUntilHour > state.worldTimeHours);
+  const playerMachine = machine.ownerFactionId === state.playerFactionId;
+  const playerExclusive = activeExclusive && rights.exclusiveContractHolderId === state.playerFactionId;
+  const rivalExclusive = activeExclusive && rights.exclusiveContractHolderId && rights.exclusiveContractHolderId !== machine.ownerFactionId;
+  const permitLift = rights.permitStatus === "active" && machine.placementMethod === "legal_contract" ? 0.08 : rights.permitStatus === "challenged" ? -0.08 : 0;
+  const landlordLift = Math.max(-0.08, Math.min(0.1, (rights.landlordDisposition - 50) * 0.003));
+  const exclusiveLift = playerMachine && playerExclusive ? 0.12 : rivalExclusive ? -0.16 : 0;
+  const pressureDrag = Math.max(0, rights.legalPressure + rights.corporatePressure - 70) * 0.0025;
+  return Math.max(0.62, Math.min(1.28, 1 + permitLift + landlordLift + exclusiveLift - pressureDrag));
+}
+
 export function runMachineSales(state: GameState, machine: VendingMachine, hours: number): number {
   if ((machine.placementStatus ?? "installed") !== "installed") {
     return 0;
@@ -134,6 +154,8 @@ export function estimateMachineSalesPerHour(state: GameState, machine: VendingMa
       districtDemandMultiplier(state, product, location) *
       timeOfDayMultiplier(state.worldTimeHours, product) *
       customizationDemandMultiplier(state, product) *
+      customerMarketDemandMultiplier(state, location) *
+      locationRightsDemandMultiplier(state, machine, location) *
       visibility *
       damageMultiplier *
       rivalMultiplier *

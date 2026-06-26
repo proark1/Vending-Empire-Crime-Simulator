@@ -8,6 +8,7 @@ import {
   activeConflictEvents,
   activeLawInspections,
   activeMajorRaids,
+  activeLocationRights,
   activeVehicle,
   assignedEmployeesForMachine,
   baseFacilityUpgradeCost,
@@ -28,6 +29,7 @@ import {
   empireAssetList,
   endgamePathScores,
   employeeList,
+  fleetSummary,
   financeLedger,
   financeSummary,
   formatClock,
@@ -36,11 +38,16 @@ import {
   installedMachines,
   installableLocation,
   latestDayReport,
+  locationRightsFor,
+  locationRightsQuotesForLocation,
   machineAtLocation,
+  machineProcurementQuotes,
+  machineResaleValue,
   machineRoutePressure,
   machineStockUnits,
   ownedMachines,
   placementCostForLocation,
+  playerHeatTier,
   productLabSlots,
   regionalManagerCapacity,
   rivalTerritoryByDistrict,
@@ -60,7 +67,7 @@ import { baseFacilityList } from "../game/content/baseFacilities";
 import { supplierDeals } from "../game/content/suppliers";
 import { graphicsQualityLabels, graphicsQualityModes, type GraphicsQuality } from "../render/three/graphicsQuality";
 
-type DashboardTab = "machines" | "base" | "empire" | "suppliers" | "catalog" | "finance" | "districts" | "jobs" | "route" | "logistics" | "crew" | "law" | "heat" | "conflict" | "rival" | "story" | "debug" | "log";
+type DashboardTab = "machines" | "fleet" | "base" | "empire" | "suppliers" | "catalog" | "finance" | "districts" | "rights" | "jobs" | "route" | "logistics" | "crew" | "law" | "heat" | "conflict" | "rival" | "story" | "debug" | "log";
 
 interface DashboardProps {
   graphicsQuality: GraphicsQuality;
@@ -150,6 +157,36 @@ function rivalOperationLabel(kind: string): string {
   return kind.replace("_", " ");
 }
 
+function rivalLikelyMove(state: GameState, rivalId: string): string {
+  const organization = state.rivalOrganizations?.[rivalId];
+  const activeOperation = organization?.operations
+    .filter((operation) => !operation.resolvedHour)
+    .sort((a, b) => b.progress + b.strength * 40 - (a.progress + a.strength * 40))[0];
+  if (activeOperation) {
+    const location = state.locations[activeOperation.locationId];
+    return `${rivalOperationLabel(activeOperation.kind)} near ${location?.name ?? activeOperation.locationId}`;
+  }
+
+  const rival = state.factions[rivalId];
+  if (!rival) {
+    return "watch territory";
+  }
+
+  if ((rival.archetype ?? "").includes("corporate") || (rival.tactic ?? "").includes("undercut")) {
+    return "undercut pricing and permits";
+  }
+
+  if ((rival.archetype ?? "").includes("street") || (rival.tactic ?? "").includes("sabotage")) {
+    return "sabotage weak stops";
+  }
+
+  if (rival.money > 120) {
+    return "expand into open corners";
+  }
+
+  return "probe pressure around your route";
+}
+
 export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQualityChange, showDebug }: DashboardProps) {
   const [tab, setTab] = useState<DashboardTab>("machines");
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -199,8 +236,14 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
   const empireAssets = useMemo(() => empireAssetList(state), [state]);
   const majorRaids = useMemo(() => activeMajorRaids(state), [state]);
   const suppliers = useMemo(() => supplierRelationshipList(state), [state]);
+  const fleet = useMemo(() => fleetSummary(state), [state]);
+  const procurementQuotes = useMemo(() => machineProcurementQuotes(state), [state]);
+  const storedMachines = useMemo(() => playerMachines.filter((machine) => (machine.placementStatus ?? "installed") !== "installed"), [playerMachines]);
+  const installableLocations = useMemo(() => Object.values(state.locations).filter(installableLocation), [state.locations]);
+  const activeRights = useMemo(() => activeLocationRights(state), [state]);
   const quests = useMemo(() => narrativeQuestProgress(state), [state]);
   const finance = financeSummary(state);
+  const heatTier = playerHeatTier(state);
   const ledger = financeLedger(state).slice(0, 16);
   const territory = rivalTerritoryByDistrict(state);
   const dayReport = latestDayReport(state);
@@ -211,10 +254,12 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
   const visibleTabs = useMemo<Array<{ icon: React.ReactNode; id: DashboardTab; label: string }>>(
     () => [
       { id: "machines", label: "Machines", icon: <Map size={16} aria-hidden="true" /> },
+      { id: "fleet", label: "Fleet", icon: <Boxes size={16} aria-hidden="true" /> },
       { id: "jobs", label: "Jobs", icon: <ClipboardList size={16} aria-hidden="true" /> },
       { id: "route", label: "Route", icon: <Route size={16} aria-hidden="true" /> },
       { id: "base", label: "Base", icon: <Factory size={16} aria-hidden="true" /> },
       { id: "districts", label: "Districts", icon: <Building2 size={16} aria-hidden="true" /> },
+      { id: "rights", label: "Rights", icon: <Landmark size={16} aria-hidden="true" /> },
       { id: "crew", label: "Crew", icon: <Users size={16} aria-hidden="true" /> },
       { id: "law", label: "Law", icon: <ShieldAlert size={16} aria-hidden="true" /> },
       { id: "log", label: "Log", icon: <ClipboardList size={16} aria-hidden="true" /> },
@@ -295,6 +340,8 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
             const installed = (machine.placementStatus ?? "installed") === "installed";
             const pressure = installed ? machineRoutePressure(state, machine) : undefined;
             const assignedCrew = assignedEmployeesForMachine(state, machine.id);
+            const customerLoyalty = location ? state.economy.customers.loyaltyByLocation[location.id] ?? 0 : 0;
+            const complaints = location ? state.economy.customers.complaintsByLocation[location.id] ?? 0 : 0;
             return (
               <article className="machine-card" key={machine.id}>
                 <div>
@@ -305,6 +352,7 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
                   {effects.remoteMonitoring && <p className="remote-chip">Remote monitor online</p>}
                   {assignedCrew.length > 0 && <p className="remote-chip">Crew: {assignedCrew.map((employee) => employee.name).join(", ")}</p>}
                   {pressure && pressure.reasons.length > 0 && <p className={`route-chip ${pressure.tone}`}>{pressure.reasons.join(" · ")}</p>}
+                  {installed && <p className="remote-chip">Customers: {Math.round(customerLoyalty)} loyalty · {complaints.toFixed(1)} complaints</p>}
                 </div>
                 <div className="machine-metrics">
                   <span>${Math.round(machine.revenueStored)}</span>
@@ -330,6 +378,83 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
               </article>
             );
           })}
+        </div>
+      )}
+
+      {tab === "fleet" && (
+        <div className="panel-list">
+          <article className="cargo-summary">
+            <Boxes size={18} aria-hidden="true" />
+            <span>
+              {fleet.installedCount} installed · {fleet.storedCount} stored · ${fleet.totalFleetValue} fleet value · {Math.round(fleet.averageCondition * 100)}% readiness · vendor rep {Math.round(fleet.vendorReputation)}
+            </span>
+          </article>
+
+          {procurementQuotes.map((quote) => (
+            <article className={`route-task ${quote.unlocked ? "good" : "warning"}`} key={quote.model.id}>
+              <div>
+                <h3>{quote.model.name}</h3>
+                <p>{quote.model.description}</p>
+                <p>
+                  {quote.model.maxSlots} slots · capacity {quote.model.capacityBonus >= 0 ? "+" : ""}{quote.model.capacityBonus} · security {Math.round(quote.model.securityBonus * 100)} · visibility {Math.round(quote.model.visibilityBonus * 100)}
+                </p>
+                <p>
+                  {quote.unlocked ? "available" : "locked"} · {quote.reason} · {quote.storedCount} stored
+                </p>
+              </div>
+              <div className="route-actions">
+                <strong>${quote.cost}</strong>
+                <MiniButton
+                  disabled={!quote.unlocked || state.factions[state.playerFactionId].money < quote.cost}
+                  onClick={() => onCommand({ type: "buy_machine_model", actorId: state.playerFactionId, modelId: quote.model.id, quantity: 1 })}
+                >
+                  <PackagePlus size={13} aria-hidden="true" />
+                  Buy
+                </MiniButton>
+              </div>
+            </article>
+          ))}
+
+          <article className="vehicle-card">
+            <div className="vehicle-heading">
+              <Package size={18} aria-hidden="true" />
+              <div>
+                <h3>Stored inventory</h3>
+                <p>Stored machines are the placement pool. Repair them in the garage before installing.</p>
+              </div>
+            </div>
+            <div className="storage-list">
+              {storedMachines.length === 0 ? (
+                <article className="inventory-row">
+                  <div>
+                    <h3>No stored machines</h3>
+                    <p>Buy a model above before claiming another stop.</p>
+                  </div>
+                  <strong>0</strong>
+                </article>
+              ) : (
+                storedMachines.map((machine) => {
+                  const model = machineModels[machine.machineModelId] ?? machineModels.basic_snack;
+                  const resale = machineResaleValue(state, machine);
+                  return (
+                    <article className="inventory-row" key={machine.id}>
+                      <div>
+                        <h3>{machine.name}</h3>
+                        <p>
+                          {model.name} · {Math.round(machine.damage)}% damage · {machine.maxSlots} slots · resale ${resale}
+                        </p>
+                      </div>
+                      <div className="route-actions">
+                        <MiniButton disabled={machine.damage > 0} onClick={() => onCommand({ type: "sell_stored_machine", actorId: state.playerFactionId, machineId: machine.id })}>
+                          Sell ${resale}
+                        </MiniButton>
+                      </div>
+                    </article>
+                  );
+                })
+              )}
+            </div>
+          </article>
         </div>
       )}
 
@@ -620,6 +745,99 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
         </div>
       )}
 
+      {tab === "rights" && (
+        <div className="panel-list">
+          <article className="cargo-summary">
+            <Landmark size={18} aria-hidden="true" />
+            <span>
+              {activeRights.length} pressured stops · {state.economy.customers.recentDecisions.length} recent customer decisions · next customer pulse {formatClock(state.economy.customers.nextDecisionHour)}
+            </span>
+          </article>
+
+          {installableLocations
+            .filter((location) => districtUnlockInfo(state, location.districtId).progress.access !== "locked")
+            .sort((a, b) => {
+              const aRights = locationRightsFor(state, a.id);
+              const bRights = locationRightsFor(state, b.id);
+              return bRights.legalPressure + bRights.corporatePressure - (aRights.legalPressure + aRights.corporatePressure);
+            })
+            .map((location) => {
+              const rights = locationRightsFor(state, location.id);
+              const district = state.districts[location.districtId];
+              const loyalty = state.economy.customers.loyaltyByLocation[location.id] ?? 0;
+              const complaints = state.economy.customers.complaintsByLocation[location.id] ?? 0;
+              const quotes = locationRightsQuotesForLocation(state, location);
+              const tone = rights.legalPressure >= 55 || rights.corporatePressure >= 55 || complaints >= 4 ? "danger" : rights.permitStatus === "active" || rights.rightsTier === "exclusive" ? "good" : "warning";
+              return (
+                <article className={`route-task ${tone}`} key={location.id}>
+                  <div>
+                    <h3>{location.name}</h3>
+                    <p>
+                      {district?.name ?? location.districtId} · {rights.rightsTier.replace("_", " ")} · permit {rights.permitStatus}
+                    </p>
+                    <p>
+                      landlord {Math.round(rights.landlordDisposition)} · legal pressure {Math.round(rights.legalPressure)} · corporate pressure {Math.round(rights.corporatePressure)}
+                    </p>
+                    <p>
+                      customers {Math.round(loyalty)} loyalty · {complaints.toFixed(1)} complaints
+                      {rights.exclusiveUntilHour && rights.exclusiveUntilHour > state.worldTimeHours ? ` · exclusive until ${formatClock(rights.exclusiveUntilHour)}` : ""}
+                      {rights.permitExpiresHour && rights.permitStatus === "active" ? ` · permit until ${formatClock(rights.permitExpiresHour)}` : ""}
+                    </p>
+                  </div>
+                  <div className="route-actions">
+                    {quotes.map((quote) => (
+                      <MiniButton
+                        disabled={!quote.canNegotiate}
+                        key={quote.approach}
+                        onClick={() => onCommand({ type: "negotiate_location_rights", actorId: state.playerFactionId, locationId: location.id, approach: quote.approach })}
+                      >
+                        {quote.label} ${quote.cost}
+                      </MiniButton>
+                    ))}
+                  </div>
+                </article>
+              );
+            })}
+
+          <article className="vehicle-card">
+            <div className="vehicle-heading">
+              <Users size={18} aria-hidden="true" />
+              <div>
+                <h3>Customer decisions</h3>
+                <p>Purchases, walkaways, complaints, and tipoffs feed demand and inspection pressure.</p>
+              </div>
+            </div>
+            <div className="storage-list">
+              {state.economy.customers.recentDecisions.length === 0 ? (
+                <article className="inventory-row">
+                  <div>
+                    <h3>No customer decisions yet</h3>
+                    <p>Advance time around stocked machines to build market memory.</p>
+                  </div>
+                </article>
+              ) : (
+                state.economy.customers.recentDecisions.slice(0, 8).map((decision) => {
+                  const location = state.locations[decision.locationId];
+                  const product = decision.productId ? state.products[decision.productId] : undefined;
+                  return (
+                    <article className={`inventory-row ${decision.outcome === "purchase" ? "contract-needed" : ""}`} key={decision.id}>
+                      <div>
+                        <h3>{decision.archetypeId} {decision.outcome}</h3>
+                        <p>
+                          {location?.name ?? decision.locationId} · {product?.name ?? "no product"} · satisfaction {Math.round(decision.satisfaction)}
+                        </p>
+                        <p>{decision.reason}</p>
+                      </div>
+                      <strong>{decision.spend ? `$${decision.spend}` : formatClock(decision.hour)}</strong>
+                    </article>
+                  );
+                })
+              )}
+            </div>
+          </article>
+        </div>
+      )}
+
       {tab === "jobs" && (
         <div className="panel-list">
           {dayReport && (
@@ -872,6 +1090,9 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
                     <p>
                       Reliability {Math.round(employee.reliability * 100)} · Skill {Math.round(employee.skill * 100)} · Loyalty {Math.round(employee.loyalty * 100)} · XP {Math.round(employee.xp ?? 0)}
                     </p>
+                    <p className="employee-trait">
+                      {employee.trait ?? "Steady hands"} · {employee.traitDescription ?? "Handles route work with a steady rhythm."}
+                    </p>
                     <p>
                       Route agent: {(employee.routePhase ?? "idle").replace("_", " ")} · {routeLocation ? `${routeLocation.name}, ${state.districts[routeLocation.districtId]?.name ?? routeLocation.districtId}` : "no visible stop"}
                     </p>
@@ -909,7 +1130,7 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
           <article className="cargo-summary">
             <ShieldAlert size={18} aria-hidden="true" />
             <span>
-              {Math.round(state.factions[state.playerFactionId].heat)} heat · {state.law.inspectionsToday} inspections today · ${Math.round(state.law.finesToday)} fines
+              {heatTier.label} · {Math.round(state.factions[state.playerFactionId].heat)} heat · {state.law.inspectionsToday} inspections today · ${Math.round(state.law.finesToday)} fines
             </span>
           </article>
 
@@ -921,9 +1142,14 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
                 <p>
                   Next inspection window {formatClock(state.law.nextInspectionHour)} · {state.law.confiscatedUnitsToday} stock confiscated today
                 </p>
+                <p className={`heat-tier-note ${heatTier.tone}`}>
+                  {heatTier.description} {heatTier.action}
+                </p>
               </div>
             </div>
             <div className="report-grid">
+              <span>Heat tier</span>
+              <strong>{heatTier.label}</strong>
               <span>Legal</span>
               <strong>low heat</strong>
               <span>Bribe</span>
@@ -981,10 +1207,18 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
           <article className="cargo-summary">
             <AlertTriangle size={18} aria-hidden="true" />
             <span>
-              {Math.round(state.factions[state.playerFactionId].heat)} heat · {Math.round(state.factions[state.playerFactionId].publicReputation)} public rep · {Math.round(state.factions[state.playerFactionId].streetReputation)} street rep
+              {heatTier.label} · {Math.round(state.factions[state.playerFactionId].heat)} heat · {Math.round(state.factions[state.playerFactionId].publicReputation)} public rep · {Math.round(state.factions[state.playerFactionId].streetReputation)} street rep
             </span>
           </article>
           <article className="vehicle-card">
+            <div className="vehicle-heading">
+              <AlertTriangle size={18} aria-hidden="true" />
+              <div>
+                <h3>{heatTier.label}</h3>
+                <p>{heatTier.description}</p>
+                <p className={`heat-tier-note ${heatTier.tone}`}>{heatTier.action}</p>
+              </div>
+            </div>
             <div className="report-grid">
               <span>Next inspection</span>
               <strong>{formatClock(state.law.nextInspectionHour)}</strong>
@@ -1116,6 +1350,7 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
                   </div>
                 </div>
                 <p>{organization.agenda}</p>
+                <p className="rival-intel">Likely next move: {rivalLikelyMove(state, organization.factionId)}</p>
                 <div className="storage-list">
                   {activeOperations.length === 0 ? (
                     <article className="inventory-row">
@@ -1170,6 +1405,7 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
                   </p>
                 </div>
               </div>
+              <p className="rival-intel">Likely next move: {rivalLikelyMove(state, rival.id)}</p>
               <div className="rival-grid">
                 <span>Money</span>
                 <strong>${Math.round(rival.money)}</strong>

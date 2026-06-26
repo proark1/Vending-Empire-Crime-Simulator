@@ -20,6 +20,7 @@ import type {
   InsurancePlan,
   LawInspection,
   Location,
+  LocationRightsApproach,
   MachineModelId,
   MachineSlot,
   MachineAlarmKind,
@@ -28,6 +29,7 @@ import type {
   ProductId,
   RivalOperation,
   RivalOperationApproach,
+  RouteVehicle,
   ServiceContract,
   StreetActivity,
   StreetActivityKind,
@@ -72,6 +74,12 @@ import {
   regionalManagerCapacity,
   routeDangerScore,
   routeRiskReduction,
+  defaultLocationRights,
+  locationRightsFor,
+  locationRightsNegotiationCost,
+  machineProcurementCost,
+  machineProcurementQuotes,
+  machineResaleValue,
   supplierAvailable,
   storedPlayerMachines,
   vehicleSpaceRemaining
@@ -250,6 +258,21 @@ function ensureEconomyState(state: GameState): void {
       nextSpoilageHour: state.worldTimeHours + 6,
       spoiledToday: 0
     },
+    fleet: {
+      modelExperience: { basic_snack: 1 },
+      procurementSequence: 1,
+      totalPurchased: 1,
+      unlockedModelIds: ["basic_snack", "drink_machine", "combo_machine"],
+      vendorReputation: 8
+    },
+    customers: {
+      complaintsByLocation: {},
+      decisionSequence: 1,
+      loyaltyByLocation: {},
+      nextDecisionHour: state.worldTimeHours + 0.32,
+      recentDecisions: []
+    },
+    locationRights: {},
     productCustomizations: {}
   };
   state.economy.finance ??= {
@@ -310,6 +333,46 @@ function ensureEconomyState(state: GameState): void {
   };
   state.economy.spoilage.nextSpoilageHour ??= state.worldTimeHours + 6;
   state.economy.spoilage.spoiledToday ??= 0;
+  state.economy.fleet ??= {
+    modelExperience: { basic_snack: 1 },
+    procurementSequence: 1,
+    totalPurchased: ownedMachines(state, state.playerFactionId).length,
+    unlockedModelIds: ["basic_snack", "drink_machine", "combo_machine"],
+    vendorReputation: 8
+  };
+  state.economy.fleet.modelExperience ??= {};
+  state.economy.fleet.procurementSequence ??= 1;
+  state.economy.fleet.totalPurchased ??= ownedMachines(state, state.playerFactionId).length;
+  state.economy.fleet.unlockedModelIds ??= ["basic_snack", "drink_machine", "combo_machine"];
+  state.economy.fleet.vendorReputation ??= 8;
+  for (const machine of ownedMachines(state, state.playerFactionId)) {
+    state.economy.fleet.modelExperience[machine.machineModelId] ??= machine.machineModelId === "basic_snack" ? 1 : 0;
+  }
+  state.economy.customers ??= {
+    complaintsByLocation: {},
+    decisionSequence: 1,
+    loyaltyByLocation: {},
+    nextDecisionHour: state.worldTimeHours + 0.32,
+    recentDecisions: []
+  };
+  state.economy.customers.complaintsByLocation ??= {};
+  state.economy.customers.decisionSequence ??= 1;
+  state.economy.customers.loyaltyByLocation ??= {};
+  state.economy.customers.nextDecisionHour ??= state.worldTimeHours + 0.32;
+  state.economy.customers.recentDecisions = Array.isArray(state.economy.customers.recentDecisions) ? state.economy.customers.recentDecisions : [];
+  state.economy.locationRights ??= {};
+  for (const location of Object.values(state.locations ?? {})) {
+    const normalized = {
+      ...defaultLocationRights(location),
+      ...(state.economy.locationRights[location.id] ?? {}),
+      locationId: location.id
+    };
+    if (state.economy.locationRights[location.id]) {
+      Object.assign(state.economy.locationRights[location.id], normalized);
+    } else {
+      state.economy.locationRights[location.id] = normalized;
+    }
+  }
   state.economy.productCustomizations ??= {};
 }
 
@@ -639,6 +702,42 @@ function createMachine(state: GameState, ownerFactionId: FactionId, locationId: 
   return machine;
 }
 
+function createStoredMachine(state: GameState, ownerFactionId: FactionId, machineModelId: MachineModelId): VendingMachine {
+  const id = `machine_${ownerFactionId}_${state.nextMachineNumber++}`;
+  const model = machineModels[machineModelId] ?? machineModels.basic_snack;
+  const fleetNumber = state.economy?.fleet?.procurementSequence ?? state.nextMachineNumber - 1;
+  const baseName = model.name.replace(" Machine", "").replace(" Vending Unit", " Unit");
+  const machine: VendingMachine = {
+    id,
+    name: `${baseName} ${fleetNumber}`,
+    ownerFactionId,
+    machineModelId: model.id,
+    locationId: "garage",
+    placementStatus: "stored",
+    placementMethod: "legal_contract",
+    slots: [],
+    maxSlots: model.maxSlots,
+    revenueStored: 0,
+    damage: 0,
+    security: clamp01(0.2 + model.securityBonus),
+    visibility: Math.max(0.12, Math.min(1.35, 0.78 + model.visibilityBonus)),
+    heat: 0,
+    lastServicedHour: state.worldTimeHours,
+    upgrades: []
+  };
+  state.machines[id] = machine;
+  return machine;
+}
+
+function increaseFleetExperience(state: GameState, modelId: MachineModelId, amount: number): void {
+  ensureEconomyState(state);
+  state.economy.fleet.modelExperience[modelId] = (state.economy.fleet.modelExperience[modelId] ?? 0) + amount;
+  state.economy.fleet.vendorReputation = Math.min(100, state.economy.fleet.vendorReputation + amount * 0.85);
+  if (!state.economy.fleet.unlockedModelIds.includes(modelId)) {
+    state.economy.fleet.unlockedModelIds.push(modelId);
+  }
+}
+
 function ensurePlayerMachineAt(state: GameState, locationId: string): VendingMachine | undefined {
   const existing = machineAtLocation(state, locationId);
   if (existing?.ownerFactionId === state.playerFactionId) {
@@ -663,11 +762,79 @@ const employeeNames: Record<EmployeeRole, string[]> = {
   regional_manager: ["Marin", "Case", "Vale"]
 };
 
+interface EmployeeTraitDefinition {
+  id: string;
+  label: string;
+  description: string;
+  serviceBonus?: number;
+  pressureBonus?: number;
+  nerveBonus?: number;
+}
+
+const employeeTraits: EmployeeTraitDefinition[] = [
+  {
+    id: "steady_hands",
+    label: "Steady hands",
+    description: "Handles crates and repairs cleanly.",
+    serviceBonus: 2
+  },
+  {
+    id: "local_face",
+    label: "Local face",
+    description: "Knows which landlord or clerk needs a calm word.",
+    pressureBonus: 0.025
+  },
+  {
+    id: "night_nerve",
+    label: "Night nerve",
+    description: "Keeps moving when alarms and route trouble spike.",
+    nerveBonus: 0.03
+  },
+  {
+    id: "fast_ledger",
+    label: "Fast ledger",
+    description: "Turns cash stops and inventory counts around quickly.",
+    serviceBonus: 1,
+    pressureBonus: 0.012
+  }
+];
+
+function employeeTraitDefinition(employee: Employee): EmployeeTraitDefinition {
+  return employeeTraits.find((trait) => trait.label === employee.trait || trait.id === employee.trait) ?? employeeTraits[0];
+}
+
+function employeeTraitFor(role: EmployeeRole, employeeNumber: number): EmployeeTraitDefinition {
+  const roleOffset: Record<EmployeeRole, number> = {
+    restocker: 0,
+    collector: 3,
+    technician: 0,
+    guard: 2,
+    scout: 2,
+    negotiator: 1,
+    runner: 3,
+    regional_manager: 1
+  };
+  return employeeTraits[(employeeNumber + roleOffset[role] - 1) % employeeTraits.length];
+}
+
+function employeeServiceBonus(employee: Employee): number {
+  return employeeTraitDefinition(employee).serviceBonus ?? 0;
+}
+
+function employeePressureBonus(employee: Employee): number {
+  return employeeTraitDefinition(employee).pressureBonus ?? 0;
+}
+
+function employeeNerveBonus(employee: Employee): number {
+  return employeeTraitDefinition(employee).nerveBonus ?? 0;
+}
+
 function createEmployee(state: GameState, role: EmployeeRole): Employee {
   const definition = employeeRoles[role];
   const employeeNumber = state.nextEmployeeNumber++;
   const names = employeeNames[role];
   const name = `${names[(employeeNumber - 1) % names.length]} ${definition.title}`;
+  const trait = employeeTraitFor(role, employeeNumber);
 
   return {
     assignedMachineIds: [],
@@ -687,6 +854,8 @@ function createEmployee(state: GameState, role: EmployeeRole): Employee {
     speed: definition.speed,
     status: "idle",
     statusDetail: "Waiting for assignments.",
+    trait: trait.label,
+    traitDescription: trait.description,
     wagePerDay: definition.wagePerDay,
     xp: 0
   };
@@ -1248,6 +1417,29 @@ function finishPlayerConflict(
   log(state, events, message, tone);
 }
 
+function advanceVehicleConflictEscape(state: GameState, events: GameEvent[], vehicle: RouteVehicle, distance: number): void {
+  if (distance <= 0) {
+    return;
+  }
+
+  for (const conflict of activeConflictEvents(state)) {
+    if (conflict.locationId !== vehicle.locationId || (conflict.kind !== "street_chase" && conflict.kind !== "route_ambush")) {
+      continue;
+    }
+
+    const encounter = ensureConflictEncounter(conflict);
+    const condition = Math.max(0.35, vehicle.condition ?? 1);
+    const escapePush = distance * (1.25 + vehicle.escapeRating * 2.35 + condition * 0.9);
+    encounter.chaseProgress = Math.min(100, encounter.chaseProgress + escapePush);
+    encounter.enemyFocus = Math.max(0, encounter.enemyFocus - distance * (0.22 + vehicle.escapeRating * 0.2));
+    encounter.playerStamina = Math.max(0, encounter.playerStamina - distance * 0.08);
+
+    if (encounter.chaseProgress >= 100 && conflict.status === "active") {
+      finishPlayerConflict(state, events, conflict, "drive_escape", `${vehicle.name} broke clear of the trouble near ${state.locations[conflict.locationId]?.name ?? "the route"}.`, "good");
+    }
+  }
+}
+
 function activeRivalOperations(state: GameState): RivalOperation[] {
   ensureRivalOrganizationState(state);
   return Object.values(state.rivalOrganizations).flatMap((organization) => organization.operations.filter((operation) => !operation.resolvedHour));
@@ -1270,6 +1462,22 @@ function operationKindLabel(kind: RivalOperation["kind"]): string {
 
 function rivalOperationApproachCost(approach: RivalOperationApproach): number {
   return approach === "negotiate" ? 24 : approach === "expose" ? 12 : 8;
+}
+
+function locationRightsApproachLabel(approach: LocationRightsApproach): string {
+  if (approach === "landlord_meeting") {
+    return "landlord meeting";
+  }
+
+  if (approach === "permit_filing") {
+    return "permit filing";
+  }
+
+  if (approach === "exclusive_contract") {
+    return "exclusive contract";
+  }
+
+  return "shell paperwork";
 }
 
 function applyRivalOperationConsequence(state: GameState, events: GameEvent[], operation: RivalOperation): void {
@@ -1319,6 +1527,15 @@ function applyRivalOperationConsequence(state: GameState, events: GameEvent[], o
 
   if (operation.kind === "expansion") {
     if (location && !machineAtLocation(state, location.id) && isDistrictUnlockedForPlacement(state, location.districtId) && rival && rival.money >= 20) {
+      const rights = state.economy.locationRights[location.id] ??= locationRightsFor(state, location.id);
+      if (rights.exclusiveContractHolderId === state.playerFactionId && (rights.exclusiveUntilHour ?? 0) > state.worldTimeHours) {
+        rights.corporatePressure = Math.min(100, rights.corporatePressure + 7);
+        rights.legalPressure = Math.min(100, rights.legalPressure + 4);
+        log(state, events, `${rivalName} tested the exclusive at ${location.name}, but your contract held.`, "warning");
+        operation.progress = Math.max(0, operation.progress - 18);
+        return;
+      }
+
       createMachine(state, operation.factionId, location.id, "rival_territory");
       rival.money = Math.max(0, rival.money - 20);
       location.rivalPressure = clamp01(location.rivalPressure + 0.12);
@@ -1568,13 +1785,30 @@ function inspectionRiskScore(state: GameState, machine: VendingMachine): number 
   const visibilityRisk = Math.max(0.2, machine.visibility) * 0.55;
   const player = state.factions[state.playerFactionId];
   const paperworkShield = machine.placementMethod === "legal_contract" ? Math.min(0.8, player.publicReputation * 0.035) : 0;
+  const rights = locationRightsFor(state, location.id);
+  const permitShield = rights.permitStatus === "active" && machine.placementMethod === "legal_contract" ? 1.35 : rights.permitStatus === "challenged" ? -0.65 : 0;
+  const exclusiveShield = rights.exclusiveUntilHour && rights.exclusiveUntilHour > state.worldTimeHours && rights.exclusiveContractHolderId === state.playerFactionId ? 0.45 : 0;
+  const rightsPressure = rights.legalPressure * 0.028 + rights.corporatePressure * 0.018 - Math.max(0, rights.landlordDisposition - 55) * 0.01;
   const shellShield = Math.min(0.95, Math.max(state.empire?.shellCover ?? 0, empireAssetEffects(state).shellCover ?? 0));
   const securityShield =
     machine.security * 0.22 +
     (machineHasUpgrade(machine, "security_camera") ? 0.22 : 0) +
     (machineHasUpgrade(machine, "remote_monitor") ? 0.1 : 0);
 
-  return Math.max(0, stockRisk + heatRisk + policingRisk + visibilityRisk + placementRiskScore(machine.placementMethod ?? "legal_contract") - paperworkShield - securityShield - shellShield);
+  return Math.max(
+    0,
+    stockRisk +
+      heatRisk +
+      policingRisk +
+      visibilityRisk +
+      rightsPressure +
+      placementRiskScore(machine.placementMethod ?? "legal_contract") -
+      paperworkShield -
+      permitShield -
+      exclusiveShield -
+      securityShield -
+      shellShield
+  );
 }
 
 function inspectionReason(machine: VendingMachine): string {
@@ -1648,6 +1882,47 @@ function applyLawInspections(state: GameState, events: GameEvent[]): void {
   }
 
   scheduleNextInspection(state);
+}
+
+function advanceLocationRights(state: GameState, events: GameEvent[], hours: number): void {
+  ensureEconomyState(state);
+  ensureEmpireState(state);
+
+  for (const rights of Object.values(state.economy.locationRights)) {
+    const location = state.locations[rights.locationId];
+    if (!location || location.kind === "garage" || location.kind === "supplier") {
+      continue;
+    }
+
+    if (rights.permitStatus === "active" && rights.permitExpiresHour && rights.permitExpiresHour <= state.worldTimeHours) {
+      rights.permitStatus = "challenged";
+      rights.permitExpiresHour = undefined;
+      rights.legalPressure = Math.min(100, rights.legalPressure + 8);
+      log(state, events, `${location.name} permit lapsed into a challenge. Renew paperwork or expect inspections.`, "warning");
+    }
+
+    if (rights.exclusiveContractHolderId && rights.exclusiveUntilHour && rights.exclusiveUntilHour <= state.worldTimeHours) {
+      rights.exclusiveContractHolderId = undefined;
+      rights.exclusiveUntilHour = undefined;
+      rights.rightsTier = rights.permitStatus === "active" ? "standard_permit" : rights.rightsTier === "exclusive" ? "handshake" : rights.rightsTier;
+      rights.corporatePressure = Math.min(100, rights.corporatePressure + 3);
+      log(state, events, `${location.name} exclusive window expired.`, "neutral");
+    }
+
+    const permitRelief = rights.permitStatus === "active" ? 0.18 : rights.permitStatus === "challenged" ? -0.05 : 0;
+    const landlordRelief = Math.max(0, rights.landlordDisposition - 50) * 0.004;
+    const pressureGrowth = location.policePresence * 0.22 + location.rivalPressure * 0.18 + Math.max(0, rights.corporatePressure - 55) * 0.006;
+    rights.legalPressure = Math.max(0, Math.min(100, rights.legalPressure + hours * (pressureGrowth - permitRelief - landlordRelief)));
+    rights.corporatePressure = Math.max(
+      0,
+      Math.min(100, rights.corporatePressure + hours * (location.rivalPressure * 0.2 + location.footTraffic * 0.025 - Math.max(0, rights.landlordDisposition - 55) * 0.006))
+    );
+    rights.landlordDisposition = Math.max(0, Math.min(100, rights.landlordDisposition - hours * Math.max(0, location.rivalPressure - 0.35) * 0.12));
+
+    if (rights.corporatePressure >= 78) {
+      state.empire.politicalPressure = Math.min(100, state.empire.politicalPressure + hours * 0.08);
+    }
+  }
 }
 
 function starterMachine(state: GameState): VendingMachine | undefined {
@@ -1799,72 +2074,212 @@ function sortMachinesByTraffic(state: GameState, machines: VendingMachine[]): Ve
   });
 }
 
-function customerPurchase(state: GameState, events: GameEvent[]): boolean {
+function customerArchetypeForLocation(state: GameState, location: Location): string {
+  const archetypes = state.districts[location.districtId]?.customerArchetypes ?? [];
+  if (archetypes.length === 0) {
+    return location.demandTags[0] ?? "regular";
+  }
+
+  return archetypes[(state.economy.customers.decisionSequence - 1) % archetypes.length];
+}
+
+function customerPreferredSlotScore(state: GameState, location: Location, slot: MachineSlot): number {
+  const product = state.products[slot.productId];
+  const tagMatches = product.demandTags.filter((tag) => location.demandTags.includes(tag)).length;
+  const pricePressure = Math.max(0, slot.price / Math.max(1, product.basePrice) - 1) * 0.45;
+  return product.demand + tagMatches * 0.32 + Math.min(0.2, slot.quantity / Math.max(1, slot.capacity) * 0.2) - pricePressure;
+}
+
+function recordCustomerDecision(
+  state: GameState,
+  decision: Omit<GameState["economy"]["customers"]["recentDecisions"][number], "hour" | "id">
+): void {
+  ensureEconomyState(state);
+  const entry = {
+    ...decision,
+    id: `customer_${state.economy.customers.decisionSequence++}`,
+    hour: state.worldTimeHours
+  };
+  state.economy.customers.recentDecisions = [entry, ...state.economy.customers.recentDecisions].slice(0, 18);
+}
+
+function runCustomerDecision(state: GameState, events: GameEvent[], preferredOutcome?: "purchase" | "complaint" | "walkaway" | "tipoff"): boolean {
+  ensureEconomyState(state);
   const machines = sortMachinesByTraffic(
     state,
-    installedMachines(state, state.playerFactionId).filter((machine) => machine.damage < 92 && machine.slots.some((slot) => slot.quantity > 0))
+    installedMachines(state, state.playerFactionId).filter((machine) => machine.damage < 100)
   );
-  const machine = machines[(state.streetLife.activitySequence - 1) % Math.max(1, machines.length)];
+  const candidates = preferredOutcome === "complaint"
+    ? machines
+        .map((machine) => ({ machine, score: (machineStockUnits(machine) === 0 ? 5 : 0) + machine.damage / 18 + (state.economy.customers.complaintsByLocation[machine.locationId] ?? 0) }))
+        .filter(({ score }) => score > 0)
+        .sort((a, b) => b.score - a.score)
+        .map(({ machine }) => machine)
+    : machines;
+  const machine = candidates[(state.economy.customers.decisionSequence - 1) % Math.max(1, candidates.length)];
   if (!machine) {
     return false;
   }
 
-  const stockedSlots = machine.slots.filter((slot) => slot.quantity > 0);
-  const slot = stockedSlots[(state.streetLife.activitySequence - 1) % stockedSlots.length];
-  const product = state.products[slot.productId];
-  const owner = state.factions[machine.ownerFactionId];
   const location = state.locations[machine.locationId];
-  slot.quantity -= 1;
-  slot.salesAccumulator = Math.max(0, slot.salesAccumulator - 1);
-  machine.revenueStored += slot.price;
-  machine.heat += product.heat * 0.04;
-  owner.heat += product.heat * 0.012;
-  state.progression.stockSoldToday += 1;
+  if (!location) {
+    return false;
+  }
 
+  const stockedSlots = machine.slots
+    .filter((slot) => slot.quantity > 0)
+    .sort((a, b) => customerPreferredSlotScore(state, location, b) - customerPreferredSlotScore(state, location, a));
+  const slot = stockedSlots[0];
+  const product = slot ? state.products[slot.productId] : undefined;
+  const archetypeId = customerArchetypeForLocation(state, location);
+  const loyalty = state.economy.customers.loyaltyByLocation[location.id] ?? 0;
+  const complaints = state.economy.customers.complaintsByLocation[location.id] ?? 0;
+  const priceRatio = slot && product ? slot.price / Math.max(1, product.basePrice) : 1.4;
+  const tagMatches = product ? product.demandTags.filter((tag) => location.demandTags.includes(tag)).length : 0;
+  const satisfaction = Math.max(
+    0,
+    Math.min(
+      100,
+      48 +
+        (product?.demand ?? 0.2) * 22 +
+        tagMatches * 9 +
+        loyalty * 0.28 -
+        complaints * 3.2 -
+        machine.damage * 0.36 -
+        Math.max(0, priceRatio - 1.2) * 28 -
+        location.rivalPressure * 9 -
+        machine.heat * 0.35
+    )
+  );
+  const highRiskStock = Boolean(product && product.legality > 0 && (machine.heat >= 4 || location.policePresence >= 0.38));
+  const forcedOutcome = preferredOutcome === "purchase" && !slot ? undefined : preferredOutcome;
+  const outcome = forcedOutcome ?? (!slot ? (machine.damage >= 45 ? "complaint" : "walkaway") : highRiskStock && satisfaction < 58 ? "tipoff" : satisfaction >= 38 ? "purchase" : satisfaction <= 24 ? "complaint" : "walkaway");
+
+  if (outcome === "purchase" && slot && product) {
+    const owner = state.factions[machine.ownerFactionId];
+    slot.quantity -= 1;
+    slot.salesAccumulator = Math.max(0, slot.salesAccumulator - 1);
+    machine.revenueStored += slot.price;
+    machine.heat += product.heat * 0.04;
+    owner.heat += product.heat * 0.012;
+    state.progression.stockSoldToday += 1;
+    state.economy.customers.loyaltyByLocation[location.id] = Math.min(100, loyalty + 0.8 + satisfaction * 0.018);
+    state.economy.customers.complaintsByLocation[location.id] = Math.max(0, complaints - 0.35);
+    recordCustomerDecision(state, {
+      archetypeId,
+      locationId: location.id,
+      machineId: machine.id,
+      outcome,
+      productId: product.id,
+      reason: tagMatches > 0 ? "matched local demand" : "visible stocked machine",
+      satisfaction,
+      spend: slot.price
+    });
+    logStreetActivity(state, events, {
+      actor: "customer",
+      amount: slot.price,
+      kind: "customer_purchase",
+      locationId: machine.locationId,
+      machineId: machine.id,
+      message: `${archetypeId} bought ${product.name} from ${machine.name} at ${location.name}.`,
+      productId: product.id,
+      tone: "good"
+    });
+    return true;
+  }
+
+  if (outcome === "tipoff") {
+    const player = state.factions[state.playerFactionId];
+    player.heat += 0.9;
+    state.law.nextInspectionHour = Math.min(state.law.nextInspectionHour, state.worldTimeHours + 1.2);
+    state.economy.customers.complaintsByLocation[location.id] = complaints + 0.8;
+    recordCustomerDecision(state, {
+      archetypeId,
+      locationId: location.id,
+      machineId: machine.id,
+      outcome,
+      productId: product?.id,
+      reason: "risky stock drew attention",
+      satisfaction,
+      spend: 0
+    });
+    logStreetActivity(state, events, {
+      actor: "customer",
+      kind: "customer_tipoff",
+      locationId: machine.locationId,
+      machineId: machine.id,
+      message: `${archetypeId} tipped off chatter around ${machine.name}; inspection timing tightened.`,
+      productId: product?.id,
+      tone: "danger"
+    });
+    return true;
+  }
+
+  if (outcome === "complaint") {
+    const player = state.factions[state.playerFactionId];
+    player.publicReputation = Math.max(0, player.publicReputation - 0.12);
+    state.economy.customers.loyaltyByLocation[location.id] = Math.max(-25, loyalty - 2.2);
+    state.economy.customers.complaintsByLocation[location.id] = complaints + 1;
+    location.rivalPressure = Math.min(1, location.rivalPressure + 0.025);
+    const reason = !slot ? "empty racks" : machine.damage >= 45 ? "a busted display" : priceRatio >= 1.35 ? "sticker shock" : "bad fit";
+    recordCustomerDecision(state, {
+      archetypeId,
+      locationId: location.id,
+      machineId: machine.id,
+      outcome,
+      productId: product?.id,
+      reason,
+      satisfaction,
+      spend: 0
+    });
+    logStreetActivity(state, events, {
+      actor: "customer",
+      kind: "customer_complaint",
+      locationId: machine.locationId,
+      machineId: machine.id,
+      message: `${archetypeId} complained about ${machine.name}: ${reason}.`,
+      tone: "warning"
+    });
+    return true;
+  }
+
+  state.economy.customers.loyaltyByLocation[location.id] = Math.max(-25, loyalty - 0.7);
+  recordCustomerDecision(state, {
+    archetypeId,
+    locationId: location.id,
+    machineId: machine.id,
+    outcome: "walkaway",
+    productId: product?.id,
+    reason: !slot ? "nothing in stock" : satisfaction < 38 ? "offer was not convincing" : "browsed without buying",
+    satisfaction,
+    spend: 0
+  });
   logStreetActivity(state, events, {
     actor: "customer",
-    amount: slot.price,
-    kind: "customer_purchase",
+    kind: "customer_walkaway",
     locationId: machine.locationId,
     machineId: machine.id,
-    message: `Customer bought ${product.name} from ${machine.name} at ${location?.name ?? "the block"}.`,
-    productId: product.id,
-    tone: "good"
+    message: `${archetypeId} walked away from ${machine.name}.`,
+    productId: product?.id,
+    tone: "neutral"
   });
   return true;
 }
 
+function customerPurchase(state: GameState, events: GameEvent[]): boolean {
+  return runCustomerDecision(state, events, "purchase");
+}
+
 function customerComplaint(state: GameState, events: GameEvent[]): boolean {
-  const machines = installedMachines(state, state.playerFactionId)
-    .map((machine) => {
-      const stock = machineStockUnits(machine);
-      const score = (stock === 0 ? 4 : 0) + (machine.damage >= 65 ? 3 : machine.damage >= 35 ? 1 : 0);
-      return { machine, score, stock };
-    })
-    .filter(({ score }) => score > 0)
-    .sort((a, b) => b.score - a.score);
-  const candidate = machines[0];
-  if (!candidate) {
-    return false;
-  }
+  return runCustomerDecision(state, events, "complaint");
+}
 
-  const player = state.factions[state.playerFactionId];
-  const location = state.locations[candidate.machine.locationId];
-  player.publicReputation = Math.max(0, player.publicReputation - 0.1);
-  if (location) {
-    location.rivalPressure = Math.min(1, location.rivalPressure + 0.025);
-  }
+function customerWalkaway(state: GameState, events: GameEvent[]): boolean {
+  return runCustomerDecision(state, events, "walkaway");
+}
 
-  const reason = candidate.stock === 0 ? "empty racks" : "a busted display";
-  logStreetActivity(state, events, {
-    actor: "customer",
-    kind: "customer_complaint",
-    locationId: candidate.machine.locationId,
-    machineId: candidate.machine.id,
-    message: `Customer walked away from ${candidate.machine.name}: ${reason}.`,
-    tone: "warning"
-  });
-  return true;
+function customerTipoff(state: GameState, events: GameEvent[]): boolean {
+  return runCustomerDecision(state, events, "tipoff");
 }
 
 function rivalScout(state: GameState, events: GameEvent[]): boolean {
@@ -1934,6 +2349,14 @@ function spawnDebugStreetActivity(state: GameState, events: GameEvent[], activit
     return customerComplaint(state, events);
   }
 
+  if (activity === "customer_walkaway") {
+    return customerWalkaway(state, events);
+  }
+
+  if (activity === "customer_tipoff") {
+    return customerTipoff(state, events);
+  }
+
   if (activity === "rival_scout") {
     return rivalScout(state, events);
   }
@@ -1943,8 +2366,8 @@ function spawnDebugStreetActivity(state: GameState, events: GameEvent[], activit
 
 function applyStreetActivity(state: GameState, events: GameEvent[]): void {
   ensureStreetLifeState(state);
-  const activityIndex = (state.streetLife.activitySequence - 1) % 4;
-  const handlers = [customerPurchase, customerComplaint, rivalScout, workerSupply];
+  const activityIndex = (state.streetLife.activitySequence - 1) % 5;
+  const handlers = [customerPurchase, customerComplaint, customerWalkaway, rivalScout, workerSupply];
   const preferred = handlers[activityIndex];
   if (preferred(state, events)) {
     return;
@@ -2183,7 +2606,7 @@ function runRestocker(state: GameState, events: GameEvent[], employee: Employee)
         continue;
       }
 
-      const quantity = Math.min(slot.capacity - slot.quantity, available, Math.max(3, Math.round(4 + employee.skill * 8)));
+      const quantity = Math.min(slot.capacity - slot.quantity, available, Math.max(3, Math.round(4 + employee.skill * 8 + employeeServiceBonus(employee))));
       if (quantity <= 0) {
         continue;
       }
@@ -2236,7 +2659,7 @@ function runTechnician(state: GameState, events: GameEvent[], employee: Employee
     return false;
   }
 
-  const repairAmount = Math.min(machine.damage, Math.round(10 + employee.skill * 24));
+  const repairAmount = Math.min(machine.damage, Math.round(10 + employee.skill * 24 + employeeServiceBonus(employee) * 3));
   const cost = Math.ceil(4 + repairAmount * 0.28);
   const player = state.factions[state.playerFactionId];
   if (player.money < cost) {
@@ -2270,7 +2693,7 @@ function runGuard(state: GameState, events: GameEvent[], employee: Employee): bo
     employee.status = "working";
     employee.statusDetail = `Drove off a crew at ${machine?.name ?? "a machine"}.`;
     markEmployeeRoute(state, employee, machine?.locationId ?? alarm.locationId, "patrol", `${employee.name} is guarding ${machine?.name ?? "the route"}.`, machine?.id);
-    employee.fear = Math.min(1, employee.fear + 0.02);
+    employee.fear = Math.min(1, employee.fear + Math.max(0.004, 0.02 - employeeNerveBonus(employee)));
     employee.loyalty = Math.min(1, employee.loyalty + 0.01);
     log(state, events, `${employee.name} intercepted ${intruder?.name ?? "an intruder"} before the hit landed.`, "good");
     return true;
@@ -2286,7 +2709,7 @@ function runGuard(state: GameState, events: GameEvent[], employee: Employee): bo
     return false;
   }
 
-  patrol.location.rivalPressure = Math.max(0, patrol.location.rivalPressure - (0.06 + employee.skill * 0.08));
+  patrol.location.rivalPressure = Math.max(0, patrol.location.rivalPressure - (0.06 + employee.skill * 0.08 + employeePressureBonus(employee)));
   employee.status = "working";
   employee.statusDetail = `Patrolled ${patrol.machine.name}.`;
   markEmployeeRoute(state, employee, patrol.machine.locationId, "patrol", `${employee.name} is patrolling ${patrol.machine.name}.`, patrol.machine.id);
@@ -2338,7 +2761,7 @@ function runNegotiator(state: GameState, events: GameEvent[], employee: Employee
   }
 
   const player = state.factions[state.playerFactionId];
-  target.location.rivalPressure = Math.max(0, target.location.rivalPressure - (0.05 + employee.skill * 0.06));
+  target.location.rivalPressure = Math.max(0, target.location.rivalPressure - (0.05 + employee.skill * 0.06 + employeePressureBonus(employee)));
   player.publicReputation += 0.08;
   employee.status = "working";
   employee.statusDetail = `Smoothed over ${target.location.name}.`;
@@ -2364,7 +2787,7 @@ function runRegionalManager(state: GameState, events: GameEvent[], employee: Emp
     return false;
   }
 
-  const pressureDrop = 0.025 + employee.skill * 0.035;
+  const pressureDrop = 0.025 + employee.skill * 0.035 + employeePressureBonus(employee);
   for (const machine of target.machines) {
     const location = state.locations[machine.locationId];
     if (location) {
@@ -2963,6 +3386,7 @@ function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number):
   state.worldTimeHours += hours;
   shiftSupplierMarket(state, events);
   updateTrafficAndCheckpoints(state, events);
+  advanceLocationRights(state, events, hours);
   applySpoilage(state, events);
 
   let playerEarned = 0;
@@ -3015,6 +3439,16 @@ function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number):
   }
   if (state.streetLife.nextActivityHour <= state.worldTimeHours) {
     state.streetLife.nextActivityHour = state.worldTimeHours + 0.3;
+  }
+
+  let customerDecisions = 0;
+  while (state.economy.customers.nextDecisionHour <= state.worldTimeHours && customerDecisions < 5) {
+    runCustomerDecision(state, events);
+    state.economy.customers.nextDecisionHour += 0.72 + (state.economy.customers.decisionSequence % 4) * 0.16;
+    customerDecisions += 1;
+  }
+  if (state.economy.customers.nextDecisionHour <= state.worldTimeHours) {
+    state.economy.customers.nextDecisionHour = state.worldTimeHours + 0.5;
   }
 
   failExpiredContracts(state, events);
@@ -3331,6 +3765,7 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       if (nearest) {
         vehicle.locationId = nearest.id;
       }
+      advanceVehicleConflictEscape(state, events, vehicle, distance);
       break;
     }
 
@@ -3505,6 +3940,72 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       state.economy.traffic.vehicleMaintenanceDue[vehicle.id] = 0;
       vehicle.condition = 1;
       log(state, events, `${vehicle.name} serviced for $${cost}.`, "good");
+      break;
+    }
+
+    case "buy_machine_model": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      if (!requirePlayerAtLocation(state, events, "garage", "receive machine inventory")) {
+        break;
+      }
+
+      const model = machineModels[command.modelId];
+      if (!model) {
+        break;
+      }
+
+      const quote = machineProcurementQuotes(state).find((candidate) => candidate.model.id === model.id);
+      if (!quote?.unlocked) {
+        log(state, events, quote?.reason ?? `${model.name} is not available from the fleet supplier yet.`, "warning");
+        break;
+      }
+
+      const requested = Math.max(1, Math.min(5, Math.round(command.quantity)));
+      const unitCost = machineProcurementCost(state, model.id);
+      const affordable = Math.floor(actor.money / unitCost);
+      const quantity = Math.max(0, Math.min(requested, affordable));
+      if (quantity <= 0) {
+        log(state, events, `${model.name} delivery needs $${unitCost}.`, "warning");
+        break;
+      }
+
+      chargePlayer(state, "fleet", unitCost * quantity, `${quantity}x ${model.name} fleet procurement`);
+      const names: string[] = [];
+      for (let index = 0; index < quantity; index += 1) {
+        state.economy.fleet.procurementSequence += 1;
+        const machine = createStoredMachine(state, actor.id, model.id);
+        names.push(machine.name);
+      }
+      state.economy.fleet.totalPurchased += quantity;
+      increaseFleetExperience(state, model.id, quantity);
+      log(state, events, `${quantity}x ${model.name} delivered to the garage: ${names.join(", ")}.`, "good");
+      break;
+    }
+
+    case "sell_stored_machine": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      if (!requirePlayerAtLocation(state, events, "garage", "sell fleet inventory")) {
+        break;
+      }
+
+      const machine = state.machines[command.machineId];
+      if (!machine || machine.ownerFactionId !== actor.id || isMachineInstalled(machine)) {
+        log(state, events, "Only stored player machines can be sold from the garage.", "warning");
+        break;
+      }
+
+      const resale = machineResaleValue(state, machine);
+      const model = machineModels[machine.machineModelId] ?? machineModels.basic_snack;
+      delete state.machines[machine.id];
+      creditPlayer(state, "fleet", resale, `${machine.name} resale`);
+      state.economy.fleet.vendorReputation = Math.max(0, state.economy.fleet.vendorReputation - 0.6);
+      log(state, events, `${machine.name} sold back through the fleet broker for $${resale}. ${model.name} parts returned to circulation.`, "good");
       break;
     }
 
@@ -4082,6 +4583,13 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       }
 
       const method = command.method ?? (actor.id === state.playerFactionId ? "legal_contract" : "rival_territory");
+      const rights = state.economy.locationRights[location.id] ??= locationRightsFor(state, location.id);
+      const exclusiveActive = Boolean(rights.exclusiveUntilHour && rights.exclusiveUntilHour > state.worldTimeHours);
+      if (exclusiveActive && rights.exclusiveContractHolderId && rights.exclusiveContractHolderId !== actor.id && method === "legal_contract") {
+        log(state, events, `${location.name} is under an exclusive contract. Use another approach or break the pressure first.`, "warning");
+        break;
+      }
+
       const quote = placementQuoteForLocation(state, location, method);
       if (actor.money < quote.cost) {
         log(state, events, `${location.name} needs $${quote.cost} for ${quote.label.toLowerCase()} placement.`, "warning");
@@ -4089,6 +4597,11 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       }
 
       const storedMachine = command.machineId ? state.machines[command.machineId] : actor.id === state.playerFactionId ? storedPlayerMachines(state)[0] : undefined;
+      if (actor.id === state.playerFactionId && !storedMachine) {
+        log(state, events, "Buy a machine model into the garage fleet before placing a new stop.", "warning");
+        break;
+      }
+
       if (storedMachine && (storedMachine.ownerFactionId !== actor.id || isMachineInstalled(storedMachine))) {
         log(state, events, `${storedMachine.name} is not available for placement.`, "warning");
         break;
@@ -4117,6 +4630,23 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       machine.heat += Math.max(0, quote.heatDelta * 0.2);
       machine.lastServicedHour = state.worldTimeHours;
       location.rivalPressure = clamp01(location.rivalPressure + quote.rivalPressureDelta);
+      increaseFleetExperience(state, machine.machineModelId, 0.35);
+
+      if (method === "legal_contract") {
+        rights.rightsTier = rights.rightsTier === "none" ? "handshake" : rights.rightsTier;
+        rights.landlordDisposition = Math.min(100, rights.landlordDisposition + 4);
+        rights.legalPressure = Math.max(0, rights.legalPressure - (rights.permitStatus === "active" ? 10 : 3));
+      } else if (method === "hidden") {
+        rights.legalPressure = Math.max(0, rights.legalPressure + 2);
+        rights.landlordDisposition = Math.max(0, rights.landlordDisposition - 2);
+      } else if (method === "bribe") {
+        rights.legalPressure = Math.min(100, rights.legalPressure + 6);
+        rights.landlordDisposition = Math.max(0, rights.landlordDisposition - 4);
+      } else {
+        rights.legalPressure = Math.min(100, rights.legalPressure + 10);
+        rights.corporatePressure = Math.min(100, rights.corporatePressure + 5);
+        rights.landlordDisposition = Math.max(0, rights.landlordDisposition - 7);
+      }
 
       if (machine.id === STARTER_MACHINE_ID && actor.id === state.playerFactionId) {
         state.progression.starterMachinePlaced = true;
@@ -4610,6 +5140,93 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       break;
     }
 
+    case "negotiate_location_rights": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      const location = state.locations[command.locationId];
+      if (!location || location.kind === "garage" || location.kind === "supplier") {
+        break;
+      }
+
+      if (!requirePlayerAtLocation(state, events, location.id, "negotiate location rights")) {
+        break;
+      }
+
+      if (!isDistrictUnlockedForPlacement(state, location.districtId)) {
+        log(state, events, `${state.districts[location.districtId]?.name ?? "This district"} must be opened before rights talks.`, "warning");
+        break;
+      }
+
+      if (command.approach === "corporate_shell" && empireAssetLevel(state, "shell_company") <= 0 && state.empire.shellCover < 0.08) {
+        log(state, events, "Shell paperwork needs a shell company or existing shell cover.", "warning");
+        break;
+      }
+
+      const occupyingMachine = machineAtLocation(state, location.id);
+      if (command.approach === "exclusive_contract" && occupyingMachine && occupyingMachine.ownerFactionId !== actor.id) {
+        log(state, events, `${location.name} already hosts ${state.factions[occupyingMachine.ownerFactionId]?.name ?? "a rival"} hardware. Clear the stop before exclusivity lands.`, "warning");
+        break;
+      }
+
+      const rights = state.economy.locationRights[location.id] ??= locationRightsFor(state, location.id);
+      const cost = locationRightsNegotiationCost(state, location, command.approach);
+      if (actor.money < cost) {
+        log(state, events, `${locationRightsApproachLabel(command.approach)} at ${location.name} needs $${cost}.`, "warning");
+        break;
+      }
+
+      chargePlayer(state, "rights", cost, `${location.name} ${locationRightsApproachLabel(command.approach)}`);
+      rights.lastNegotiatedHour = state.worldTimeHours;
+
+      if (command.approach === "landlord_meeting") {
+        rights.rightsTier = rights.rightsTier === "none" ? "handshake" : rights.rightsTier;
+        rights.landlordDisposition = Math.min(100, rights.landlordDisposition + 18);
+        rights.legalPressure = Math.max(0, rights.legalPressure - 5);
+        rights.corporatePressure = Math.max(0, rights.corporatePressure - 7);
+        location.rivalPressure = Math.max(0, location.rivalPressure - 0.04);
+        actor.publicReputation += 0.25;
+      }
+
+      if (command.approach === "permit_filing") {
+        rights.rightsTier = rights.rightsTier === "exclusive" || rights.rightsTier === "corporate_shell" ? rights.rightsTier : "standard_permit";
+        rights.permitStatus = "active";
+        rights.permitId = `permit_${location.id}_${Math.round(state.worldTimeHours * 10)}`;
+        rights.permitExpiresHour = state.worldTimeHours + 72 + Math.max(0, rights.landlordDisposition - 50) * 0.2;
+        rights.legalPressure = Math.max(0, rights.legalPressure - 22);
+        rights.corporatePressure = Math.max(0, rights.corporatePressure - 4);
+        actor.publicReputation += 0.45;
+      }
+
+      if (command.approach === "exclusive_contract") {
+        rights.rightsTier = "exclusive";
+        rights.exclusiveContractHolderId = actor.id;
+        rights.exclusiveUntilHour = state.worldTimeHours + 48 + Math.max(0, rights.landlordDisposition - 40) * 0.25;
+        rights.landlordDisposition = Math.min(100, rights.landlordDisposition + 10);
+        rights.legalPressure = Math.max(0, rights.legalPressure - 8);
+        rights.corporatePressure = Math.min(100, rights.corporatePressure + 3);
+        location.rivalPressure = Math.max(0, location.rivalPressure - 0.12);
+        actor.publicReputation += 0.55;
+      }
+
+      if (command.approach === "corporate_shell") {
+        rights.rightsTier = "corporate_shell";
+        rights.permitStatus = "active";
+        rights.permitId = `shell_${location.id}_${Math.round(state.worldTimeHours * 10)}`;
+        rights.permitExpiresHour = state.worldTimeHours + 96;
+        rights.legalPressure = Math.max(0, rights.legalPressure - 28);
+        rights.corporatePressure = Math.max(0, rights.corporatePressure - 14);
+        rights.landlordDisposition = Math.min(100, rights.landlordDisposition + 4);
+        state.empire.shellCover = Math.min(0.75, state.empire.shellCover + 0.03);
+        state.empire.politicalPressure = Math.min(100, state.empire.politicalPressure + 1.6);
+        actor.publicReputation = Math.max(0, actor.publicReputation - 0.15);
+      }
+
+      log(state, events, `${location.name} rights updated through ${locationRightsApproachLabel(command.approach)}.`, command.approach === "corporate_shell" ? "warning" : "good");
+      break;
+    }
+
     case "pressure_rival_operation": {
       if (actor.id !== state.playerFactionId) {
         break;
@@ -4730,6 +5347,14 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       if (command.action === "expand" && command.locationId) {
         const location = state.locations[command.locationId];
         if (location && !machineAtLocation(state, location.id) && isDistrictUnlockedForPlacement(state, location.districtId)) {
+          const rights = state.economy.locationRights[location.id] ??= locationRightsFor(state, location.id);
+          if (rights.exclusiveContractHolderId === state.playerFactionId && (rights.exclusiveUntilHour ?? 0) > state.worldTimeHours) {
+            rights.corporatePressure = Math.min(100, rights.corporatePressure + 5);
+            rights.legalPressure = Math.min(100, rights.legalPressure + 3);
+            log(state, events, `${actor.name} could not expand into ${location.name}; your exclusive contract held.`, "warning");
+            break;
+          }
+
           const cost = Math.round(placementCostForLocation(state, location) * profile.expansionCostMultiplier);
           if (actor.money < cost) {
             break;

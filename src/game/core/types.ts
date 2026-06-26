@@ -339,6 +339,8 @@ export type FinanceLedgerCategory =
   | "insurance"
   | "fines"
   | "upgrades"
+  | "fleet"
+  | "rights"
   | "front_business"
   | "sabotage"
   | "base"
@@ -436,11 +438,63 @@ export interface SpoilageState {
   spoiledToday: number;
 }
 
+export interface MachineFleetState {
+  modelExperience: Partial<Record<MachineModelId, number>>;
+  procurementSequence: number;
+  totalPurchased: number;
+  unlockedModelIds: MachineModelId[];
+  vendorReputation: number;
+}
+
+export type CustomerDecisionOutcome = "purchase" | "walkaway" | "complaint" | "tipoff";
+
+export interface CustomerDecision {
+  archetypeId: string;
+  hour: number;
+  id: string;
+  locationId: LocationId;
+  machineId?: MachineId;
+  outcome: CustomerDecisionOutcome;
+  productId?: ProductId;
+  reason: string;
+  satisfaction: number;
+  spend?: number;
+}
+
+export interface CustomerMarketState {
+  complaintsByLocation: Record<LocationId, number>;
+  decisionSequence: number;
+  loyaltyByLocation: Record<LocationId, number>;
+  nextDecisionHour: number;
+  recentDecisions: CustomerDecision[];
+}
+
+export type LocationPermitStatus = "none" | "pending" | "active" | "challenged" | "revoked";
+export type LocationRightsTier = "none" | "handshake" | "standard_permit" | "exclusive" | "corporate_shell";
+export type LocationRightsApproach = "landlord_meeting" | "permit_filing" | "exclusive_contract" | "corporate_shell";
+
+export interface LocationRightsState {
+  corporatePressure: number;
+  exclusiveContractHolderId?: FactionId;
+  exclusiveUntilHour?: number;
+  landlordDisposition: number;
+  lastNegotiatedHour?: number;
+  legalPressure: number;
+  locationId: LocationId;
+  permitExpiresHour?: number;
+  permitId?: string;
+  permitStatus: LocationPermitStatus;
+  rightsTier: LocationRightsTier;
+}
+
 export interface EconomyState {
   finance: FinanceState;
   supply: SupplyMarketState;
   traffic: TrafficState;
   spoilage: SpoilageState;
+  fleet: MachineFleetState;
+  customers: CustomerMarketState;
+  locationRights: Record<LocationId, LocationRightsState>;
   productCustomizations: Partial<Record<ProductId, ProductCustomization>>;
 }
 
@@ -602,6 +656,8 @@ export interface Employee {
   speed: number;
   status: EmployeeStatus;
   statusDetail: string;
+  trait?: string;
+  traitDescription?: string;
   wagePerDay: number;
   xp: number;
 }
@@ -615,7 +671,16 @@ export interface GameEvent {
   message: string;
 }
 
-export type StreetActivityKind = "customer_purchase" | "customer_complaint" | "rival_scout" | "worker_supply" | "employee_route" | "chase" | "base_watch";
+export type StreetActivityKind =
+  | "customer_purchase"
+  | "customer_complaint"
+  | "customer_walkaway"
+  | "customer_tipoff"
+  | "rival_scout"
+  | "worker_supply"
+  | "employee_route"
+  | "chase"
+  | "base_watch";
 export type StreetActivityActor = "customer" | "rival" | "worker" | "employee" | "scout" | "guard" | "driver";
 
 export interface StreetActivity {
@@ -763,6 +828,8 @@ export type GameCommand =
   | { type: "upgrade_base_facility"; actorId: FactionId; facilityId: BaseFacilityId }
   | { type: "set_insurance_plan"; actorId: FactionId; plan: InsurancePlan }
   | { type: "service_vehicle"; actorId: FactionId; vehicleId: VehicleId }
+  | { type: "buy_machine_model"; actorId: FactionId; modelId: MachineModelId; quantity: number }
+  | { type: "sell_stored_machine"; actorId: FactionId; machineId: MachineId }
   | { type: "customize_product"; actorId: FactionId; productId: ProductId; mode: ProductCustomizationMode }
   | { type: "hire_employee"; actorId: FactionId; role: EmployeeRole }
   | { type: "assign_employee"; actorId: FactionId; employeeId: EmployeeId; machineId: MachineId; assigned: boolean }
@@ -778,6 +845,7 @@ export type GameCommand =
   | { type: "player_conflict_action"; actorId: FactionId; eventId: string; action: PlayerConflictAction }
   | { type: "resolve_inspection"; actorId: FactionId; inspectionId: string; resolution: LawInspectionResolution }
   | { type: "work_crime_contact"; actorId: FactionId; contactId: string; action: CrimeContactAction }
+  | { type: "negotiate_location_rights"; actorId: FactionId; locationId: LocationId; approach: LocationRightsApproach }
   | { type: "pressure_rival_operation"; actorId: FactionId; operationId: string; approach: RivalOperationApproach }
   | { type: "upgrade_empire_asset"; actorId: FactionId; assetId: EmpireAssetId }
   | { type: "resolve_major_raid"; actorId: FactionId; raidId: string; resolution: EmpireRaidResolution }

@@ -23,6 +23,8 @@ import {
   garageStorageSpaceRemaining,
   garageStorageUnits,
   isDistrictUnlockedForPlacement,
+  locationRightsFor,
+  locationRightsQuotesForLocation,
   machineAtLocation,
   machineRoutePressure,
   machineStockUnits,
@@ -485,8 +487,11 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
     const unlockInfo = districtUnlockInfo(state, location.districtId);
     const unmetRequirements = unlockInfo.unmetRequirements.join(" · ");
     const placementQuotes = placementQuotesForLocation(state, location);
-    const storedMachine = storedPlayerMachines(state)[0];
-    const storedBlocked = Boolean(storedMachine && storedMachine.damage > 0);
+    const storedMachines = storedPlayerMachines(state);
+    const readyStoredMachines = storedMachines.filter((machine) => machine.damage <= 0);
+    const rights = locationRightsFor(state, location.id);
+    const rightsQuotes = locationRightsQuotesForLocation(state, location);
+    const storedBlocked = storedMachines.length > 0 && readyStoredMachines.length === 0;
     return (
       <section className={panelClassName}>
         <h2>{location.name}</h2>
@@ -499,6 +504,12 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
         <p>
           {district?.name ?? "Unknown district"} · {unlockInfo.progress.access}
         </p>
+        <div className="machine-readout">
+          <span>{rights.rightsTier.replace("_", " ")}</span>
+          <span>permit {rights.permitStatus}</span>
+          <span>landlord {Math.round(rights.landlordDisposition)}</span>
+          <span>legal {Math.round(rights.legalPressure)}</span>
+        </div>
         <div className="action-grid">
           {unlockInfo.progress.access === "locked" && (
             <ActionButton
@@ -518,29 +529,55 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
               Open ${district?.unlockCost ?? 0}
             </ActionButton>
           )}
-          {unlocked && (
+          {unlocked && rightsQuotes.map((quote) => (
+            <ActionButton
+              disabled={!quote.canNegotiate}
+              icon={<HandCoins size={17} aria-hidden="true" />}
+              key={quote.approach}
+              onClick={() => onCommand({ type: "negotiate_location_rights", actorId: state.playerFactionId, locationId: location.id, approach: quote.approach })}
+            >
+              {quote.label} ${quote.cost}
+            </ActionButton>
+          ))}
+          {unlocked && readyStoredMachines.length === 0 && (
+            <ActionButton disabled icon={<PackagePlus size={17} aria-hidden="true" />} onClick={() => undefined}>
+              Buy a machine in Fleet
+            </ActionButton>
+          )}
+          {unlocked && readyStoredMachines.slice(0, 3).flatMap((machine) =>
             placementQuotes.map((quote) => (
               <ActionButton
-                disabled={occupied || player.money < quote.cost || storedBlocked}
+                disabled={occupied || player.money < quote.cost}
                 icon={<PackagePlus size={17} aria-hidden="true" />}
-                key={quote.method}
+                key={`${machine.id}_${quote.method}`}
                 onClick={() =>
                   onCommand({
                     type: "place_machine",
                     actorId: state.playerFactionId,
                     locationId: location.id,
                     method: quote.method,
-                    machineId: storedMachine?.id
+                    machineId: machine.id
                   })
                 }
               >
-                {quote.label} ${quote.cost}
+                {machine.name}: {quote.label} ${quote.cost}
               </ActionButton>
             ))
           )}
         </div>
         {unlocked && (
           <div className="placement-method-list">
+            <article className={`placement-method ${rights.legalPressure >= 55 ? "high" : rights.permitStatus === "active" ? "low" : "medium"}`}>
+              <div>
+                <h3>Location rights</h3>
+                <p>
+                  Landlord disposition, permits, exclusivity, and corporate pressure change placement costs, inspections, and rival expansion.
+                </p>
+              </div>
+              <strong>
+                {rights.permitStatus} · {Math.round(rights.corporatePressure)} corporate
+              </strong>
+            </article>
             {placementQuotes.map((quote) => (
               <article className={`placement-method ${quote.inspectionRiskLabel}`} key={quote.method}>
                 <div>
@@ -554,7 +591,8 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
             ))}
           </div>
         )}
-        {storedBlocked && <p className="empty-note">Repair {storedMachine?.name} at the garage before placing it.</p>}
+        {storedBlocked && <p className="empty-note">Repair stored machines at the garage before placing them.</p>}
+        {unlocked && storedMachines.length === 0 && <p className="empty-note">Buy machine inventory from the Fleet tab before claiming this stop.</p>}
         {!unlocked && <p className="empty-note">{unmetRequirements ? `Needs ${unmetRequirements}.` : "Scout and open this area before installing machines."}</p>}
       </section>
     );

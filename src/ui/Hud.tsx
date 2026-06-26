@@ -1,7 +1,7 @@
 import { Flame, HandCoins, Package, Trophy } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { GameState } from "../game/core/types";
-import { activeLawInspections, carriedCrateUnits, formatClock, missionProgress } from "../game/core/selectors";
+import { activeLawInspections, carriedCrateUnits, formatClock, missionProgress, playerHeatTier } from "../game/core/selectors";
 import type { SceneFeedbackEvent } from "../render/three/SceneTargets";
 
 interface HudProps {
@@ -18,6 +18,7 @@ export function Hud({ feedbackEvent, nextActionLabel, state }: HudProps) {
   const loadLabel = loadRatio >= 0.75 ? "heavy" : loadRatio >= 0.45 ? "loaded" : "";
   const progress = missionProgress(state);
   const inspections = activeLawInspections(state);
+  const heatTier = playerHeatTier(state);
   const [pulse, setPulse] = useState<SceneFeedbackEvent["kind"] | null>(null);
 
   useEffect(() => {
@@ -45,7 +46,7 @@ export function Hud({ feedbackEvent, nextActionLabel, state }: HudProps) {
         </div>
         <div className={`stat-pill ${pulse === "sabotage" || pulse === "fight" || pulse === "melee" ? "pulse-danger" : ""}`}>
           <Flame size={17} aria-hidden="true" />
-          <span>{inspections.length > 0 ? `${inspections.length} inspection` : `${Math.round(player.heat)} heat`}</span>
+          <span>{inspections.length > 0 ? `${inspections.length} inspection` : `${heatTier.label} · ${Math.round(player.heat)}`}</span>
         </div>
         <div className={`stat-pill ${pulse === "stock" || pulse === "pickup" || pulse === "store" ? "pulse-stock" : ""}`}>
           <Package size={17} aria-hidden="true" />
