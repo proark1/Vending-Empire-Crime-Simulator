@@ -233,6 +233,7 @@ function CollapsibleButton({ collapsed, label, meta, onClick }: { collapsed: boo
         <strong>{label}</strong>
         <small>{meta}</small>
       </span>
+      <em>{collapsed ? "Open" : "Collapse"}</em>
     </button>
   );
 }
@@ -870,6 +871,13 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
                         On
                       </label>
                       <input aria-label="Voice prompt label" value={prompt.label} onChange={(event) => updateGenerationPrompt(index, { label: event.target.value })} />
+                      <span className={`admin-audio-generated-status ${generated.status}`} title={generated.previewTitle}>{generated.statusLabel}</span>
+                      <button aria-label={`Preview ${prompt.label}`} disabled={!generated.playable} onClick={() => handlePreview({ category: "voice", id: prompt.id, label: prompt.label, loop: false, sizeBytes: generated.sizeBytes, url: generated.url, volume: 1 })} title={generated.previewTitle} type="button">
+                        <Play size={14} aria-hidden="true" />
+                      </button>
+                      <button disabled={Boolean(generatingPromptId)} onClick={() => handleGeneratePrompt(index)} type="button">
+                        {generatingPromptId === prompt.id ? "Generating" : "Generate"}
+                      </button>
                       <select aria-label="Voice prompt trigger" value={prompt.trigger} onChange={(event) => updateGenerationPrompt(index, { trigger: event.target.value })}>
                         {audioTriggerOptions.filter((option) => option.category === "voice").map((option) => (
                           <option key={option.trigger} value={option.trigger}>{option.label}</option>
@@ -884,13 +892,6 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
                       <textarea aria-label="Voice text prompt" value={prompt.prompt} onChange={(event) => updateGenerationPrompt(index, { prompt: event.target.value })} />
                       <textarea aria-label="Voice direction negative prompt" value={prompt.negativePrompt} onChange={(event) => updateGenerationPrompt(index, { negativePrompt: event.target.value })} />
                       <input aria-label="Voice duration" max="30" min="0.5" step="0.5" type="number" value={prompt.durationSeconds} onChange={(event) => updateGenerationPrompt(index, { durationSeconds: Number(event.target.value) })} />
-                      <span className={`admin-audio-generated-status ${generated.status}`} title={generated.previewTitle}>{generated.statusLabel}</span>
-                      <button aria-label={`Preview ${prompt.label}`} disabled={!generated.playable} onClick={() => handlePreview({ category: "voice", id: prompt.id, label: prompt.label, loop: false, sizeBytes: generated.sizeBytes, url: generated.url, volume: 1 })} title={generated.previewTitle} type="button">
-                        <Play size={14} aria-hidden="true" />
-                      </button>
-                      <button disabled={Boolean(generatingPromptId)} onClick={() => handleGeneratePrompt(index)} type="button">
-                        {generatingPromptId === prompt.id ? "Generating" : "Generate"}
-                      </button>
                       <button aria-label={`Copy ${prompt.label} voice text`} onClick={() => handleCopyPrompt(prompt.prompt)} title="Copy prompt" type="button">
                         <Copy size={14} aria-hidden="true" />
                       </button>
@@ -938,8 +939,15 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
                           <option key={category} value={category}>{label}</option>
                         ))}
                       </select>
-                      <input aria-label="Prompt id" value={prompt.id} onChange={(event) => updateGenerationPrompt(index, { id: slug(event.target.value, prompt.id || `prompt_${index + 1}`) })} />
                       <input aria-label="Prompt label" value={prompt.label} onChange={(event) => updateGenerationPrompt(index, { label: event.target.value })} />
+                      <span className={`admin-audio-generated-status ${generated.status}`} title={generated.previewTitle}>{generated.statusLabel}</span>
+                      <button aria-label={`Preview ${prompt.label}`} disabled={!generated.playable} onClick={() => handlePreview({ category: prompt.purpose, id: prompt.id, label: prompt.label, loop: prompt.purpose === "music", sizeBytes: generated.sizeBytes, url: generated.url, volume: 1 })} title={generated.previewTitle} type="button">
+                        <Play size={14} aria-hidden="true" />
+                      </button>
+                      <button disabled={Boolean(generatingPromptId)} onClick={() => handleGeneratePrompt(index)} type="button">
+                        {generatingPromptId === prompt.id ? "Generating" : "Generate"}
+                      </button>
+                      <input aria-label="Prompt id" value={prompt.id} onChange={(event) => updateGenerationPrompt(index, { id: slug(event.target.value, prompt.id || `prompt_${index + 1}`) })} />
                       <select aria-label="Prompt trigger" value={prompt.trigger} onChange={(event) => updateGenerationPrompt(index, { trigger: event.target.value })}>
                         {audioTriggerOptions.map((option) => (
                           <option key={option.trigger} value={option.trigger}>{option.label}</option>
@@ -954,13 +962,6 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
                         ))}
                       </select>
                       <input aria-label="Prompt duration" max="180" min="0.5" step="0.5" type="number" value={prompt.durationSeconds} onChange={(event) => updateGenerationPrompt(index, { durationSeconds: Number(event.target.value) })} />
-                      <span className={`admin-audio-generated-status ${generated.status}`} title={generated.previewTitle}>{generated.statusLabel}</span>
-                      <button aria-label={`Preview ${prompt.label}`} disabled={!generated.playable} onClick={() => handlePreview({ category: prompt.purpose, id: prompt.id, label: prompt.label, loop: prompt.purpose === "music", sizeBytes: generated.sizeBytes, url: generated.url, volume: 1 })} title={generated.previewTitle} type="button">
-                        <Play size={14} aria-hidden="true" />
-                      </button>
-                      <button disabled={Boolean(generatingPromptId)} onClick={() => handleGeneratePrompt(index)} type="button">
-                        {generatingPromptId === prompt.id ? "Generating" : "Generate"}
-                      </button>
                       <button aria-label={`Delete ${prompt.label}`} className="danger" disabled={providerSaving} onClick={() => handleDeleteGenerationPrompt(prompt.id)} title="Delete prompt" type="button">
                         <Trash2 size={14} aria-hidden="true" />
                       </button>

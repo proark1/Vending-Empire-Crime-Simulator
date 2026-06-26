@@ -4385,7 +4385,8 @@ kbd {
 }
 
 .admin-audio-section-toggle strong,
-.admin-audio-section-toggle small {
+.admin-audio-section-toggle small,
+.admin-audio-section-toggle em {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4402,6 +4403,21 @@ kbd {
   color: #94a3b8;
   font-size: 11px;
   line-height: 1.2;
+}
+
+.admin-audio-section-toggle em {
+  flex: 0 0 auto;
+  min-width: 72px;
+  padding: 5px 8px;
+  border: 1px solid rgba(45, 212, 191, 0.26);
+  border-radius: 999px;
+  background: rgba(20, 184, 166, 0.12);
+  color: #99f6e4;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+  line-height: 1;
+  text-align: center;
 }
 
 .admin-audio-panel-heading button,
@@ -4522,13 +4538,13 @@ kbd {
 .admin-audio-row.prompt {
   align-items: stretch;
   min-width: 1840px;
-  grid-template-columns: 62px 110px 130px 150px 180px minmax(260px, 1.2fr) minmax(200px, 0.8fr) 160px 92px 132px 38px 98px 38px;
+  grid-template-columns: 62px 100px 170px 132px 38px 98px 130px 180px minmax(250px, 1.2fr) minmax(200px, 0.8fr) 160px 86px 38px;
 }
 
 .admin-audio-row.voice-text {
   align-items: stretch;
   min-width: 1580px;
-  grid-template-columns: 62px 170px 180px 160px minmax(300px, 1.2fr) minmax(210px, 0.85fr) 82px 132px 38px 98px 38px;
+  grid-template-columns: 62px 170px 132px 38px 98px 180px 160px minmax(300px, 1.2fr) minmax(210px, 0.85fr) 82px 38px;
 }
 
 .admin-audio-file-size {
