@@ -65,7 +65,7 @@ export function resolveGraphicsProfile(quality: GraphicsQuality, layout: WorldMa
       maxPatrolZones: Math.min(2, layout.patrolZones.length),
       maxPixelRatio: 1,
       maxPolicePatrols: Math.min(1, layout.policePatrolPaths.length),
-      maxTrafficLoops: Math.min(3, layout.trafficLoops.length),
+      maxTrafficLoops: Math.min(4, layout.trafficLoops.length),
       shadowMapSize: 0
     };
   }
@@ -97,12 +97,12 @@ export function resolveGraphicsProfile(quality: GraphicsQuality, layout: WorldMa
     enableLocalLights: false,
     enableShadows: false,
     lowPower: false,
-    maxAmbientNpcs: 10,
+    maxAmbientNpcs: 12,
     maxBackdropBuildings: Math.min(18, layout.backdropBuildings.length),
     maxPatrolZones: Math.min(3, layout.patrolZones.length),
     maxPixelRatio: 1.35,
     maxPolicePatrols: Math.min(2, layout.policePatrolPaths.length),
-    maxTrafficLoops: Math.min(5, layout.trafficLoops.length),
+    maxTrafficLoops: Math.min(7, layout.trafficLoops.length),
     shadowMapSize: 0
   };
 }

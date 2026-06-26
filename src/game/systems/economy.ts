@@ -26,6 +26,26 @@ function districtHeatMultiplier(state: GameState, location: Location): number {
   return Math.max(0.72, Math.min(1.25, 1.2 - district.heatTolerance / 120));
 }
 
+function starterRouteMomentumMultiplier(state: GameState, machine: VendingMachine, location: Location): number {
+  if (machine.ownerFactionId !== state.playerFactionId || location.districtId !== "starter_suburb") {
+    return 1;
+  }
+
+  const playerInstalledMachines = Object.values(state.machines)
+    .filter((candidate) => candidate.ownerFactionId === state.playerFactionId && (candidate.placementStatus ?? "installed") === "installed")
+    .length;
+
+  if (playerInstalledMachines <= 1 && state.progression.stockSoldToday < 14) {
+    return 1.75;
+  }
+
+  if (playerInstalledMachines <= 2 && state.progression.stockSoldToday < 32) {
+    return 1.25;
+  }
+
+  return 1;
+}
+
 function timeOfDayMultiplier(worldTimeHours: number, product: Product): number {
   const hour = worldTimeHours % 24;
   const isNight = hour >= 18 || hour < 5;
@@ -116,6 +136,7 @@ export function estimateMachineSalesPerHour(state: GameState, machine: VendingMa
       visibility *
       damageMultiplier *
       rivalMultiplier *
+      starterRouteMomentumMultiplier(state, machine, location) *
       priceDemandMultiplier(slot.price, product.basePrice) *
       (1 + effects.salesMultiplier);
 

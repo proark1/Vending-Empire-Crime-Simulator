@@ -217,6 +217,22 @@ function machineInteractionPoint(placement: { position: THREE.Vector3; rotationY
   return placement.position.clone().add(machineFrontVector(placement.rotationY).multiplyScalar(0.82));
 }
 
+function machineStockRatio(machine: VendingMachine): number {
+  const capacity = machine.slots.reduce((sum, slot) => sum + slot.capacity, 0);
+  if (capacity <= 0) {
+    return 0;
+  }
+
+  const stock = machine.slots.reduce((sum, slot) => sum + slot.quantity, 0);
+  return THREE.MathUtils.clamp(stock / capacity, 0, 1);
+}
+
+function stockedProductIds(machine: VendingMachine): ProductId[] {
+  return machine.slots
+    .filter((slot) => slot.quantity > 0)
+    .map((slot) => slot.productId);
+}
+
 function fallbackMachinePlacement(location: Location): { position: THREE.Vector3; rotationY: number } {
   const position = new THREE.Vector3(location.position.x, 0, location.position.z);
   const directionToStreet = new THREE.Vector3(-location.position.x, 0, -location.position.z);
@@ -556,7 +572,7 @@ function createMachineDisplayTexture(damage: number): THREE.CanvasTexture {
   return texture;
 }
 
-function createLowMachineMesh(color: string, damage: number, installedUpgrades: MachineUpgradeId[] = []): THREE.Group {
+function createLowMachineMesh(color: string, damage: number, installedUpgrades: MachineUpgradeId[] = [], stockRatio = 1, productIds: ProductId[] = []): THREE.Group {
   const group = new THREE.Group();
   const upgrades = new Set(installedUpgrades);
   const bodyMaterial = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.1 });
@@ -586,6 +602,21 @@ function createLowMachineMesh(color: string, damage: number, installedUpgrades: 
   glass.position.set(-0.09, 1.03, -0.255);
   group.add(glass);
 
+  for (let row = 0; row < 3; row += 1) {
+    const rowFilled = THREE.MathUtils.clamp(stockRatio * 3 - row, 0, 1);
+    const fillWidth = Math.max(0.025, 0.34 * rowFilled);
+    const fill = new THREE.Mesh(
+      new THREE.BoxGeometry(fillWidth, 0.05, 0.018),
+      new THREE.MeshBasicMaterial({
+        color: productCrateColors[productIds[row % Math.max(1, productIds.length)] ?? "soda"] ?? color,
+        transparent: true,
+        opacity: rowFilled > 0 ? 0.82 : 0.14
+      })
+    );
+    fill.position.set(-0.09 - (0.34 - fillWidth) / 2, 0.78 + row * 0.21, -0.276);
+    group.add(fill);
+  }
+
   const display = new THREE.Mesh(
     new THREE.BoxGeometry(0.12, 0.12, 0.024),
     new THREE.MeshBasicMaterial({ map: createMachineDisplayTexture(damage) })
@@ -613,9 +644,9 @@ function createLowMachineMesh(color: string, damage: number, installedUpgrades: 
   return group;
 }
 
-function createMachineMesh(color: string, damage: number, installedUpgrades: MachineUpgradeId[] = [], quality: GraphicsQuality = "medium"): THREE.Group {
+function createMachineMesh(color: string, damage: number, installedUpgrades: MachineUpgradeId[] = [], quality: GraphicsQuality = "medium", stockRatio = 1, productIds: ProductId[] = []): THREE.Group {
   if (quality === "low") {
-    return createLowMachineMesh(color, damage, installedUpgrades);
+    return createLowMachineMesh(color, damage, installedUpgrades, stockRatio, productIds);
   }
 
   const group = new THREE.Group();
@@ -719,14 +750,25 @@ function createMachineMesh(color: string, damage: number, installedUpgrades: Mac
   group.add(glare);
 
   const shelfMaterial = new THREE.MeshStandardMaterial({ color: "#1e293b", roughness: 0.55 });
-  const productColors = ["#ef4444", "#22c55e", "#f59e0b", "#38bdf8", "#e879f9", "#f8fafc"];
+  const productColors = productIds.length > 0
+    ? productIds.map((productId) => productCrateColors[productId] ?? color)
+    : ["#ef4444", "#22c55e", "#f59e0b", "#38bdf8", "#e879f9", "#f8fafc"];
+  const visibleProducts = Math.ceil(THREE.MathUtils.clamp(stockRatio, 0, 1) * 12);
   for (let row = 0; row < 3; row += 1) {
     const shelf = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.025, 0.03), shelfMaterial);
     shelf.position.set(-0.08, 0.84 + row * 0.22, -0.3);
     group.add(shelf);
 
     for (let col = 0; col < 4; col += 1) {
-      const productMaterial = new THREE.MeshStandardMaterial({ color: productColors[(row * 2 + col) % productColors.length], roughness: 0.46, metalness: col % 2 === 0 ? 0.04 : 0.18 });
+      const productIndex = row * 4 + col;
+      const filled = productIndex < visibleProducts;
+      const productMaterial = new THREE.MeshStandardMaterial({
+        color: filled ? productColors[(row * 2 + col) % productColors.length] : "#172033",
+        roughness: 0.46,
+        metalness: filled && col % 2 !== 0 ? 0.18 : 0.04,
+        transparent: true,
+        opacity: filled ? 1 : 0.22
+      });
       const product = col % 2 === 0
         ? new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.115, 0.04), productMaterial)
         : new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.12, 12), productMaterial);
@@ -736,11 +778,11 @@ function createMachineMesh(color: string, damage: number, installedUpgrades: Mac
       }
       group.add(product);
 
-      const productLabel = new THREE.Mesh(new THREE.BoxGeometry(0.046, 0.022, 0.006), new THREE.MeshBasicMaterial({ color: "#f8fafc", transparent: true, opacity: 0.72 }));
+      const productLabel = new THREE.Mesh(new THREE.BoxGeometry(0.046, 0.022, 0.006), new THREE.MeshBasicMaterial({ color: "#f8fafc", transparent: true, opacity: filled ? 0.72 : 0.08 }));
       productLabel.position.set(product.position.x, product.position.y + 0.012, -0.342);
       group.add(productLabel);
 
-      const coil = new THREE.Mesh(new THREE.TorusGeometry(0.035, 0.004, 6, 16), new THREE.MeshBasicMaterial({ color: "#cbd5e1" }));
+      const coil = new THREE.Mesh(new THREE.TorusGeometry(0.035, 0.004, 6, 16), new THREE.MeshBasicMaterial({ color: filled ? "#cbd5e1" : "#334155", transparent: true, opacity: filled ? 1 : 0.34 }));
       coil.position.set(product.position.x, product.position.y - 0.085, -0.326);
       coil.scale.y = 0.45;
       group.add(coil);
@@ -956,6 +998,47 @@ function createMachineMesh(color: string, damage: number, installedUpgrades: Mac
       tape.rotation.z = index % 2 === 0 ? -0.22 : 0.18;
       group.add(tape);
     }
+  }
+
+  return group;
+}
+
+function createDistrictTintOverlay(currentState: GameState): THREE.Group {
+  const group = new THREE.Group();
+
+  for (const district of Object.values(currentState.districts)) {
+    const profile = districtVisualProfiles[district.id] ?? districtVisualProfiles.starter_suburb;
+    const width = district.bounds.maxX - district.bounds.minX;
+    const depth = district.bounds.maxZ - district.bounds.minZ;
+    const centerX = (district.bounds.minX + district.bounds.maxX) / 2;
+    const centerZ = (district.bounds.minZ + district.bounds.maxZ) / 2;
+    const fill = new THREE.Mesh(
+      new THREE.PlaneGeometry(width, depth),
+      new THREE.MeshBasicMaterial({
+        color: profile.accentColor,
+        transparent: true,
+        opacity: 0.045,
+        depthWrite: false
+      })
+    );
+    fill.rotation.x = -Math.PI / 2;
+    fill.position.set(centerX, 0.012, centerZ);
+    group.add(fill);
+
+    const edgeMaterial = new THREE.LineBasicMaterial({
+      color: profile.accentColor,
+      transparent: true,
+      opacity: 0.24
+    });
+    const y = 0.13;
+    const points = [
+      new THREE.Vector3(district.bounds.minX, y, district.bounds.minZ),
+      new THREE.Vector3(district.bounds.maxX, y, district.bounds.minZ),
+      new THREE.Vector3(district.bounds.maxX, y, district.bounds.maxZ),
+      new THREE.Vector3(district.bounds.minX, y, district.bounds.maxZ),
+      new THREE.Vector3(district.bounds.minX, y, district.bounds.minZ)
+    ];
+    group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), edgeMaterial));
   }
 
   return group;
@@ -1396,8 +1479,9 @@ function createAmbientMachineActor(machine: VendingMachine, location: Location, 
   const side = new THREE.Vector3(-front.z, 0, front.x);
   const sideDirection = index % 2 === 0 ? 1 : -1;
   const trafficOffset = Math.max(0.7, location.footTraffic) * 0.24;
+  const customerPull = machine.ownerFactionId === "player" ? Math.min(0.28, machine.revenueStored * 0.004) : 0;
   const start = servicePoint.clone().add(front.clone().multiplyScalar(1.1 + trafficOffset)).add(side.clone().multiplyScalar((1.35 + index * 0.08) * sideDirection));
-  const linger = servicePoint.clone().add(front.clone().multiplyScalar(0.55 + trafficOffset * 0.25));
+  const linger = servicePoint.clone().add(front.clone().multiplyScalar(0.5 + trafficOffset * 0.2 - customerPull));
   const exit = servicePoint.clone().add(front.clone().multiplyScalar(1.32 + trafficOffset)).add(side.clone().multiplyScalar((-1.45 - index * 0.06) * sideDirection));
 
   character.position.copy(start);
@@ -1405,12 +1489,18 @@ function createAmbientMachineActor(machine: VendingMachine, location: Location, 
   character.userData.action = index % 3 === 0 ? "pace" : "walk";
   character.userData.baseY = 0;
   character.userData.dynamicNpc = true;
-  character.userData.floatAmount = 0.004;
-  character.userData.floatSpeed = 0.9;
+  character.userData.floatAmount = 0.005;
+  character.userData.floatSpeed = machine.ownerFactionId === "player" ? 1.05 : 1.25;
   character.userData.pathOffset = currentWorldTime * 0.13 + index * 0.27 + machine.id.length * 0.05;
   character.userData.phase = index * 0.8 + machine.lastServicedHour * 0.13;
-  character.userData.walkPath = [start, linger, linger.clone().add(side.clone().multiplyScalar(0.25 * sideDirection)), exit];
-  character.userData.walkSpeed = 0.11 + Math.min(0.12, location.footTraffic * 0.035);
+  character.userData.walkPath = [
+    start,
+    linger,
+    linger.clone().add(front.clone().multiplyScalar(-0.08)).add(side.clone().multiplyScalar(0.18 * sideDirection)),
+    linger.clone().add(side.clone().multiplyScalar(0.32 * sideDirection)),
+    exit
+  ];
+  character.userData.walkSpeed = 0.13 + Math.min(0.15, location.footTraffic * 0.04);
   return character;
 }
 
@@ -1462,7 +1552,7 @@ function sceneFeedbackText(event: SceneFeedbackEvent): string {
   }
 
   if (event.kind === "repair") {
-    return "REPAIRED";
+    return "FIXED";
   }
 
   if (event.kind === "upgrade") {
@@ -1470,7 +1560,7 @@ function sceneFeedbackText(event: SceneFeedbackEvent): string {
   }
 
   if (event.kind === "sabotage") {
-    return "JAMMED";
+    return "RIVAL HIT";
   }
 
   if (event.kind === "fight") {
@@ -1562,7 +1652,7 @@ function createSceneFeedbackEffect(event: SceneFeedbackEvent, currentState: Game
   group.userData.feedbackRuntime = {
     baseScale: 1,
     createdAt: performance.now(),
-    duration: event.kind === "district" ? 2400 : event.kind === "install" || event.kind === "scout" ? 1900 : 1450,
+    duration: event.kind === "district" ? 2400 : event.kind === "sabotage" ? 2100 : event.kind === "repair" ? 1700 : event.kind === "install" || event.kind === "scout" ? 1900 : 1450,
     kind: event.kind,
     startY: position.y
   } satisfies FeedbackRuntime;
@@ -1609,6 +1699,45 @@ function createSceneFeedbackEffect(event: SceneFeedbackEvent, currentState: Game
       coin.userData.feedbackCoin = true;
       coin.userData.phase = angle;
       group.add(coin);
+    }
+  }
+
+  if (event.kind === "repair") {
+    const repairWash = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.34, 0.58, 1.55, 24, 1, true),
+      new THREE.MeshBasicMaterial({ color: "#86efac", transparent: true, opacity: 0.18, depthWrite: false })
+    );
+    repairWash.position.y = 0.92;
+    group.add(repairWash);
+
+    const wrenchMaterial = new THREE.MeshBasicMaterial({ color: "#f8fafc", transparent: true, opacity: 0.9 });
+    const handle = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.74, 0.035), wrenchMaterial);
+    handle.position.set(-0.18, 1.05, 0);
+    handle.rotation.z = -0.62;
+    group.add(handle);
+
+    const jaw = new THREE.Mesh(new THREE.TorusGeometry(0.13, 0.018, 8, 20, Math.PI * 1.45), wrenchMaterial);
+    jaw.position.set(0.02, 1.32, 0);
+    jaw.rotation.z = 0.72;
+    group.add(jaw);
+  }
+
+  if (event.kind === "sabotage") {
+    const dangerCone = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.7, 0.38, 1.8, 24, 1, true),
+      new THREE.MeshBasicMaterial({ color: "#fb7185", transparent: true, opacity: 0.2, depthWrite: false })
+    );
+    dangerCone.position.y = 0.98;
+    group.add(dangerCone);
+
+    const slashMaterial = new THREE.MeshBasicMaterial({ color: "#fecdd3", transparent: true, opacity: 0.92 });
+    for (let index = 0; index < 3; index += 1) {
+      const angle = (Math.PI * 2 * index) / 3;
+      const slash = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.96, 0.035), slashMaterial);
+      slash.position.set(Math.cos(angle) * 0.36, 1.08, Math.sin(angle) * 0.36);
+      slash.rotation.y = angle;
+      slash.rotation.z = 0.48;
+      group.add(slash);
     }
   }
 
@@ -2609,7 +2738,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
     if (machine) {
       const owner = currentState.factions[machine.ownerFactionId];
       group.add(createMachinePlacementDressing(machinePlacement, owner?.color ?? "#94a3b8", true));
-      const machineGroup = createMachineMesh(owner?.color ?? "#94a3b8", machine.damage, machine.upgrades ?? [], quality);
+      const machineGroup = createMachineMesh(owner?.color ?? "#94a3b8", machine.damage, machine.upgrades ?? [], quality, machineStockRatio(machine), stockedProductIds(machine));
       machineGroup.position.copy(machinePlacement.position);
       machineGroup.rotation.y = machinePlacement.rotationY;
       group.add(machineGroup);
@@ -2655,7 +2784,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       const bLocation = currentState.locations[b.locationId];
       return (bLocation?.footTraffic ?? 0) + b.revenueStored * 0.004 - ((aLocation?.footTraffic ?? 0) + a.revenueStored * 0.004);
     })
-    .slice(0, quality === "low" ? 3 : quality === "high" ? 10 : 7)
+    .slice(0, quality === "low" ? 4 : quality === "high" ? 12 : 9)
     .forEach((machine, index) => {
       const location = currentState.locations[machine.locationId];
       if (!location) {
@@ -2826,6 +2955,8 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     ground.position.set(worldCenterX, 0, worldCenterZ);
     ground.receiveShadow = true;
     scene.add(ground);
+
+    scene.add(createDistrictTintOverlay(stateRef.current));
 
     const staticChunks = new Map<string, WorldChunkRuntime>();
     const addStaticObject = (object: THREE.Object3D, x: number, z: number) => {

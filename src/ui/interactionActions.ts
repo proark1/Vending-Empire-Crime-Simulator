@@ -23,11 +23,13 @@ export type PrimaryInteraction =
       label: string;
       command: GameCommand;
       disabled?: boolean;
+      disabledReason?: string;
     }
   | {
       kind: "save";
       label: string;
       disabled?: boolean;
+      disabledReason?: string;
     };
 
 const productPriority: ProductId[] = [
@@ -92,10 +94,36 @@ function recommendedSupplierBuy(state: GameState): { productId: ProductId; quant
     { productId: "mood_fizz", quantity: 3 }
   ];
 
-  return recommendations.find(({ productId, quantity }) => {
+  for (const { productId, quantity } of recommendations) {
     const product = state.products[productId];
-    return player.money >= currentProductCost(state, productId) * quantity && remaining >= product.size * quantity;
-  });
+    const unitCost = currentProductCost(state, productId);
+    const affordable = unitCost > 0 ? Math.floor(player.money / unitCost) : 0;
+    const capacityLimited = Math.floor(remaining / product.size);
+    const recommendedQuantity = Math.min(quantity, affordable, capacityLimited);
+    if (recommendedQuantity > 0) {
+      return { productId, quantity: recommendedQuantity };
+    }
+  }
+
+  return undefined;
+}
+
+function shortageLabel(required: number, available: number): string {
+  return `Need $${Math.max(0, Math.ceil(required - available))}`;
+}
+
+function supplierDisabledReason(state: GameState): string {
+  if (state.player.carriedCrate || inventoryUnits(state.player.cargo, state) > 0) {
+    return "Hands full";
+  }
+
+  if (cargoSpaceRemaining(state) <= 0) {
+    return "No cargo room";
+  }
+
+  const cheapest = Math.min(...productPriority.map((productId) => currentProductCost(state, productId)).filter((cost) => cost > 0));
+  const player = state.factions[state.playerFactionId];
+  return player.money < cheapest ? shortageLabel(cheapest, player.money) : "No stock fits";
 }
 
 export function getPrimaryInteraction(state: GameState, target: SceneTarget | null): PrimaryInteraction | null {
@@ -131,10 +159,12 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
 
     const storedMachine = storedPlayerMachines(state).find((machine) => machine.damage > 0);
     if (storedMachine) {
+      const repairCost = repairCostForMachine(storedMachine);
       return {
         kind: "command",
         label: `Repair ${storedMachine.name}`,
-        disabled: player.money < repairCostForMachine(storedMachine),
+        disabled: player.money < repairCost,
+        disabledReason: player.money < repairCost ? shortageLabel(repairCost, player.money) : undefined,
         command: { type: "repair_machine", actorId, machineId: storedMachine.id }
       };
     }
@@ -160,7 +190,7 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
   if (target.type === "supplier") {
     const recommendation = recommendedSupplierBuy(state);
     if (!recommendation) {
-      return { kind: "command", label: state.player.carriedCrate ? "Hands full" : "Buy stock", disabled: true, command: { type: "buy_product", actorId, productId: "soda", quantity: 1 } };
+      return { kind: "command", label: "Buy stock", disabled: true, disabledReason: supplierDisabledReason(state), command: { type: "buy_product", actorId, productId: "soda", quantity: 1 } };
     }
 
     const product = state.products[recommendation.productId];
@@ -179,12 +209,22 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     const unlocked = isDistrictUnlockedForPlacement(state, location.districtId);
     const placementQuote = placementQuoteForLocation(state, location, "legal_contract");
     const storedMachine = storedPlayerMachines(state)[0];
+    const placementDisabledReason = occupied
+      ? "Spot occupied"
+      : !storedMachine
+        ? "No stored machine"
+        : storedMachine.damage > 0
+          ? "Repair before placing"
+          : player.money < placementQuote.cost
+            ? shortageLabel(placementQuote.cost, player.money)
+            : undefined;
     if (!unlocked) {
       if (districtInfo.progress.access === "locked") {
         return {
           kind: "command",
           label: district ? `Scout ${district.name}` : "Scout district",
           disabled: !districtInfo.canScout,
+          disabledReason: !districtInfo.canScout && district ? shortageLabel(district.scoutCost, player.money) : undefined,
           command: { type: "scout_district", actorId, districtId: location.districtId }
         };
       }
@@ -193,6 +233,11 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
         kind: "command",
         label: districtInfo.canUnlock && district ? `Open ${district.name}` : "Requirements unmet",
         disabled: !districtInfo.canUnlock,
+        disabledReason: !districtInfo.canUnlock && districtInfo.unmetRequirements.length > 0
+          ? districtInfo.unmetRequirements.join(", ")
+          : district && player.money < district.unlockCost
+            ? shortageLabel(district.unlockCost, player.money)
+            : undefined,
         command: { type: "unlock_district", actorId, districtId: location.districtId }
       };
     }
@@ -200,7 +245,8 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     return {
       kind: "command",
       label: storedMachine ? `Install ${storedMachine.name}` : "Legal install",
-      disabled: occupied || player.money < placementQuote.cost || Boolean(storedMachine && storedMachine.damage > 0),
+      disabled: Boolean(placementDisabledReason),
+      disabledReason: placementDisabledReason,
       command: { type: "place_machine", actorId, locationId: location.id, method: "legal_contract", machineId: storedMachine?.id }
     };
   }
@@ -230,11 +276,13 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
 
   const hasStock = machine.slots.some((slot) => slot.quantity > 0);
   if (machine.damage > 0 && hasStock) {
+    const repairCost = Math.ceil(10 + Math.min(35, machine.damage) * 0.45);
     return {
       kind: "command",
       label: "Repair machine",
       command: { type: "repair_machine", actorId, machineId: machine.id },
-      disabled: player.money < Math.ceil(10 + Math.min(35, machine.damage) * 0.45)
+      disabled: player.money < repairCost,
+      disabledReason: player.money < repairCost ? shortageLabel(repairCost, player.money) : undefined
     };
   }
 
@@ -280,11 +328,13 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
   }
 
   if (machine.damage > 0) {
+    const repairCost = Math.ceil(10 + Math.min(35, machine.damage) * 0.45);
     return {
       kind: "command",
       label: "Repair machine",
       command: { type: "repair_machine", actorId, machineId: machine.id },
-      disabled: player.money < Math.ceil(10 + Math.min(35, machine.damage) * 0.45)
+      disabled: player.money < repairCost,
+      disabledReason: player.money < repairCost ? shortageLabel(repairCost, player.money) : undefined
     };
   }
 
@@ -292,6 +342,7 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     kind: "command",
     label: "No action",
     disabled: true,
+    disabledReason: "Carry stock first",
     command: { type: "collect_revenue", actorId, machineId: machine.id }
   };
 }

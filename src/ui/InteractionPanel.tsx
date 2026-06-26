@@ -34,7 +34,7 @@ import {
 import { estimateMachineSalesPerHour } from "../game/systems/economy";
 import { baseFacilityList } from "../game/content/baseFacilities";
 import type { SceneTarget } from "../render/three/SceneTargets";
-import { getPrimaryInteraction } from "./interactionActions";
+import { getPrimaryInteraction, type PrimaryInteraction } from "./interactionActions";
 
 interface InteractionPanelProps {
   state: GameState;
@@ -70,6 +70,16 @@ function DetailsToggle({ open, onToggle }: { open: boolean; onToggle: () => void
       {open ? <ChevronUp size={16} aria-hidden="true" /> : <ChevronDown size={16} aria-hidden="true" />}
       <span>{open ? "Hide details" : "Details"}</span>
     </button>
+  );
+}
+
+function PrimaryHint({ interaction }: { interaction: PrimaryInteraction }) {
+  return (
+    <div className={`primary-hint ${interaction.disabled ? "disabled" : ""}`}>
+      <kbd>E</kbd>
+      <span>{interaction.label}</span>
+      {interaction.disabled && interaction.disabledReason && <em>{interaction.disabledReason}</em>}
+    </div>
   );
 }
 
@@ -176,12 +186,7 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
     return (
       <section className={panelClassName}>
         <h2>{target.label}</h2>
-        {primaryInteraction && (
-          <div className="primary-hint">
-            <kbd>E</kbd>
-            <span>{primaryInteraction.label}</span>
-          </div>
-        )}
+        {primaryInteraction && <PrimaryHint interaction={primaryInteraction} />}
         {detailsToggle}
         {conflictAtTarget && <ConflictActions conflict={conflictAtTarget} onCommand={onCommand} state={state} />}
         {storedMachines.length > 0 && (
@@ -387,12 +392,7 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
     return (
       <section className={panelClassName}>
         <h2>{target.label}</h2>
-        {primaryInteraction && (
-          <div className="primary-hint">
-            <kbd>E</kbd>
-            <span>{primaryInteraction.label}</span>
-          </div>
-        )}
+        {primaryInteraction && <PrimaryHint interaction={primaryInteraction} />}
         {detailsToggle}
         <div className="action-grid">
           {Object.values(state.products).map((product) => {
@@ -429,12 +429,7 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
     return (
       <section className={panelClassName}>
         <h2>{location.name}</h2>
-        {primaryInteraction && (
-          <div className="primary-hint">
-            <kbd>E</kbd>
-            <span>{primaryInteraction.label}</span>
-          </div>
-        )}
+        {primaryInteraction && <PrimaryHint interaction={primaryInteraction} />}
         {detailsToggle}
         {conflictAtTarget && <ConflictActions conflict={conflictAtTarget} onCommand={onCommand} state={state} />}
         <p>
@@ -538,12 +533,7 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
         <span className={isPlayerMachine ? "owner-chip player" : "owner-chip rival"}>{isPlayerMachine ? "Owned" : "Rival"}</span>
       </div>
 
-      {primaryInteraction && (
-        <div className="primary-hint">
-          <kbd>E</kbd>
-          <span>{primaryInteraction.label}</span>
-        </div>
-      )}
+      {primaryInteraction && <PrimaryHint interaction={primaryInteraction} />}
       {detailsToggle}
       {conflictAtTarget && <ConflictActions conflict={conflictAtTarget} onCommand={onCommand} state={state} />}
 

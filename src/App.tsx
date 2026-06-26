@@ -144,6 +144,7 @@ function GameApp({ initialState, mapLayout, session }: GameAppProps) {
   const conflicts = useMemo(() => activeConflictEvents(state), [state]);
   const guidanceLocationId = activeAlarm?.locationId ?? routeTask?.locationId ?? missionStep.targetLocationId;
   const guidanceLabel = activeAlarm ? "Machine alarm" : routeTask?.title;
+  const nextActionLabel = activeAlarm ? "Answer machine alarm" : routeTask?.title ?? missionStep.title;
   const report = latestDayReport(state);
   const showDebugTools = useMemo(() => new URLSearchParams(window.location.search).has("debug"), []);
 
@@ -176,12 +177,21 @@ function GameApp({ initialState, mapLayout, session }: GameAppProps) {
 
     lastEventIdRef.current = newestEvent.id;
     playEventCue(newestEvent.tone);
+    if (newestEvent.tone === "danger" && activeAlarm) {
+      playFeedbackCue("sabotage");
+      setSceneFeedback({
+        id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+        kind: "sabotage",
+        machineId: activeAlarm.machineId,
+        tone: "danger"
+      });
+    }
     addToast({
       title: newestEvent.message.startsWith("ALARM") ? "Machine alarm" : newestEvent.message.startsWith("Alarm missed") ? "Alarm missed" : "Street update",
       message: newestEvent.message,
       tone: newestEvent.tone
     });
-  }, [addToast, state.eventLog]);
+  }, [activeAlarm, addToast, state.eventLog]);
 
   useEffect(() => {
     if (!lastMissionStepIdRef.current) {
@@ -333,7 +343,7 @@ function GameApp({ initialState, mapLayout, session }: GameAppProps) {
         onTargetChange={setTarget}
       />
       <div className="world-vignette" aria-hidden="true" />
-      <Hud state={state} />
+      <Hud feedbackEvent={sceneFeedback} nextActionLabel={nextActionLabel} state={state} />
       <MissionTracker state={state} playerPosition={playerPosition} />
       <div className="crosshair" aria-hidden="true" />
       {entered && <GuidanceArrow label={guidanceLabel} state={state} targetLocationId={guidanceLocationId} playerHeadingDegrees={playerHeadingDegrees} playerPosition={playerPosition} />}
@@ -344,6 +354,7 @@ function GameApp({ initialState, mapLayout, session }: GameAppProps) {
             <kbd>E</kbd>
             {primaryInteraction.label}
           </span>
+          {primaryInteraction.disabled && primaryInteraction.disabledReason && <span className="target-reason">{primaryInteraction.disabledReason}</span>}
         </div>
       )}
       {!entered && (
