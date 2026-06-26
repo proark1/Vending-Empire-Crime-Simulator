@@ -2617,6 +2617,22 @@ kbd {
   gap: 8px;
 }
 
+.vehicle-card.hero {
+  border-color: rgba(45, 212, 191, 0.28);
+  background:
+    linear-gradient(180deg, rgba(20, 184, 166, 0.12), transparent),
+    rgba(30, 41, 59, 0.78);
+}
+
+.panel-section-title {
+  min-height: 24px;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
 .contract-card,
 .day-report {
   display: grid;
@@ -2769,6 +2785,27 @@ kbd {
   gap: 6px;
 }
 
+.route-load-card {
+  display: grid;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid rgba(45, 212, 191, 0.18);
+  border-radius: 7px;
+  background: rgba(2, 6, 23, 0.28);
+}
+
+.route-load-card > strong {
+  color: #f8fafc;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.route-load-card p {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
 .route-load-list span {
   display: inline-flex;
   align-items: center;
@@ -2780,6 +2817,51 @@ kbd {
   color: #ccfbf1;
   font-size: 12px;
   font-weight: 900;
+}
+
+.route-strip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  padding: 0 2px;
+}
+
+.route-strip::before {
+  content: "";
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  top: 50%;
+  height: 2px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.22);
+}
+
+.route-strip span {
+  position: relative;
+  z-index: 1;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(45, 212, 191, 0.34);
+  border-radius: 999px;
+  background: #0f172a;
+  color: #ccfbf1;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.route-strip span.warning {
+  border-color: rgba(251, 191, 36, 0.42);
+  color: #fde68a;
+}
+
+.route-strip span.danger {
+  border-color: rgba(251, 113, 133, 0.46);
+  color: #fecdd3;
 }
 
 .contract-mini-card {
@@ -2924,6 +3006,31 @@ kbd {
   color: #e2e8f0;
   font-size: 12px;
   text-align: right;
+}
+
+.fleet-readiness-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.fleet-readiness-grid span {
+  display: grid;
+  gap: 2px;
+  padding: 7px;
+  border: 1px solid rgba(226, 232, 240, 0.1);
+  border-radius: 7px;
+  background: rgba(2, 6, 23, 0.24);
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.fleet-readiness-grid strong {
+  color: #f8fafc;
+  font-size: 15px;
+  line-height: 1;
 }
 
 .route-chip {
