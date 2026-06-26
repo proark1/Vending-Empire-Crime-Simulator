@@ -6,6 +6,7 @@ import { getMachineUpgradeEffects } from "../game/core/machineStats";
 import {
   activeContracts,
   activeConflictEvents,
+  activeDistrictEvents,
   activeLawInspections,
   activeMajorRaids,
   activeLocationRights,
@@ -46,6 +47,7 @@ import {
   machineRoutePressure,
   machineStockUnits,
   ownedMachines,
+  optimizedRoutePlan,
   placementCostForLocation,
   playerHeatTier,
   productLabSlots,
@@ -65,6 +67,7 @@ import { machineModels } from "../game/content/machineModels";
 import { gameDesignPillars, npcRoles } from "../game/content/story";
 import { baseFacilityList } from "../game/content/baseFacilities";
 import { supplierDeals } from "../game/content/suppliers";
+import { vehicleUpgradeList } from "../game/content/vehicleUpgrades";
 import { graphicsQualityLabels, graphicsQualityModes, type GraphicsQuality } from "../render/three/graphicsQuality";
 
 type DashboardTab = "machines" | "fleet" | "base" | "empire" | "suppliers" | "catalog" | "finance" | "districts" | "rights" | "jobs" | "route" | "logistics" | "crew" | "law" | "heat" | "conflict" | "rival" | "story" | "debug" | "log";
@@ -228,10 +231,12 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
     [state, vehicle]
   );
   const tasks = useMemo(() => routeTasks(state), [state]);
+  const routePlan = useMemo(() => optimizedRoutePlan(state), [state]);
   const selectedTask = selectedRouteTask(state);
   const contracts = useMemo(() => activeContracts(state), [state]);
   const inspections = useMemo(() => activeLawInspections(state), [state]);
   const conflicts = useMemo(() => activeConflictEvents(state), [state]);
+  const districtEvents = useMemo(() => activeDistrictEvents(state), [state]);
   const rivalOrganizations = useMemo(() => Object.values(state.rivalOrganizations ?? {}), [state.rivalOrganizations]);
   const empireAssets = useMemo(() => empireAssetList(state), [state]);
   const majorRaids = useMemo(() => activeMajorRaids(state), [state]);
@@ -414,6 +419,43 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
               </div>
             </article>
           ))}
+
+          {vehicle && (
+            <article className="vehicle-card">
+              <div className="vehicle-heading">
+                <Truck size={18} aria-hidden="true" />
+                <div>
+                  <h3>{vehicle.name} upgrades</h3>
+                  <p>
+                    {vehicle.capacity} cargo · {Math.round(vehicle.security * 100)} security · {vehicle.speed.toFixed(2)} speed · {Math.round(vehicle.escapeRating * 100)} escape
+                  </p>
+                </div>
+              </div>
+              <div className="storage-list">
+                {vehicleUpgradeList.map((upgrade) => {
+                  const installed = vehicle.upgrades?.includes(upgrade.id) ?? false;
+                  return (
+                    <article className={`inventory-row ${installed ? "contract-needed" : ""}`} key={upgrade.id}>
+                      <div>
+                        <h3>{upgrade.label}</h3>
+                        <p>{upgrade.description}</p>
+                      </div>
+                      <div className="route-actions">
+                        <strong>{installed ? "Installed" : `$${upgrade.cost}`}</strong>
+                        <MiniButton
+                          disabled={installed || vehicle.locationId !== "garage" || state.factions[state.playerFactionId].money < upgrade.cost}
+                          onClick={() => onCommand({ type: "install_vehicle_upgrade", actorId: state.playerFactionId, vehicleId: vehicle.id, upgradeId: upgrade.id })}
+                        >
+                          <Wrench size={13} aria-hidden="true" />
+                          Install
+                        </MiniButton>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </article>
+          )}
 
           <article className="vehicle-card">
             <div className="vehicle-heading">
@@ -697,6 +739,31 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
 
       {tab === "districts" && (
         <div className="panel-list">
+          {districtEvents.length > 0 && (
+            <article className="vehicle-card">
+              <div className="vehicle-heading">
+                <AlertTriangle size={18} aria-hidden="true" />
+                <div>
+                  <h3>District events</h3>
+                  <p>Festivals, weather, shortages, trends, and patrol surges are changing demand and route risk.</p>
+                </div>
+              </div>
+              <div className="storage-list">
+                {districtEvents.map((event) => (
+                  <article className={`inventory-row ${event.tone}`} key={event.id}>
+                    <div>
+                      <h3>{event.title}</h3>
+                      <p>
+                        {state.districts[event.districtId]?.name ?? event.districtId} · {event.kind.replace("_", " ")} · ends {formatClock(event.expiresHour)}
+                      </p>
+                      <p>{event.description}</p>
+                    </div>
+                    <strong>{Math.round(event.demandMultiplier * 100)}%</strong>
+                  </article>
+                ))}
+              </div>
+            </article>
+          )}
           {districtSummaries.map((summary) => {
             const pressureTone = summary.status === "contested" ? "danger" : summary.progress.access !== "unlocked" || summary.pressure >= 0.28 ? "warning" : "good";
             const accessLabel = summary.progress.access === "unlocked" ? summary.status : summary.progress.access;
@@ -946,6 +1013,47 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
             </article>
           )}
 
+          {routePlan && routePlan.stops.length > 0 && (
+            <article className={`vehicle-card ${routePlan.tone}`}>
+              <div className="vehicle-heading">
+                <Route size={18} aria-hidden="true" />
+                <div>
+                  <h3>Optimized loop</h3>
+                  <p>
+                    {routePlan.stops.length} stops · {routePlan.estimatedHours.toFixed(1)}h estimate · {Math.round(routePlan.totalRisk * 100)} route risk
+                  </p>
+                </div>
+              </div>
+              <div className="storage-list">
+                {routePlan.stops.map((stop) => {
+                  const location = state.locations[stop.locationId];
+                  return (
+                    <article className={`inventory-row ${stop.task.tone === "danger" ? "danger" : ""}`} key={`plan_${stop.task.id}`}>
+                      <div>
+                        <h3>
+                          {stop.order}. {stop.task.title}
+                        </h3>
+                        <p>
+                          {location?.name ?? stop.locationId} · ETA {Math.max(1, Math.round(stop.etaHours * 60))}m · risk {Math.round(stop.riskScore * 100)}
+                        </p>
+                      </div>
+                      <strong>{stop.task.type}</strong>
+                    </article>
+                  );
+                })}
+              </div>
+              {routePlan.loadRecommendations.length > 0 && (
+                <div className="route-load-list">
+                  {routePlan.loadRecommendations.map((recommendation) => (
+                    <span key={recommendation.productId}>
+                      {recommendation.quantity}x {state.products[recommendation.productId]?.name ?? recommendation.productId} · {recommendation.source}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </article>
+          )}
+
           {selectedTask && (
             <article className={`route-task selected ${selectedTask.tone}`}>
               <div>
@@ -1007,6 +1115,24 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
               {carriedCrateUnits(state)}/{state.player.cargoCapacity} carried · {garageStorageUnits(state)}/{baseStorageCapacity(state)} stored
             </span>
           </div>
+          {routePlan && routePlan.loadRecommendations.length > 0 && (
+            <article className="vehicle-card">
+              <div className="vehicle-heading">
+                <Boxes size={18} aria-hidden="true" />
+                <div>
+                  <h3>Recommended load</h3>
+                  <p>Based on optimized stops, contracts, and low-stock machines.</p>
+                </div>
+              </div>
+              <div className="route-load-list">
+                {routePlan.loadRecommendations.map((recommendation) => (
+                  <span key={`logistics_${recommendation.productId}`}>
+                    {recommendation.quantity}x {state.products[recommendation.productId]?.name ?? recommendation.productId} · {recommendation.source}
+                  </span>
+                ))}
+              </div>
+            </article>
+          )}
           {state.player.carriedCrate ? (
             <article className="inventory-row">
               <div>
@@ -1230,6 +1356,18 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
               <strong>{state.economy.spoilage.spoiledToday}</strong>
             </div>
           </article>
+          {districtEvents.slice(0, 3).map((event) => (
+            <article className={`route-task ${event.tone}`} key={`heat_${event.id}`}>
+              <div>
+                <h3>{event.title}</h3>
+                <p>
+                  {state.districts[event.districtId]?.name ?? event.districtId} · heat shift {event.heatDelta >= 0 ? "+" : ""}{event.heatDelta.toFixed(2)} · congestion +{Math.round(event.congestionDelta * 100)}
+                </p>
+                <p>{event.description}</p>
+              </div>
+              <strong>{formatClock(event.expiresHour)}</strong>
+            </article>
+          ))}
           {districtSummaries.map((summary) => (
             <article className={`route-task ${summary.pressure >= 0.5 || summary.routeDanger >= 0.85 ? "danger" : summary.pressure >= 0.25 || summary.routeDanger >= 0.45 ? "warning" : "good"}`} key={summary.district.id}>
               <div>
@@ -1428,6 +1566,36 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
             <span>
               {campaignProgress.filter((progress) => progress.mission.completed).length}/{campaignProgress.length} chains · {storyProgress.length} arcs · leading ending {endingScores[0]?.path.title ?? "unknown"}
             </span>
+          </article>
+
+          <article className="vehicle-card">
+            <div className="vehicle-heading">
+              <Users size={18} aria-hidden="true" />
+              <div>
+                <h3>Rival boss board</h3>
+                <p>Faction quest openings, operation pressure, and relationship state.</p>
+              </div>
+            </div>
+            <div className="storage-list">
+              {rivalOrganizations.map((organization) => {
+                const rival = state.factions[organization.factionId];
+                const quest = quests.find((candidate) => candidate.definition.factionId === organization.factionId);
+                const operation = organization.operations.find((candidate) => !candidate.resolvedHour);
+                return (
+                  <article className={`inventory-row ${organization.relationship === "hostile" ? "danger" : organization.relationship === "truce" ? "good" : "warning"}`} key={`boss_${organization.factionId}`}>
+                    <div>
+                      <h3>{organization.bossName}</h3>
+                      <p>
+                        {rival?.name ?? organization.factionId} · {organization.relationship} · leverage {Math.round(organization.leverage)}
+                      </p>
+                      <p>{quest?.definition.openingLine ?? organization.agenda}</p>
+                      {operation && <p>Current scene pressure: {rivalOperationLabel(operation.kind)} at {state.locations[operation.locationId]?.name ?? operation.locationId}</p>}
+                    </div>
+                    <strong>{quest?.state.status ?? "dossier"}</strong>
+                  </article>
+                );
+              })}
+            </div>
           </article>
 
           {quests.map((quest) => (

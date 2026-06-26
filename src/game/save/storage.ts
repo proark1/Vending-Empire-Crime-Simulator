@@ -220,7 +220,8 @@ export function migrateGameState(parsed: GameState): GameState {
           condition: vehicle.condition ?? baseline.vehicles[vehicleId]?.condition ?? 1,
           position: vehicle.position ?? baseline.vehicles[vehicleId]?.position,
           heading: vehicle.heading ?? baseline.vehicles[vehicleId]?.heading,
-          odometer: vehicle.odometer ?? baseline.vehicles[vehicleId]?.odometer ?? 0
+          odometer: vehicle.odometer ?? baseline.vehicles[vehicleId]?.odometer ?? 0,
+          upgrades: Array.isArray(vehicle.upgrades) ? vehicle.upgrades : []
         }
       ])
     ),
@@ -301,6 +302,11 @@ export function migrateGameState(parsed: GameState): GameState {
         complaintsByLocation: parsed.economy?.customers?.complaintsByLocation ?? baseline.economy.customers.complaintsByLocation,
         loyaltyByLocation: parsed.economy?.customers?.loyaltyByLocation ?? baseline.economy.customers.loyaltyByLocation,
         recentDecisions: Array.isArray(parsed.economy?.customers?.recentDecisions) ? parsed.economy.customers.recentDecisions : baseline.economy.customers.recentDecisions
+      },
+      districtEvents: {
+        ...baseline.economy.districtEvents,
+        ...(parsed.economy?.districtEvents ?? {}),
+        activeEvents: parsed.economy?.districtEvents?.activeEvents ?? baseline.economy.districtEvents.activeEvents
       },
       locationRights: Object.fromEntries(
         Object.keys(locations).map((locationId) => [

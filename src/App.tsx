@@ -181,6 +181,23 @@ function primaryInteractionSignature(interaction: PrimaryInteraction | null): st
   return `command:${interaction.label}:${interaction.disabled ? "disabled" : "ready"}:${JSON.stringify(interaction.command)}`;
 }
 
+function serviceHoldStage(hold: ServiceHoldState): string {
+  const progress = hold.progress;
+  const verb = hold.verb.toLowerCase();
+  const stages = verb.includes("stock")
+    ? ["Lift crate", "Open cabinet", "Slot products", "Check rows"]
+    : verb.includes("repair")
+      ? ["Open panel", "Trace fault", "Swap parts", "Test machine"]
+      : verb.includes("load") || verb.includes("unload") || verb.includes("storing") || verb.includes("buying")
+        ? ["Grab box", "Check count", "Shift weight", "Secure load"]
+        : verb.includes("fight") || verb.includes("jamming")
+          ? ["Close distance", "Commit move", "Hold ground", "Break contact"]
+          : verb.includes("scout") || verb.includes("evidence")
+            ? ["Watch corner", "Check signs", "Mark route", "Log intel"]
+            : ["Start work", "Keep pressure", "Finish task", "Confirm"];
+  return stages[Math.min(stages.length - 1, Math.floor(progress * stages.length))];
+}
+
 interface GameAppProps {
   initialState: GameState;
   mapLayout: WorldMapLayout;
@@ -1173,6 +1190,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
                 {serviceHold.verb}
                 <strong>{Math.round(serviceHold.progress * 100)}%</strong>
               </span>
+              <em>{serviceHoldStage(serviceHold)}</em>
               <i aria-hidden="true">
                 <b style={{ width: `${serviceHold.progress * 100}%` }} />
               </i>

@@ -1,8 +1,8 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
-import type { DistrictAccess, Employee, GameState, GameEventTone, Location, MachineId, MachineUpgradeId, ProductId, RouteVehicle, StockCrate, StreetActivity, Vec2, VehicleId, VendingMachine } from "../../game/core/types";
-import { activeConflictEvents, activeMachineAlarms, activeVehicle, carriedCrateUnits, districtProgress, garageStorageUnits, machineAtLocation, machineRoutePressure } from "../../game/core/selectors";
+import type { DistrictAccess, DistrictEvent, Employee, GameState, GameEventTone, Location, MachineId, MachineUpgradeId, ProductId, RivalOperation, RouteVehicle, StockCrate, StreetActivity, Vec2, VehicleId, VendingMachine } from "../../game/core/types";
+import { activeConflictEvents, activeDistrictEvents, activeMachineAlarms, activeVehicle, carriedCrateUnits, districtProgress, garageStorageUnits, machineAtLocation, machineRoutePressure, optimizedRoutePlan } from "../../game/core/selectors";
 import { modelTransformFor, type ModelConfig, type ModelTransform } from "../../game/content/modelConfig";
 import {
   crimeContacts,
@@ -2784,6 +2784,98 @@ function createRivalOperationMarker(color: string, progress: number, exposed: bo
   return group;
 }
 
+function districtEventColor(event: DistrictEvent): string {
+  if (event.kind === "police_surge") {
+    return "#60a5fa";
+  }
+
+  if (event.kind === "weather") {
+    return "#93c5fd";
+  }
+
+  if (event.kind === "shortage") {
+    return "#f59e0b";
+  }
+
+  if (event.kind === "trend") {
+    return "#e879f9";
+  }
+
+  return "#a3e635";
+}
+
+function createDistrictEventMarker(event: DistrictEvent, location: Location, currentWorldTime: number, quality: GraphicsQuality, modelConfig: ModelConfig, index: number): THREE.Group {
+  const group = new THREE.Group();
+  const color = districtEventColor(event);
+  const center = new THREE.Vector3(location.position.x, 0, location.position.z);
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(1.55 + Math.min(0.8, event.congestionDelta * 1.8), 0.035, 8, 72),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.38, depthWrite: false })
+  );
+  ring.rotation.x = Math.PI / 2;
+  ring.position.set(center.x, 0.14, center.z);
+  group.add(ring);
+
+  const beacon = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.34, 0.62, 2.15, 24, 1, true),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.075, depthWrite: false })
+  );
+  beacon.position.set(center.x, 1.12, center.z);
+  group.add(beacon);
+  addLabel(group, event.kind === "police_surge" ? "PATROLS" : event.kind.toUpperCase(), color, center, 2.92);
+
+  const crowdCount = quality === "low" ? 1 : quality === "high" ? 4 : 3;
+  for (let actorIndex = 0; actorIndex < crowdCount; actorIndex += 1) {
+    const variant = event.kind === "police_surge" ? "scout" : event.kind === "shortage" ? "worker" : "customer";
+    const actor = createNpcCharacter(variant, quality);
+    const angle = currentWorldTime * 0.34 + index * 0.9 + actorIndex * ((Math.PI * 2) / crowdCount);
+    const radius = 1.25 + actorIndex * 0.18;
+    const start = center.clone().add(new THREE.Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius));
+    const stop = center.clone().add(new THREE.Vector3(Math.cos(angle + 0.9) * (radius + 0.25), 0, Math.sin(angle + 0.9) * (radius + 0.25)));
+    const exit = center.clone().add(new THREE.Vector3(Math.cos(angle + 1.8) * radius, 0, Math.sin(angle + 1.8) * radius));
+    actor.position.copy(start);
+    actor.scale.setScalar(event.kind === "police_surge" ? 0.98 : event.kind === "festival" ? 0.94 : 0.9);
+    actor.userData.action = event.kind === "police_surge" ? "scan" : event.kind === "shortage" ? "carry" : "walk";
+    actor.userData.baseY = 0;
+    actor.userData.dynamicNpc = true;
+    actor.userData.floatAmount = 0.006;
+    actor.userData.floatSpeed = 1.15;
+    actor.userData.pathOffset = Math.max(0, currentWorldTime - event.startedHour) * 2.5 + actorIndex * 0.31;
+    actor.userData.phase = event.startedHour + actorIndex;
+    actor.userData.walkPath = [start, stop, exit];
+    actor.userData.walkSpeed = event.kind === "police_surge" ? 0.18 : 0.24 + event.congestionDelta * 0.18;
+    applyModelTransformById(actor, modelConfig, unitModelId(variant));
+    group.add(actor);
+  }
+
+  return group;
+}
+
+function createRivalCrewActor(operation: RivalOperation, color: string, origin: THREE.Vector3, currentWorldTime: number, quality: GraphicsQuality, modelConfig: ModelConfig, index: number): THREE.Group {
+  const character = createNpcCharacter("rival", quality);
+  const angle = currentWorldTime * 0.28 + operation.progress * 0.03 + index;
+  const start = origin.clone().add(new THREE.Vector3(Math.cos(angle) * 0.95, 0, Math.sin(angle) * 0.95));
+  const stop = origin.clone().add(new THREE.Vector3(Math.cos(angle + 1.15) * 0.72, 0, Math.sin(angle + 1.15) * 0.72));
+  const exit = origin.clone().add(new THREE.Vector3(Math.cos(angle + 2.1) * 1.05, 0, Math.sin(angle + 2.1) * 1.05));
+  character.position.copy(start);
+  character.scale.setScalar(1.02);
+  character.userData.action = operation.kind === "sabotage_cell" || operation.kind === "permit_pressure" ? "scan" : operation.kind === "grey_supply" ? "carry" : "pace";
+  character.userData.baseY = 0;
+  character.userData.dynamicNpc = true;
+  character.userData.floatAmount = 0.006;
+  character.userData.floatSpeed = 1.28;
+  character.userData.pathOffset = Math.max(0, currentWorldTime - operation.startedHour) * 2.8 + operation.strength;
+  character.userData.phase = operation.startedHour + operation.progress * 0.1;
+  character.userData.walkPath = [start, stop, exit];
+  character.userData.walkSpeed = 0.18 + operation.strength * 0.12;
+  applyModelTransformById(character, modelConfig, "unit.rival");
+
+  const patch = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.06, 0.03), new THREE.MeshBasicMaterial({ color }));
+  patch.position.set(0.08, 1.08, -0.23);
+  character.add(patch);
+  return character;
+}
+
 function createPolicePatrolOfficer(patrol: PolicePatrolPath, quality: GraphicsQuality, modelConfig: ModelConfig): THREE.Group {
   const officer = createNpcCharacter("scout", quality);
   const start = patrol.path[0];
@@ -3297,6 +3389,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
   addDistrictAccessOverlays(group, currentState);
   const activeAlarmByMachine = new Map(activeMachineAlarms(currentState).map((alarm) => [alarm.machineId, alarm]));
   const activeConflictByLocation = new Map(activeConflictEvents(currentState).map((conflict) => [conflict.locationId, conflict]));
+  const routePlanByLocation = new Map((optimizedRoutePlan(currentState)?.stops ?? []).map((stop) => [stop.locationId, stop]));
 
   for (const hotspot of neighborhoodHotspots) {
     const progress = districtProgress(currentState, hotspot.districtId);
@@ -3337,6 +3430,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
     marker.position.copy(basePosition);
     marker.position.y = 0.03;
     group.add(marker);
+    group.add(createRivalCrewActor(operation, faction.color, basePosition, currentState.worldTimeHours, quality, modelConfig, operation.id.length));
     addLabel(group, `${faction.name.split(" ")[0]} OP`, operation.exposed ? "#fbbf24" : faction.color, basePosition, 1.78);
     interactables.push({
       radius: 1.55,
@@ -3345,11 +3439,23 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
     });
   }
 
+  activeDistrictEvents(currentState).slice(0, quality === "low" ? 2 : quality === "high" ? 5 : 4).forEach((event, index) => {
+    const eventLocation = Object.values(currentState.locations)
+      .filter((location) => location.districtId === event.districtId)
+      .sort((a, b) => b.footTraffic - a.footTraffic)[0];
+    if (!eventLocation) {
+      return;
+    }
+
+    group.add(createDistrictEventMarker(event, eventLocation, currentState.worldTimeHours, quality, modelConfig, index));
+  });
+
   for (const location of Object.values(currentState.locations)) {
     const position = new THREE.Vector3(location.position.x, 0, location.position.z);
     const machinePlacement = machinePlacementForLocation(location);
     const isGuidanceTarget = guidanceLocationId === location.id;
     const activeConflict = activeConflictByLocation.get(location.id);
+    const routePlanStop = routePlanByLocation.get(location.id);
     const addGuidanceBeacon = (color: string, beaconPosition = position) => {
       if (!isGuidanceTarget) {
         return;
@@ -3376,6 +3482,17 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
         3.42
       );
     };
+    const addRoutePlanMarker = (markerPosition = position) => {
+      if (!routePlanStop) {
+        return;
+      }
+
+      const planRing = createRoutePressureRing(routePlanStop.task.tone);
+      planRing.position.set(markerPosition.x, 2.48, markerPosition.z);
+      planRing.scale.setScalar(0.74);
+      group.add(planRing);
+      addLabel(group, `ROUTE ${routePlanStop.order}`, routePlanStop.task.tone === "danger" ? "#fb7185" : routePlanStop.task.tone === "warning" ? "#facc15" : "#a3e635", markerPosition, 3.2);
+    };
 
     if (location.kind === "garage") {
       const marker = addMarker("#38bdf8");
@@ -3394,6 +3511,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       addLabel(group, location.name, "#38bdf8", position, 1.1);
       addGuidanceBeacon("#38bdf8");
       addConflictMarker(position);
+      addRoutePlanMarker(position);
       interactables.push({ radius: 1.35, target: { type: "base", id: "garage", label: location.name }, position });
       continue;
     }
@@ -3409,6 +3527,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       addLabel(group, location.name, "#f59e0b", position, 1.1);
       addGuidanceBeacon("#f59e0b");
       addConflictMarker(position);
+      addRoutePlanMarker(position);
       interactables.push({ radius: 1.35, target: { type: "supplier", id: "supplier", label: location.name }, position });
       continue;
     }
@@ -3442,6 +3561,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       addLabel(group, machine.name, owner?.color ?? "#94a3b8", machinePlacement.position, 2.2);
       addGuidanceBeacon(owner?.color ?? "#94a3b8", machinePlacement.position);
       addConflictMarker(machinePlacement.position);
+      addRoutePlanMarker(machinePlacement.position);
       interactables.push({ radius: 1.15, target: { type: "machine", id: machine.id, label: machine.name }, position: servicePoint });
     } else {
       const access = districtProgress(currentState, location.districtId).access;
@@ -3455,6 +3575,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       addLabel(group, location.name, markerColor, machinePlacement.position, 1.1);
       addGuidanceBeacon(markerColor, machinePlacement.position);
       addConflictMarker(machinePlacement.position);
+      addRoutePlanMarker(machinePlacement.position);
       interactables.push({ radius: 1.2, target: { type: "placement", id: location.id, label: location.name }, position: machinePlacement.position });
     }
   }

@@ -24,7 +24,10 @@ function districtHeatMultiplier(state: GameState, location: Location): number {
     return 1;
   }
 
-  return Math.max(0.72, Math.min(1.25, 1.2 - district.heatTolerance / 120));
+  const eventHeat = Object.values(state.economy?.districtEvents?.activeEvents ?? {})
+    .filter((event) => event.districtId === location.districtId && event.expiresHour > state.worldTimeHours)
+    .reduce((sum, event) => sum + event.heatDelta, 0);
+  return Math.max(0.72, Math.min(1.45, 1.2 - district.heatTolerance / 120 + eventHeat * 0.08));
 }
 
 function starterRouteMomentumMultiplier(state: GameState, machine: VendingMachine, location: Location): number {
@@ -61,6 +64,22 @@ function timeOfDayMultiplier(worldTimeHours: number, product: Product): number {
   }
 
   return hour >= 11 && hour <= 16 ? 1.08 : 0.92;
+}
+
+function districtEventDemandMultiplier(state: GameState, product: Product, location: Location): number {
+  const activeEvents = Object.values(state.economy?.districtEvents?.activeEvents ?? {}).filter(
+    (event) => event.districtId === location.districtId && event.expiresHour > state.worldTimeHours
+  );
+  if (activeEvents.length === 0) {
+    return 1;
+  }
+
+  return activeEvents.reduce((multiplier, event) => {
+    const tagMatch = event.demandTags.some((tag) => product.demandTags.includes(tag));
+    const productMatch = event.productId === product.id;
+    const eventLift = tagMatch || productMatch ? event.demandMultiplier : 1 + (event.demandMultiplier - 1) * 0.22;
+    return multiplier * Math.max(0.68, Math.min(1.6, eventLift));
+  }, 1);
 }
 
 function customizationDemandMultiplier(state: GameState, product: Product): number {
@@ -152,6 +171,7 @@ export function estimateMachineSalesPerHour(state: GameState, machine: VendingMa
       product.demand *
       tagDemandMultiplier(product, location) *
       districtDemandMultiplier(state, product, location) *
+      districtEventDemandMultiplier(state, product, location) *
       timeOfDayMultiplier(state.worldTimeHours, product) *
       customizationDemandMultiplier(state, product) *
       customerMarketDemandMultiplier(state, location) *

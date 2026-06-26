@@ -79,8 +79,9 @@ function DetailsToggle({ open, onToggle }: { open: boolean; onToggle: () => void
 function PrimaryHint({ interaction }: { interaction: PrimaryInteraction }) {
   return (
     <div className={`primary-hint ${interaction.disabled ? "disabled" : ""}`}>
-      <kbd>E</kbd>
+      <kbd>{interaction.durationMs && !interaction.disabled ? "HOLD E" : "E"}</kbd>
       <span>{interaction.label}</span>
+      {interaction.holdVerb && !interaction.disabled && <strong>{interaction.holdVerb}</strong>}
       {interaction.disabled && interaction.disabledReason && <em>{interaction.disabledReason}</em>}
     </div>
   );

@@ -2,6 +2,8 @@ import type {
   BaseFacilityId,
   CampaignMissionState,
   CommandResult,
+  DistrictEvent,
+  DistrictEventKind,
   ConflictEncounterState,
   ConflictEvent,
   Employee,
@@ -93,6 +95,7 @@ import { narrativeQuestDefinitions, type NarrativeQuestDefinition, type Narrativ
 import { crimeContacts } from "../content/world";
 import { supplierDeals, supplierDefinitions, type SupplierDefinition } from "../content/suppliers";
 import { storyMissionArcs, type StoryMissionArc, type StoryMissionObjective } from "../content/story";
+import { vehicleUpgrades } from "../content/vehicleUpgrades";
 import { machineHasUpgrade, sabotageDamage } from "../core/machineStats";
 import { runMachineSales } from "./economy";
 
@@ -272,6 +275,11 @@ function ensureEconomyState(state: GameState): void {
       nextDecisionHour: state.worldTimeHours + 0.32,
       recentDecisions: []
     },
+    districtEvents: {
+      activeEvents: {},
+      eventSequence: 1,
+      nextEventHour: state.worldTimeHours + 2.5
+    },
     locationRights: {},
     productCustomizations: {}
   };
@@ -360,6 +368,14 @@ function ensureEconomyState(state: GameState): void {
   state.economy.customers.loyaltyByLocation ??= {};
   state.economy.customers.nextDecisionHour ??= state.worldTimeHours + 0.32;
   state.economy.customers.recentDecisions = Array.isArray(state.economy.customers.recentDecisions) ? state.economy.customers.recentDecisions : [];
+  state.economy.districtEvents ??= {
+    activeEvents: {},
+    eventSequence: 1,
+    nextEventHour: state.worldTimeHours + 2.5
+  };
+  state.economy.districtEvents.activeEvents ??= {};
+  state.economy.districtEvents.eventSequence ??= 1;
+  state.economy.districtEvents.nextEventHour ??= state.worldTimeHours + 2.5;
   state.economy.locationRights ??= {};
   for (const location of Object.values(state.locations ?? {})) {
     const normalized = {
@@ -374,6 +390,9 @@ function ensureEconomyState(state: GameState): void {
     }
   }
   state.economy.productCustomizations ??= {};
+  for (const vehicle of Object.values(state.vehicles ?? {})) {
+    vehicle.upgrades = Array.isArray(vehicle.upgrades) ? vehicle.upgrades : [];
+  }
 }
 
 function createSupplierRelationship(supplier: SupplierDefinition): SupplierRelationshipState {
@@ -1440,6 +1459,13 @@ function advanceVehicleConflictEscape(state: GameState, events: GameEvent[], veh
   }
 }
 
+function vehicleWearMultiplier(vehicle: RouteVehicle): number {
+  return (vehicle.upgrades ?? []).reduce((multiplier, upgradeId) => {
+    const upgrade = vehicleUpgrades[upgradeId];
+    return multiplier * (upgrade.conditionWearMultiplier ?? 1);
+  }, 1);
+}
+
 function activeRivalOperations(state: GameState): RivalOperation[] {
   ensureRivalOrganizationState(state);
   return Object.values(state.rivalOrganizations).flatMap((organization) => organization.operations.filter((operation) => !operation.resolvedHour));
@@ -1593,6 +1619,124 @@ function shiftSupplierMarket(state: GameState, events: GameEvent[]): void {
   log(state, events, `Supplier market shifted: ${state.economy.supply.supplierMood} pricing is active.`, state.economy.supply.supplierMood === "discount" ? "good" : "warning");
 }
 
+const districtEventProducts: ProductId[] = ["soda", "chips", "energy", "water", "coffee_can", "umbrella", "phone_charger", "mystery_capsules", "mood_fizz"];
+
+function districtEventTemplate(kind: DistrictEventKind, state: GameState, districtId: string, phase: number): Omit<DistrictEvent, "districtId" | "expiresHour" | "id" | "startedHour"> {
+  const district = state.districts[districtId];
+  const districtName = district?.name ?? "District";
+  const primaryTag = district?.dominantTags?.[phase % Math.max(1, district.dominantTags.length)] ?? "commuter";
+  const productId = districtEventProducts[phase % districtEventProducts.length];
+
+  if (kind === "festival") {
+    return {
+      congestionDelta: 0.28,
+      demandMultiplier: 1.38,
+      demandTags: [primaryTag, "night", "arcade"],
+      description: "Crowds are moving in waves and empty machines get noticed fast.",
+      heatDelta: 0.35,
+      kind,
+      title: `${districtName} street festival`,
+      tone: "good"
+    };
+  }
+
+  if (kind === "weather") {
+    return {
+      congestionDelta: 0.18,
+      demandMultiplier: 1.12,
+      demandTags: ["commuter", "office", "umbrella"],
+      description: "Bad weather slows routes but boosts utility and hot drink demand.",
+      heatDelta: -0.08,
+      kind,
+      productId: "umbrella",
+      title: `${districtName} rain front`,
+      tone: "warning"
+    };
+  }
+
+  if (kind === "shortage") {
+    return {
+      congestionDelta: 0.1,
+      demandMultiplier: 1.18,
+      demandTags: state.products[productId]?.demandTags.slice(0, 2) ?? [primaryTag],
+      description: `${state.products[productId]?.name ?? "Stock"} is scarce. Loaded routes can charge into the gap.`,
+      heatDelta: 0.12,
+      kind,
+      productId,
+      title: `${state.products[productId]?.name ?? "Stock"} shortage`,
+      tone: "warning"
+    };
+  }
+
+  if (kind === "police_surge") {
+    return {
+      congestionDelta: 0.22,
+      demandMultiplier: 0.92,
+      demandTags: ["commuter", primaryTag],
+      description: "Patrols are thick. Legal placements stay safer, grey stock draws attention.",
+      heatDelta: 0.85,
+      kind,
+      title: `${districtName} patrol surge`,
+      tone: "danger"
+    };
+  }
+
+  return {
+    congestionDelta: 0.08,
+    demandMultiplier: 1.26,
+    demandTags: [primaryTag, "student", "night"],
+    description: "Local chatter is pulling customers toward a narrower product mix.",
+    heatDelta: 0.18,
+    kind,
+    productId,
+    title: `${districtName} trend spike`,
+    tone: "good"
+  };
+}
+
+function updateDistrictEvents(state: GameState, events: GameEvent[]): void {
+  ensureEconomyState(state);
+  for (const [eventId, event] of Object.entries(state.economy.districtEvents.activeEvents)) {
+    if (event.expiresHour <= state.worldTimeHours) {
+      delete state.economy.districtEvents.activeEvents[eventId];
+    }
+  }
+
+  if (state.economy.districtEvents.nextEventHour > state.worldTimeHours) {
+    return;
+  }
+
+  const unlockedDistricts = Object.values(state.districts).filter((district) => districtProgress(state, district.id).access !== "locked");
+  const districts = unlockedDistricts.length > 0 ? unlockedDistricts : Object.values(state.districts);
+  if (districts.length === 0) {
+    state.economy.districtEvents.nextEventHour = state.worldTimeHours + 4;
+    return;
+  }
+
+  const phase = state.economy.districtEvents.eventSequence + Math.floor(state.worldTimeHours);
+  const kinds: DistrictEventKind[] = ["festival", "weather", "shortage", "trend", "police_surge"];
+  const district = districts[phase % districts.length];
+  const kind = kinds[phase % kinds.length];
+  const template = districtEventTemplate(kind, state, district.id, phase);
+  const eventId = `district_event_${state.economy.districtEvents.eventSequence++}`;
+  const duration = kind === "festival" ? 5.5 : kind === "police_surge" ? 3.5 : 4.25;
+  const districtEvent: DistrictEvent = {
+    ...template,
+    districtId: district.id,
+    expiresHour: state.worldTimeHours + duration,
+    id: eventId,
+    startedHour: state.worldTimeHours
+  };
+  state.economy.districtEvents.activeEvents[eventId] = districtEvent;
+  state.economy.districtEvents.nextEventHour = state.worldTimeHours + 3.5 + (phase % 4) * 0.9;
+
+  if (districtEvent.kind === "shortage" && districtEvent.productId) {
+    state.economy.supply.priceMultipliers[districtEvent.productId] = Math.max(1.12, state.economy.supply.priceMultipliers[districtEvent.productId] ?? 1.18);
+  }
+
+  log(state, events, `${districtEvent.title}: ${districtEvent.description}`, districtEvent.tone);
+}
+
 function updateTrafficAndCheckpoints(state: GameState, events: GameEvent[]): void {
   ensureEconomyState(state);
   if (state.economy.traffic.nextTrafficHour > state.worldTimeHours) {
@@ -1613,7 +1757,10 @@ function updateTrafficAndCheckpoints(state: GameState, events: GameEvent[]): voi
     }
 
     const pulse = ((phase + index * 3) % 9) / 10;
-    state.economy.traffic.congestionByLocation[location.id] = Math.max(0.05, Math.min(0.9, pulse * location.footTraffic * 0.58));
+    const eventCongestion = Object.values(state.economy.districtEvents.activeEvents)
+      .filter((event) => event.districtId === location.districtId && event.expiresHour > state.worldTimeHours)
+      .reduce((sum, event) => sum + event.congestionDelta, 0);
+    state.economy.traffic.congestionByLocation[location.id] = Math.max(0.05, Math.min(0.95, pulse * location.footTraffic * 0.58 + eventCongestion));
   }
 
   state.economy.traffic.fuelPrice = Math.round((2 + (phase % 6) * 0.22 + (state.economy.supply.supplierMood === "scarce" ? 0.32 : 0)) * 10) / 10;
@@ -1668,7 +1815,10 @@ function applySpoilage(state: GameState, events: GameEvent[]): void {
   while (state.economy.spoilage.nextSpoilageHour <= state.worldTimeHours && cycles < 6) {
     const hours = 6;
     const garageSpoiled = spoilInventory(state, state.player.garageStorage ?? {}, hours, coldStorageProtection(state));
-    const vehicleSpoiled = Object.values(state.vehicles).reduce((sum, vehicle) => sum + spoilInventory(state, vehicle.inventory, hours, 0.1), 0);
+    const vehicleSpoiled = Object.values(state.vehicles).reduce((sum, vehicle) => {
+      const protection = vehicle.upgrades?.includes("cold_box") ? 0.42 : 0.1;
+      return sum + spoilInventory(state, vehicle.inventory, hours, protection);
+    }, 0);
     state.economy.spoilage.spoiledToday += garageSpoiled + vehicleSpoiled;
     state.economy.spoilage.nextSpoilageHour += hours;
     cycles += 1;
@@ -3384,6 +3534,7 @@ function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number):
   ensureEconomyState(state);
   ensureEmpireState(state);
   state.worldTimeHours += hours;
+  updateDistrictEvents(state, events);
   shiftSupplierMarket(state, events);
   updateTrafficAndCheckpoints(state, events);
   advanceLocationRights(state, events, hours);
@@ -3729,7 +3880,7 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
 
       chargePlayer(state, "fuel", fuelCost, `${vehicle.name} fuel to ${location.name}`);
       state.economy.traffic.vehicleMaintenanceDue[vehicle.id] = (state.economy.traffic.vehicleMaintenanceDue[vehicle.id] ?? 0) + Math.max(1, Math.round(travelHours * 3));
-      vehicle.condition = Math.max(0.35, (vehicle.condition ?? 1) - travelHours * 0.018);
+      vehicle.condition = Math.max(0.35, (vehicle.condition ?? 1) - travelHours * 0.018 * vehicleWearMultiplier(vehicle));
       applyAdvanceTime(state, events, travelHours);
       vehicle.locationId = location.id;
       const pose = parkedVehiclePose(location);
@@ -3758,8 +3909,8 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       };
       vehicle.heading = normalizeHeading(command.heading);
       vehicle.odometer = (vehicle.odometer ?? 0) + distance;
-      vehicle.condition = Math.max(0.28, (vehicle.condition ?? 1) - distance * 0.00045);
-      state.economy.traffic.vehicleMaintenanceDue[vehicle.id] = (state.economy.traffic.vehicleMaintenanceDue[vehicle.id] ?? 0) + distance * 0.035;
+      vehicle.condition = Math.max(0.28, (vehicle.condition ?? 1) - distance * 0.00045 * vehicleWearMultiplier(vehicle));
+      state.economy.traffic.vehicleMaintenanceDue[vehicle.id] = (state.economy.traffic.vehicleMaintenanceDue[vehicle.id] ?? 0) + distance * 0.035 * vehicleWearMultiplier(vehicle);
 
       const nearest = nearestVehicleStop(state, vehicle.position);
       if (nearest) {
@@ -3940,6 +4091,48 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       state.economy.traffic.vehicleMaintenanceDue[vehicle.id] = 0;
       vehicle.condition = 1;
       log(state, events, `${vehicle.name} serviced for $${cost}.`, "good");
+      break;
+    }
+
+    case "install_vehicle_upgrade": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      if (!requirePlayerAtLocation(state, events, "garage", "upgrade the vehicle")) {
+        break;
+      }
+
+      const vehicle = state.vehicles[command.vehicleId];
+      const upgrade = vehicleUpgrades[command.upgradeId];
+      if (!vehicle || !upgrade) {
+        break;
+      }
+
+      if (vehicle.locationId !== "garage") {
+        log(state, events, `${vehicle.name} needs to be at the garage for upgrades.`, "warning");
+        break;
+      }
+
+      vehicle.upgrades ??= [];
+      if (vehicle.upgrades.includes(command.upgradeId)) {
+        log(state, events, `${vehicle.name} already has ${upgrade.label}.`, "neutral");
+        break;
+      }
+
+      if (actor.money < upgrade.cost) {
+        log(state, events, `${upgrade.label} needs $${upgrade.cost}.`, "warning");
+        break;
+      }
+
+      chargePlayer(state, "fleet", upgrade.cost, `${vehicle.name} ${upgrade.label}`);
+      vehicle.upgrades.push(command.upgradeId);
+      vehicle.capacity += upgrade.capacityBonus ?? 0;
+      vehicle.security = Math.min(0.95, vehicle.security + (upgrade.securityBonus ?? 0));
+      vehicle.speed = Math.min(1.9, vehicle.speed + (upgrade.speedBonus ?? 0));
+      vehicle.escapeRating = Math.min(0.95, vehicle.escapeRating + (upgrade.escapeBonus ?? 0));
+      vehicle.condition = Math.min(1, (vehicle.condition ?? 1) + 0.05);
+      log(state, events, `${upgrade.label} installed on ${vehicle.name}: ${upgrade.description}`, "good");
       break;
     }
 

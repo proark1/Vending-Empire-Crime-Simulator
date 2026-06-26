@@ -4,6 +4,7 @@ import type {
   CampaignMissionState,
   DayReport,
   ConflictEvent,
+  DistrictEvent,
   DistrictId,
   DistrictProgress,
   DistrictStatus,
@@ -54,6 +55,34 @@ export interface RouteTask {
   inspectionId?: string;
   priority: number;
   tone: "good" | "warning" | "danger";
+}
+
+export interface RoutePlanStop {
+  distance: number;
+  etaHours: number;
+  locationId: LocationId;
+  order: number;
+  riskScore: number;
+  task: RouteTask;
+  travelHours: number;
+}
+
+export interface RouteLoadRecommendation {
+  available: number;
+  productId: ProductId;
+  quantity: number;
+  reason: string;
+  source: "garage" | "supplier";
+}
+
+export interface OptimizedRoutePlan {
+  estimatedHours: number;
+  loadRecommendations: RouteLoadRecommendation[];
+  startLocationId: LocationId;
+  stops: RoutePlanStop[];
+  tone: "good" | "warning" | "danger";
+  totalDistance: number;
+  totalRisk: number;
 }
 
 export type StoryArcStage = "locked" | "available" | "active" | "complete";
@@ -1317,6 +1346,21 @@ export function activeConflictEvents(state: GameState): ConflictEvent[] {
     .sort((a, b) => a.expiresHour - b.expiresHour);
 }
 
+export function activeDistrictEvents(state: GameState): DistrictEvent[] {
+  return Object.values(state.economy?.districtEvents?.activeEvents ?? {})
+    .filter((event) => event.expiresHour > state.worldTimeHours && Boolean(state.districts[event.districtId]))
+    .sort((a, b) => a.expiresHour - b.expiresHour);
+}
+
+export function activeDistrictEventsForLocation(state: GameState, locationId: LocationId): DistrictEvent[] {
+  const location = state.locations[locationId];
+  if (!location) {
+    return [];
+  }
+
+  return activeDistrictEvents(state).filter((event) => event.districtId === location.districtId);
+}
+
 export function activeInspectionForMachine(state: GameState, machineId: MachineId): LawInspection | undefined {
   return activeLawInspections(state).find((inspection) => inspection.machineId === machineId);
 }
@@ -1598,4 +1642,156 @@ export function selectedRouteTask(state: GameState): RouteTask | undefined {
   }
 
   return routeTasks(state).find((task) => task.id === selectedTaskId);
+}
+
+function locationDistance(state: GameState, fromLocationId: LocationId, toLocationId: LocationId): number {
+  const from = state.locations[fromLocationId];
+  const to = state.locations[toLocationId];
+  if (!from || !to) {
+    return 0;
+  }
+
+  return Math.hypot(to.position.x - from.position.x, to.position.z - from.position.z);
+}
+
+function addLoadRecommendation(
+  recommendations: Map<ProductId, RouteLoadRecommendation>,
+  state: GameState,
+  productId: ProductId,
+  quantity: number,
+  reason: string
+): void {
+  if (quantity <= 0) {
+    return;
+  }
+
+  const available = state.player.garageStorage?.[productId] ?? 0;
+  const source: RouteLoadRecommendation["source"] = available > 0 ? "garage" : "supplier";
+  const existing = recommendations.get(productId);
+  recommendations.set(productId, {
+    available,
+    productId,
+    quantity: Math.max(existing?.quantity ?? 0, Math.ceil(quantity)),
+    reason: existing ? `${existing.reason} · ${reason}` : reason,
+    source
+  });
+}
+
+function buildRouteLoadRecommendations(state: GameState, stops: RoutePlanStop[]): RouteLoadRecommendation[] {
+  const recommendations = new Map<ProductId, RouteLoadRecommendation>();
+
+  for (const stop of stops) {
+    if (stop.task.productId) {
+      addLoadRecommendation(recommendations, state, stop.task.productId, 8, stop.task.title);
+      continue;
+    }
+
+    if (stop.task.contractId) {
+      const contract = state.contracts[stop.task.contractId];
+      if (contract) {
+        addLoadRecommendation(recommendations, state, contract.productId, contractRemainingQuantity(contract), contract.title);
+      }
+      continue;
+    }
+
+    if (stop.task.type === "stock" && stop.task.machineId) {
+      const machine = state.machines[stop.task.machineId];
+      if (!machine) {
+        continue;
+      }
+
+      const lowestSlot = machine.slots
+        .slice()
+        .sort((a, b) => a.quantity / Math.max(1, a.capacity) - b.quantity / Math.max(1, b.capacity))[0];
+      if (lowestSlot) {
+        addLoadRecommendation(recommendations, state, lowestSlot.productId, Math.min(18, lowestSlot.capacity - lowestSlot.quantity), machine.name);
+      } else {
+        addLoadRecommendation(recommendations, state, "soda", 10, `${machine.name} starter stock`);
+        addLoadRecommendation(recommendations, state, "chips", 8, `${machine.name} starter stock`);
+      }
+    }
+  }
+
+  const vehicle = activeVehicle(state);
+  let remainingSpace = vehicleSpaceRemaining(state, vehicle);
+  return Array.from(recommendations.values())
+    .sort((a, b) => {
+      const sourceScore = a.source === "garage" ? 1 : 0;
+      const otherSourceScore = b.source === "garage" ? 1 : 0;
+      return otherSourceScore - sourceScore || b.quantity - a.quantity;
+    })
+    .map((recommendation) => {
+      const product = state.products[recommendation.productId];
+      const size = product?.size ?? 1;
+      const capacityLimited = Math.max(0, Math.floor(remainingSpace / size));
+      const quantity = Math.min(recommendation.quantity, capacityLimited);
+      remainingSpace -= quantity * size;
+      return { ...recommendation, quantity };
+    })
+    .filter((recommendation) => recommendation.quantity > 0);
+}
+
+export function optimizedRoutePlan(state: GameState, maxStops = 6): OptimizedRoutePlan | undefined {
+  const vehicle = activeVehicle(state);
+  const startLocationId = vehicle?.locationId ?? state.player.currentLocationId ?? "garage";
+  if (!state.locations[startLocationId]) {
+    return undefined;
+  }
+
+  const pool = routeTasks(state)
+    .filter((task) => Boolean(state.locations[task.locationId]))
+    .slice(0, 12);
+  const stops: RoutePlanStop[] = [];
+  let currentLocationId = startLocationId;
+  let elapsedHours = 0;
+  let totalDistance = 0;
+  let totalRisk = 0;
+
+  while (pool.length > 0 && stops.length < maxStops) {
+    const nextIndex = pool
+      .map((task, index) => {
+        const distance = locationDistance(state, currentLocationId, task.locationId);
+        const location = state.locations[task.locationId];
+        const risk = location ? routeDangerScore(state, location, vehicle).score : 0;
+        const selectedBoost = state.routePlan.selectedTaskId === task.id ? 12 : 0;
+        const score = task.priority * 5 + selectedBoost - distance * 0.12 - risk * 1.8;
+        return { index, score };
+      })
+      .sort((a, b) => b.score - a.score)[0]?.index;
+
+    if (nextIndex === undefined) {
+      break;
+    }
+
+    const [task] = pool.splice(nextIndex, 1);
+    const distance = locationDistance(state, currentLocationId, task.locationId);
+    const location = state.locations[task.locationId];
+    const risk = location ? routeDangerScore(state, location, vehicle).score : 0;
+    const speed = Math.max(0.45, vehicle?.speed ?? 0.8);
+    const travelHours = distance / (14 * speed);
+    elapsedHours += travelHours + (task.type === "stock" || task.type === "repair" ? 0.18 : task.type === "collect" ? 0.08 : 0.12);
+    totalDistance += distance;
+    totalRisk += risk;
+    stops.push({
+      distance,
+      etaHours: elapsedHours,
+      locationId: task.locationId,
+      order: stops.length + 1,
+      riskScore: risk,
+      task,
+      travelHours
+    });
+    currentLocationId = task.locationId;
+  }
+
+  const tone: OptimizedRoutePlan["tone"] = totalRisk >= 2.2 || stops.some((stop) => stop.task.tone === "danger") ? "danger" : totalRisk >= 1 || stops.some((stop) => stop.task.tone === "warning") ? "warning" : "good";
+  return {
+    estimatedHours: elapsedHours,
+    loadRecommendations: buildRouteLoadRecommendations(state, stops),
+    startLocationId,
+    stops,
+    tone,
+    totalDistance,
+    totalRisk
+  };
 }

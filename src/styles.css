@@ -2040,6 +2040,11 @@ button {
   font-weight: 800;
 }
 
+.primary-hint strong {
+  color: #99f6e4;
+  font-size: 12px;
+}
+
 .target-action {
   padding: 5px 8px;
   border-radius: 999px;
@@ -2089,6 +2094,13 @@ button {
 .target-work-meter strong {
   color: #f8fafc;
   font-size: 11px;
+}
+
+.target-work-meter em {
+  color: #f8fafc;
+  font-size: 11px;
+  font-style: normal;
+  text-align: left;
 }
 
 .target-work-meter i {
@@ -2651,8 +2663,23 @@ kbd {
   border-color: rgba(251, 191, 36, 0.32);
 }
 
+.inventory-row.warning,
+.vehicle-card.warning {
+  border-color: rgba(251, 191, 36, 0.3);
+}
+
 .contract-card.danger {
   border-color: rgba(251, 113, 133, 0.36);
+}
+
+.inventory-row.danger,
+.vehicle-card.danger {
+  border-color: rgba(251, 113, 133, 0.36);
+}
+
+.inventory-row.good,
+.vehicle-card.good {
+  border-color: rgba(134, 239, 172, 0.28);
 }
 
 .contract-card.danger .contract-meter span {
@@ -2671,6 +2698,25 @@ kbd {
 .contract-mini-list {
   display: grid;
   gap: 7px;
+}
+
+.route-load-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.route-load-list span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 5px 8px;
+  border: 1px solid rgba(45, 212, 191, 0.26);
+  border-radius: 7px;
+  background: rgba(20, 184, 166, 0.12);
+  color: #ccfbf1;
+  font-size: 12px;
+  font-weight: 900;
 }
 
 .contract-mini-card {

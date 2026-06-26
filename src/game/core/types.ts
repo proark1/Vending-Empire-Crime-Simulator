@@ -17,6 +17,7 @@ export type ProductId =
   | "night_syrup"
   | "focus_cubes";
 export type MachineUpgradeId = "reinforced_glass" | "smart_lock" | "security_camera" | "cashless_terminal" | "neon_sign" | "remote_monitor";
+export type VehicleUpgradeId = "cargo_rack" | "reinforced_locks" | "tuned_engine" | "cold_box";
 export type MachineModelId =
   | "basic_snack"
   | "drink_machine"
@@ -265,6 +266,7 @@ export interface RouteVehicle {
   speed: number;
   escapeRating: number;
   condition: number;
+  upgrades?: VehicleUpgradeId[];
 }
 
 export interface RoutePlanState {
@@ -309,6 +311,24 @@ export interface DayReport {
   stockSold: number;
   rivalActions: number;
   summary: string;
+}
+
+export type DistrictEventKind = "festival" | "weather" | "shortage" | "trend" | "police_surge";
+
+export interface DistrictEvent {
+  congestionDelta: number;
+  demandMultiplier: number;
+  demandTags: string[];
+  description: string;
+  districtId: DistrictId;
+  expiresHour: number;
+  heatDelta: number;
+  id: string;
+  kind: DistrictEventKind;
+  productId?: ProductId;
+  startedHour: number;
+  title: string;
+  tone: GameEventTone;
 }
 
 export interface ProgressionState {
@@ -494,6 +514,11 @@ export interface EconomyState {
   spoilage: SpoilageState;
   fleet: MachineFleetState;
   customers: CustomerMarketState;
+  districtEvents: {
+    activeEvents: Record<string, DistrictEvent>;
+    eventSequence: number;
+    nextEventHour: number;
+  };
   locationRights: Record<LocationId, LocationRightsState>;
   productCustomizations: Partial<Record<ProductId, ProductCustomization>>;
 }
@@ -828,6 +853,7 @@ export type GameCommand =
   | { type: "upgrade_base_facility"; actorId: FactionId; facilityId: BaseFacilityId }
   | { type: "set_insurance_plan"; actorId: FactionId; plan: InsurancePlan }
   | { type: "service_vehicle"; actorId: FactionId; vehicleId: VehicleId }
+  | { type: "install_vehicle_upgrade"; actorId: FactionId; vehicleId: VehicleId; upgradeId: VehicleUpgradeId }
   | { type: "buy_machine_model"; actorId: FactionId; modelId: MachineModelId; quantity: number }
   | { type: "sell_stored_machine"; actorId: FactionId; machineId: MachineId }
   | { type: "customize_product"; actorId: FactionId; productId: ProductId; mode: ProductCustomizationMode }

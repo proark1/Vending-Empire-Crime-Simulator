@@ -266,7 +266,8 @@ const starterVehicle: RouteVehicle = {
   security: 0.15,
   speed: 1,
   escapeRating: 0.35,
-  condition: 1
+  condition: 1,
+  upgrades: []
 };
 
 const chaseVehicle: RouteVehicle = {
@@ -281,7 +282,8 @@ const chaseVehicle: RouteVehicle = {
   security: 0.08,
   speed: 1.35,
   escapeRating: 0.58,
-  condition: 1
+  condition: 1,
+  upgrades: []
 };
 
 function cloneContent<T>(value: T): T {
@@ -440,6 +442,11 @@ export function createInitialState(): GameState {
       },
       fleet: createInitialFleet(),
       customers: createInitialCustomerMarket(),
+      districtEvents: {
+        activeEvents: {},
+        eventSequence: 1,
+        nextEventHour: 10.5
+      },
       locationRights: createInitialLocationRights(),
       productCustomizations: {}
     },
