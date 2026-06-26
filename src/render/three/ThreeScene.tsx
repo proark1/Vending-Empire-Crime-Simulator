@@ -1,13 +1,14 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
-import type { DistrictAccess, GameState, GameEventTone, Location, MachineId, MachineUpgradeId, ProductId, StockCrate, StreetActivity, VendingMachine } from "../../game/core/types";
+import type { DistrictAccess, GameState, GameEventTone, Location, MachineId, MachineUpgradeId, ProductId, RouteVehicle, StockCrate, StreetActivity, Vec2, VehicleId, VendingMachine } from "../../game/core/types";
 import { activeConflictEvents, activeMachineAlarms, activeVehicle, carriedCrateUnits, districtProgress, garageStorageUnits, machineAtLocation, machineRoutePressure } from "../../game/core/selectors";
 import { modelTransformFor, type ModelConfig, type ModelTransform } from "../../game/content/modelConfig";
 import {
   districtLabels,
   districtVisualProfiles,
   machinePlacementAnchors,
+  neighborhoodHotspots,
   worldBounds,
   type CityBackdropBuilding,
   type PatrolZone,
@@ -32,6 +33,7 @@ interface ThreeSceneProps {
   mapLayout: WorldMapLayout;
   modelConfig: ModelConfig;
   state: GameState;
+  onVehicleDrive?: (vehicleId: VehicleId, position: Vec2, heading: number, distance: number) => void;
   onPlayerPositionChange: (position: { x: number; z: number }) => void;
   onPlayerHeadingChange: (headingDegrees: number) => void;
   onTargetChange: (target: SceneTarget | null) => void;
@@ -540,6 +542,17 @@ function activeVehiclePlacementForLocation(location: Location): { position: THRE
   };
 }
 
+function activeVehiclePlacementForVehicle(vehicle: RouteVehicle, location?: Location): { position: THREE.Vector3; rotationY: number } {
+  if (vehicle.position) {
+    return {
+      position: new THREE.Vector3(vehicle.position.x, 0, vehicle.position.z),
+      rotationY: typeof vehicle.heading === "number" ? vehicle.heading : location ? activeVehiclePlacementForLocation(location).rotationY : 0
+    };
+  }
+
+  return location ? activeVehiclePlacementForLocation(location) : { position: new THREE.Vector3(), rotationY: 0 };
+}
+
 function vehicleCollisionBox(placement: { position: THREE.Vector3; rotationY: number }): CollisionBox {
   const clearance = WORLD_SCALE.vehicle.clearance;
   return collisionBoxFromRotatedCenter(
@@ -551,7 +564,7 @@ function vehicleCollisionBox(placement: { position: THREE.Vector3; rotationY: nu
   );
 }
 
-function collisionBoxesForState(currentState: GameState, layout: WorldMapLayout): CollisionBox[] {
+function collisionBoxesForState(currentState: GameState, layout: WorldMapLayout, options: { excludeVehicleId?: string } = {}): CollisionBox[] {
   const boxes = [...buildingCollisionBoxesForLayout(layout)];
 
   for (const location of Object.values(currentState.locations)) {
@@ -562,8 +575,8 @@ function collisionBoxesForState(currentState: GameState, layout: WorldMapLayout)
 
   const vehicle = activeVehicle(currentState);
   const vehicleLocation = vehicle ? currentState.locations[vehicle.locationId] : undefined;
-  if (vehicle && vehicleLocation) {
-    boxes.push(vehicleCollisionBox(activeVehiclePlacementForLocation(vehicleLocation)));
+  if (vehicle && vehicle.id !== options.excludeVehicleId) {
+    boxes.push(vehicleCollisionBox(activeVehiclePlacementForVehicle(vehicle, vehicleLocation)));
   }
 
   return boxes;
@@ -2591,6 +2604,50 @@ function createPatrolZone(zone: PatrolZone): THREE.Group {
   return group;
 }
 
+function createNeighborhoodHotspotMarker(color: string, kind: string, access: DistrictAccess): THREE.Group {
+  const group = new THREE.Group();
+  const locked = access === "locked";
+  const material = new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity: locked ? 0.34 : 0.78,
+    depthWrite: false
+  });
+  const baseMaterial = new THREE.MeshStandardMaterial({ color: locked ? "#334155" : "#1f2937", roughness: 0.72, metalness: 0.08 });
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.82, 0.026, 8, 64), material);
+  ring.position.y = 0.11;
+  ring.rotation.x = Math.PI / 2;
+  group.add(ring);
+
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.07, 0.9, 12), baseMaterial);
+  post.position.y = 0.45;
+  post.castShadow = true;
+  group.add(post);
+
+  const capGeometry =
+    kind === "route_choke"
+      ? new THREE.ConeGeometry(0.18, 0.34, 3)
+      : kind === "market"
+        ? new THREE.BoxGeometry(0.34, 0.22, 0.22)
+        : kind === "supplier_shadow"
+          ? new THREE.CylinderGeometry(0.16, 0.16, 0.18, 6)
+          : new THREE.SphereGeometry(0.18, 14, 10);
+  const cap = new THREE.Mesh(capGeometry, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: locked ? 0.52 : 1 }));
+  cap.position.y = 1.03;
+  cap.rotation.y = kind === "route_choke" ? Math.PI : 0;
+  group.add(cap);
+
+  const halo = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.28, 0.5, 1.8, 24, 1, true),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: locked ? 0.04 : 0.09, depthWrite: false })
+  );
+  halo.position.y = 0.92;
+  group.add(halo);
+
+  group.userData.neighborhoodHotspot = true;
+  return group;
+}
+
 function createPolicePatrolOfficer(patrol: PolicePatrolPath, quality: GraphicsQuality, modelConfig: ModelConfig): THREE.Group {
   const officer = createNpcCharacter("scout", quality);
   const start = patrol.path[0];
@@ -3105,6 +3162,19 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
   const activeAlarmByMachine = new Map(activeMachineAlarms(currentState).map((alarm) => [alarm.machineId, alarm]));
   const activeConflictByLocation = new Map(activeConflictEvents(currentState).map((conflict) => [conflict.locationId, conflict]));
 
+  for (const hotspot of neighborhoodHotspots) {
+    const progress = districtProgress(currentState, hotspot.districtId);
+    const marker = createNeighborhoodHotspotMarker(hotspot.color, hotspot.kind, progress.access);
+    marker.position.set(hotspot.x, 0.02, hotspot.z);
+    group.add(marker);
+    addLabel(group, hotspot.label, hotspot.color, new THREE.Vector3(hotspot.x, 0, hotspot.z), progress.access === "locked" ? 1.55 : 1.72);
+    interactables.push({
+      radius: Math.max(1.25, Math.min(2.4, hotspot.radius * 0.28)),
+      target: { type: "neighborhood", id: hotspot.id, label: hotspot.label },
+      position: new THREE.Vector3(hotspot.x, 0, hotspot.z)
+    });
+  }
+
   for (const location of Object.values(currentState.locations)) {
     const position = new THREE.Vector3(location.position.x, 0, location.position.z);
     const machinePlacement = machinePlacementForLocation(location);
@@ -3271,33 +3341,63 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
 
   const vehicle = activeVehicle(currentState);
   const vehicleLocation = vehicle ? currentState.locations[vehicle.locationId] : undefined;
-  if (vehicle && vehicleLocation) {
-    const vehiclePlacement = activeVehiclePlacementForLocation(vehicleLocation);
+  if (vehicle) {
+    const vehiclePlacement = activeVehiclePlacementForVehicle(vehicle, vehicleLocation);
     const vehiclePosition = vehiclePlacement.position;
+    const vehicleRig = new THREE.Group();
+    vehicleRig.userData.routeVehicleId = vehicle.id;
+    vehicleRig.position.copy(vehiclePosition);
+    vehicleRig.rotation.y = vehiclePlacement.rotationY;
     const vehicleGroup = createVehicleMesh(quality);
-    vehicleGroup.position.copy(vehiclePosition);
-    vehicleGroup.rotation.y = vehiclePlacement.rotationY;
     applyModelTransformById(vehicleGroup, modelConfig, "vehicle.route_van");
-    group.add(vehicleGroup);
+    vehicleRig.add(vehicleGroup);
 
     const loadedProductIds = Object.entries(vehicle.inventory)
       .filter(([, quantity]) => quantity > 0)
       .map(([productId]) => productId as ProductId);
     if (loadedProductIds.length > 0) {
       const trunkStack = createCrateStack(loadedProductIds, modelConfig);
-      trunkStack.position.set(vehiclePosition.x + 0.15, 0.76, vehiclePosition.z);
+      trunkStack.position.set(0.15, 0.76, 0);
       trunkStack.scale.setScalar(0.58);
-      trunkStack.rotation.y = vehicleGroup.rotation.y;
-      group.add(trunkStack);
+      vehicleRig.add(trunkStack);
     }
 
-    addLabel(group, vehicle.name, "#d9f99d", vehiclePosition, WORLD_SCALE.vehicle.height + 0.38);
+    const drivePrompt = createLabelSprite("F DRIVE", "#d9f99d");
+    drivePrompt.position.set(0, WORLD_SCALE.vehicle.height + 0.72, 0);
+    drivePrompt.scale.set(0.72, 0.19, 1);
+    vehicleRig.add(drivePrompt);
+    const vehicleLabel = createLabelSprite(vehicle.name, "#d9f99d");
+    vehicleLabel.position.set(0, WORLD_SCALE.vehicle.height + 0.38, 0);
+    vehicleRig.add(vehicleLabel);
+    group.add(vehicleRig);
+    interactables.push({ radius: 2.4, target: { type: "vehicle", id: vehicle.id, label: vehicle.name }, position: vehiclePosition });
   }
 
   return interactables;
 }
 
-export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId, mapLayout, modelConfig, state, onPlayerPositionChange, onPlayerHeadingChange, onTargetChange }: ThreeSceneProps) {
+function setRouteVehicleRigPose(group: THREE.Group, vehicleId: string, position: THREE.Vector3, heading: number): void {
+  group.traverse((object) => {
+    if (object.userData.routeVehicleId === vehicleId) {
+      object.position.copy(position);
+      object.rotation.y = heading;
+    }
+  });
+}
+
+function activeVehicleDrivePose(currentState: GameState): { vehicle: RouteVehicle; placement: { position: THREE.Vector3; rotationY: number } } | null {
+  const vehicle = activeVehicle(currentState);
+  if (!vehicle) {
+    return null;
+  }
+
+  return {
+    vehicle,
+    placement: activeVehiclePlacementForVehicle(vehicle, currentState.locations[vehicle.locationId])
+  };
+}
+
+export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId, mapLayout, modelConfig, state, onVehicleDrive, onPlayerPositionChange, onPlayerHeadingChange, onTargetChange }: ThreeSceneProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const stateRef = useRef(state);
   const dynamicGroupRef = useRef<THREE.Group | null>(null);
@@ -3314,6 +3414,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
   const onPlayerPositionChangeRef = useRef(onPlayerPositionChange);
   const onPlayerHeadingChangeRef = useRef(onPlayerHeadingChange);
   const onTargetChangeRef = useRef(onTargetChange);
+  const onVehicleDriveRef = useRef(onVehicleDrive);
 
   useEffect(() => {
     stateRef.current = state;
@@ -3334,6 +3435,10 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
   useEffect(() => {
     onTargetChangeRef.current = onTargetChange;
   }, [onTargetChange]);
+
+  useEffect(() => {
+    onVehicleDriveRef.current = onVehicleDrive;
+  }, [onVehicleDrive]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -3550,6 +3655,11 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     const keys = new Set<string>();
     let cameraMode: CameraMode = "first";
     let debugVisible = false;
+    let drivingVehicleId: string | null = null;
+    let vehicleVelocity = 0;
+    let vehicleHeading = 0;
+    let drivenDistanceSinceSync = 0;
+    let lastVehicleDriveEmit = 0;
     let pitch = 0;
     let verticalVelocity = 0;
     let grounded = true;
@@ -3572,8 +3682,92 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
 
     updateDynamicObjects();
 
+    const syncDrivenVehicleVisual = () => {
+      const dynamicGroupCurrent = dynamicGroupRef.current;
+      if (!dynamicGroupCurrent || !drivingVehicleId) {
+        return;
+      }
+
+      setRouteVehicleRigPose(dynamicGroupCurrent, drivingVehicleId, yaw.position, vehicleHeading);
+    };
+
+    const emitVehicleDrive = (force = false) => {
+      if (!drivingVehicleId || !onVehicleDriveRef.current) {
+        return;
+      }
+
+      const now = performance.now();
+      if (!force && now - lastVehicleDriveEmit < 260 && drivenDistanceSinceSync < 1.2) {
+        return;
+      }
+
+      onVehicleDriveRef.current(
+        drivingVehicleId,
+        { x: yaw.position.x, z: yaw.position.z },
+        vehicleHeading,
+        drivenDistanceSinceSync
+      );
+      drivenDistanceSinceSync = 0;
+      lastVehicleDriveEmit = now;
+    };
+
+    const enterVehicle = () => {
+      const pose = activeVehicleDrivePose(stateRef.current);
+      if (!pose) {
+        return;
+      }
+
+      const distanceToVehicle = yaw.position.distanceTo(pose.placement.position);
+      if (distanceToVehicle > 3.2) {
+        return;
+      }
+
+      drivingVehicleId = pose.vehicle.id;
+      targetIdRef.current = null;
+      vehicleVelocity = 0;
+      vehicleHeading = pose.placement.rotationY;
+      yaw.position.copy(pose.placement.position);
+      yaw.rotation.y = vehicleHeading;
+      cameraMode = "third";
+      pitch = THREE.MathUtils.clamp(pitch, -0.45, 0.35);
+      playerAvatar.visible = false;
+      carriedCrateMount.visible = false;
+      applyCameraMode(camera, playerAvatar, carriedCrateMount, cameraMode, pitch);
+      syncDrivenVehicleVisual();
+      onTargetChangeRef.current(null);
+    };
+
+    const exitVehicle = () => {
+      if (!drivingVehicleId) {
+        return;
+      }
+
+      emitVehicleDrive(true);
+      const side = new THREE.Vector3(Math.cos(vehicleHeading), 0, -Math.sin(vehicleHeading));
+      yaw.position.add(side.multiplyScalar(2.1));
+      clampToWorld(yaw.position);
+      drivingVehicleId = null;
+      vehicleVelocity = 0;
+      cameraMode = "first";
+      pitch = 0;
+      applyCameraMode(camera, playerAvatar, carriedCrateMount, cameraMode, pitch);
+    };
+
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code === "KeyF" && !event.repeat) {
+        event.preventDefault();
+        if (drivingVehicleId) {
+          exitVehicle();
+        } else {
+          enterVehicle();
+        }
+        return;
+      }
+
       if (event.code === "KeyV" && !event.repeat) {
+        if (drivingVehicleId) {
+          return;
+        }
         cameraMode = cameraMode === "first" ? "third" : "first";
         applyCameraMode(camera, playerAvatar, carriedCrateMount, cameraMode, pitch);
         return;
@@ -3591,7 +3785,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
 
       const eventTarget = event.target instanceof HTMLElement ? event.target : null;
       const isUiControl = Boolean(eventTarget?.closest("input, textarea, select, button, [contenteditable='true']"));
-      if (event.code === "Space" && !isUiControl) {
+      if (event.code === "Space" && !isUiControl && !drivingVehicleId) {
         event.preventDefault();
         if (!event.repeat && grounded) {
           verticalVelocity = playerJumpVelocity;
@@ -3635,6 +3829,14 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     };
 
     const updateTarget = () => {
+      if (drivingVehicleId) {
+        if (targetIdRef.current !== null) {
+          targetIdRef.current = null;
+          onTargetChangeRef.current(null);
+        }
+        return;
+      }
+
       const cameraWorld = new THREE.Vector3();
       camera.getWorldPosition(cameraWorld);
       const targetOrigin = cameraMode === "third"
@@ -3696,19 +3898,70 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       const speed = (keys.has("ShiftLeft") || keys.has("ShiftRight") ? 7.5 : 4.2) * (1 - carryPenalty);
       const direction = new THREE.Vector3();
 
-      if (keys.has("KeyW") || keys.has("ArrowUp")) direction.z -= 1;
-      if (keys.has("KeyS") || keys.has("ArrowDown")) direction.z += 1;
-      if (keys.has("KeyA") || keys.has("ArrowLeft")) direction.x -= 1;
-      if (keys.has("KeyD") || keys.has("ArrowRight")) direction.x += 1;
-
       let playerMoved = false;
-      if (direction.lengthSq() > 0) {
-        direction.normalize().applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw.rotation.y);
-        const movement = direction.multiplyScalar(speed * delta);
-        playerMoved = movePlayerWithCollision(yaw.position, movement, collisionBoxesForState(stateRef.current, mapLayout));
+      if (drivingVehicleId) {
+        const acceleration = 9.8;
+        const reverseAcceleration = 5.2;
+        const brake = keys.has("Space") ? 12 : 0;
+        const maxForward = 14.5 * Math.max(0.45, activeVehicle(stateRef.current)?.speed ?? 1);
+        const maxReverse = -4.2;
+
+        if (keys.has("KeyW") || keys.has("ArrowUp")) {
+          vehicleVelocity += acceleration * delta;
+        }
+        if (keys.has("KeyS") || keys.has("ArrowDown")) {
+          vehicleVelocity -= reverseAcceleration * delta;
+        }
+        if (brake > 0) {
+          const brakeAmount = brake * delta;
+          vehicleVelocity = Math.abs(vehicleVelocity) <= brakeAmount ? 0 : vehicleVelocity - Math.sign(vehicleVelocity) * brakeAmount;
+        }
+
+        vehicleVelocity *= Math.pow(0.985, delta * 60);
+        vehicleVelocity = THREE.MathUtils.clamp(vehicleVelocity, maxReverse, maxForward);
+
+        const steeringInput = (keys.has("KeyA") || keys.has("ArrowLeft") ? 1 : 0) + (keys.has("KeyD") || keys.has("ArrowRight") ? -1 : 0);
+        if (steeringInput !== 0 && Math.abs(vehicleVelocity) > 0.2) {
+          const steeringStrength = 1.32 * THREE.MathUtils.clamp(Math.abs(vehicleVelocity) / 7, 0.25, 1);
+          vehicleHeading += steeringInput * steeringStrength * delta * Math.sign(vehicleVelocity);
+        }
+
+        yaw.rotation.y = vehicleHeading;
+        const driveForward = new THREE.Vector3(-Math.sin(vehicleHeading), 0, -Math.cos(vehicleHeading));
+        const movement = driveForward.multiplyScalar(vehicleVelocity * delta);
+        const before = yaw.position.clone();
+        if (movement.lengthSq() > 0.000001) {
+          playerMoved = movePlayerWithCollision(yaw.position, movement, collisionBoxesForState(stateRef.current, mapLayout, { excludeVehicleId: drivingVehicleId }));
+          if (!playerMoved) {
+            vehicleVelocity *= -0.16;
+          } else {
+            drivenDistanceSinceSync += before.distanceTo(yaw.position);
+          }
+        }
+
+        yaw.position.y = playerGroundY;
+        verticalVelocity = 0;
+        grounded = true;
+        syncDrivenVehicleVisual();
+        emitVehicleDrive();
+        if (targetIdRef.current !== null) {
+          targetIdRef.current = null;
+          onTargetChangeRef.current(null);
+        }
+      } else {
+        if (keys.has("KeyW") || keys.has("ArrowUp")) direction.z -= 1;
+        if (keys.has("KeyS") || keys.has("ArrowDown")) direction.z += 1;
+        if (keys.has("KeyA") || keys.has("ArrowLeft")) direction.x -= 1;
+        if (keys.has("KeyD") || keys.has("ArrowRight")) direction.x += 1;
+
+        if (direction.lengthSq() > 0) {
+          direction.normalize().applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw.rotation.y);
+          const movement = direction.multiplyScalar(speed * delta);
+          playerMoved = movePlayerWithCollision(yaw.position, movement, collisionBoxesForState(stateRef.current, mapLayout));
+        }
       }
 
-      if (!grounded || verticalVelocity > 0) {
+      if (!drivingVehicleId && (!grounded || verticalVelocity > 0)) {
         verticalVelocity += playerGravity * delta;
         yaw.position.y += verticalVelocity * delta;
         if (yaw.position.y <= playerGroundY) {

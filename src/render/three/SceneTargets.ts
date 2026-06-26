@@ -1,10 +1,12 @@
-import type { GameEventTone, LocationId, MachineId, ProductId } from "../../game/core/types";
+import type { GameEventTone, LocationId, MachineId, ProductId, VehicleId } from "../../game/core/types";
 
 export type SceneTarget =
   | { type: "base"; id: "garage"; label: string }
   | { type: "supplier"; id: "supplier"; label: string }
   | { type: "machine"; id: MachineId; label: string }
-  | { type: "placement"; id: LocationId; label: string };
+  | { type: "placement"; id: LocationId; label: string }
+  | { type: "vehicle"; id: VehicleId; label: string }
+  | { type: "neighborhood"; id: string; label: string };
 
 export type SceneFeedbackKind =
   | "pickup"

@@ -256,6 +256,9 @@ export interface RouteVehicle {
   id: VehicleId;
   name: string;
   locationId: LocationId;
+  position?: Vec2;
+  heading?: number;
+  odometer?: number;
   inventory: Inventory;
   capacity: number;
   security: number;
@@ -599,6 +602,7 @@ export type GameCommand =
   | { type: "unload_vehicle"; actorId: FactionId; vehicleId: VehicleId; productId: ProductId; quantity: number }
   | { type: "take_vehicle_crate"; actorId: FactionId; vehicleId: VehicleId; productId: ProductId; quantity: number }
   | { type: "dispatch_vehicle"; actorId: FactionId; vehicleId: VehicleId; locationId: LocationId }
+  | { type: "drive_vehicle"; actorId: FactionId; vehicleId: VehicleId; position: Vec2; heading: number; distance: number }
   | { type: "select_route_task"; actorId: FactionId; taskId: string | null }
   | { type: "scout_district"; actorId: FactionId; districtId: DistrictId }
   | { type: "unlock_district"; actorId: FactionId; districtId: DistrictId }

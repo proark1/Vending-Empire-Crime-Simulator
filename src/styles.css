@@ -2954,6 +2954,26 @@ kbd {
   border-top: 1px solid rgba(226, 232, 240, 0.12);
 }
 
+.neighborhood-dossier,
+.vehicle-dossier {
+  padding: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.48);
+}
+
+.neighborhood-dossier p,
+.vehicle-dossier p {
+  margin: 0;
+  color: #cbd5e1;
+}
+
+.neighborhood-dossier strong {
+  color: #fde68a;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .section-title {
   display: flex;
   align-items: center;

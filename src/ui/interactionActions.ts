@@ -1,4 +1,5 @@
 import type { GameCommand, GameState, ProductId } from "../game/core/types";
+import { neighborhoodHotspots } from "../game/content/world";
 import {
   activeAlarmForMachine,
   activeConflictEvents,
@@ -136,6 +137,8 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
   const targetLocationId =
     target.type === "base" || target.type === "supplier" || target.type === "placement"
       ? target.id
+      : target.type === "vehicle" || target.type === "neighborhood"
+        ? null
       : state.machines[target.id]?.locationId;
   const conflictAtTarget = targetLocationId ? activeConflictEvents(state).find((event) => event.locationId === targetLocationId) : undefined;
 
@@ -249,6 +252,42 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
       disabledReason: placementDisabledReason,
       command: { type: "place_machine", actorId, locationId: location.id, method: "legal_contract", machineId: storedMachine?.id }
     };
+  }
+
+  if (target.type === "neighborhood") {
+    const hotspot = neighborhoodHotspots.find((candidate) => candidate.id === target.id);
+    const district = hotspot ? state.districts[hotspot.districtId] : undefined;
+    const districtInfo = district ? districtUnlockInfo(state, district.id) : undefined;
+
+    if (!district || !districtInfo || districtInfo.progress.access === "unlocked") {
+      return null;
+    }
+
+    if (districtInfo.progress.access === "locked") {
+      return {
+        kind: "command",
+        label: `Scout ${district.name}`,
+        disabled: !districtInfo.canScout,
+        disabledReason: !districtInfo.canScout ? shortageLabel(district.scoutCost, player.money) : undefined,
+        command: { type: "scout_district", actorId, districtId: district.id }
+      };
+    }
+
+    return {
+      kind: "command",
+      label: districtInfo.canUnlock ? `Open ${district.name}` : "Requirements unmet",
+      disabled: !districtInfo.canUnlock,
+      disabledReason: !districtInfo.canUnlock && districtInfo.unmetRequirements.length > 0
+        ? districtInfo.unmetRequirements.join(", ")
+        : player.money < district.unlockCost
+          ? shortageLabel(district.unlockCost, player.money)
+          : undefined,
+      command: { type: "unlock_district", actorId, districtId: district.id }
+    };
+  }
+
+  if (target.type === "vehicle") {
+    return null;
   }
 
   const machine = state.machines[target.id];

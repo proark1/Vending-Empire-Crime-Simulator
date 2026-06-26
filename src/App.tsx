@@ -16,7 +16,7 @@ import { activeConflictEvents, activeMachineAlarms, latestDayReport, selectedRou
 import { executePrimaryInteraction, getPrimaryInteraction } from "./ui/interactionActions";
 import { useGame } from "./hooks/useGame";
 import { ToastStack, type ToastMessage } from "./ui/ToastStack";
-import type { GameCommand, GameState, LocationId, ProductId, Vec2 } from "./game/core/types";
+import type { GameCommand, GameState, LocationId, ProductId, Vec2, VehicleId } from "./game/core/types";
 import { createDefaultAudioConfig, normalizeAudioConfig, type AudioConfig } from "./game/content/audioConfig";
 import { clearModelConfig, loadModelConfig, MODEL_CONFIG_KEY, MODEL_CONFIG_UPDATED_EVENT, saveModelConfig, type ModelConfig } from "./game/content/modelConfig";
 import { worldBounds, type WorldMapLayout } from "./game/content/world";
@@ -38,7 +38,11 @@ function targetLocationId(target: SceneTarget | null, state: GameState): Locatio
     return state.machines[target.id]?.locationId ?? null;
   }
 
-  return target.id;
+  if (target.type === "base" || target.type === "supplier" || target.type === "placement") {
+    return target.id;
+  }
+
+  return null;
 }
 
 function createSceneFeedback(command: GameCommand, target: SceneTarget | null, state: GameState): Omit<SceneFeedbackEvent, "id"> | null {
@@ -523,11 +527,23 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
   const [graphicsQuality, setGraphicsQualityState] = useState<GraphicsQuality>(() => loadGraphicsQuality());
   const gameMenuRef = useRef<HTMLDivElement | null>(null);
   const lastEventIdRef = useRef(state.eventLog[0]?.id ?? null);
+  const lastInteractionAtRef = useRef(0);
   const lastMissionStepIdRef = useRef<string | null>(null);
   const lastServiceLocationIdRef = useRef<LocationId | null>(state.player.currentLocationId);
   const lastReportIdRef = useRef<string | null>(null);
   const activeTarget = entered ? target : null;
   const primaryInteraction = useMemo(() => getPrimaryInteraction(state, activeTarget), [activeTarget, state]);
+  const repeatablePrimaryInteraction = primaryInteraction?.kind === "command" && [
+    "buy_product",
+    "deposit_crate",
+    "load_crate",
+    "load_vehicle",
+    "unload_vehicle",
+    "take_vehicle_crate",
+    "stock_machine",
+    "collect_revenue",
+    "repair_machine"
+  ].includes(primaryInteraction.command.type);
   const missionStep = useMemo(() => getStarterMissionStep(state, playerPosition), [playerPosition, state]);
   const routeTask = useMemo(() => selectedRouteTask(state), [state]);
   const activeAlarm = useMemo(() => activeMachineAlarms(state)[0], [state]);
@@ -794,6 +810,20 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
     [activeTarget, sendCommand, state]
   );
 
+  const handleVehicleDrive = useCallback(
+    (vehicleId: VehicleId, position: Vec2, heading: number, distance: number) => {
+      sendCommand({
+        type: "drive_vehicle",
+        actorId: state.playerFactionId,
+        vehicleId,
+        position,
+        heading,
+        distance
+      });
+    },
+    [sendCommand, state.playerFactionId]
+  );
+
   const handlePrimaryInteraction = useCallback(() => {
     executePrimaryInteraction(primaryInteraction, {
       onCommand: sendCommandAtActiveTarget,
@@ -811,7 +841,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!entered || event.repeat) {
+      if (!entered) {
         return;
       }
 
@@ -821,7 +851,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
         return;
       }
 
-      if (event.code === "KeyM") {
+      if (event.code === "KeyM" && !event.repeat) {
         event.preventDefault();
         setDashboardOpen((current) => !current);
         return;
@@ -831,6 +861,12 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
         return;
       }
 
+      const now = performance.now();
+      if (event.repeat && now - lastInteractionAtRef.current < 360) {
+        event.preventDefault();
+        return;
+      }
+      lastInteractionAtRef.current = now;
       event.preventDefault();
       unlockGameAudio();
       handlePrimaryInteraction();
@@ -849,6 +885,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
         modelConfig={modelConfig}
         state={state}
         feedbackEvent={sceneFeedback}
+        onVehicleDrive={handleVehicleDrive}
         onPlayerPositionChange={setPlayerPosition}
         onPlayerHeadingChange={setPlayerHeadingDegrees}
         onTargetChange={setTarget}
@@ -969,7 +1006,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
         <div className={`target-prompt ${primaryInteraction.disabled ? "disabled" : ""}`}>
           <span className="target-name">{activeTarget.label}</span>
           <span className="target-action">
-            <kbd>E</kbd>
+            <kbd>{repeatablePrimaryInteraction ? "HOLD E" : "E"}</kbd>
             {primaryInteraction.label}
           </span>
           {primaryInteraction.disabled && primaryInteraction.disabledReason && <span className="target-reason">{primaryInteraction.disabledReason}</span>}

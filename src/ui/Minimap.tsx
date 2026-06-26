@@ -45,11 +45,18 @@ function toDistrictRect(bounds: { maxX: number; maxZ: number; minX: number; minZ
 }
 
 export function Minimap({ state, playerPosition, guidanceLocationId, target }: MinimapProps) {
-  const targetLocationId = target?.type === "placement" ? target.id : target?.type === "machine" ? state.machines[target.id]?.locationId : target?.id;
+  const targetLocationId =
+    target?.type === "placement"
+      ? target.id
+      : target?.type === "machine"
+        ? state.machines[target.id]?.locationId
+        : target?.type === "base" || target?.type === "supplier"
+          ? target.id
+          : undefined;
   const player = toMapPoint(playerPosition);
   const vehicle = activeVehicle(state);
   const vehicleLocation = vehicle ? state.locations[vehicle.locationId] : undefined;
-  const vehiclePoint = vehicleLocation ? toMapPoint(vehicleLocation.position) : undefined;
+  const vehiclePoint = vehicle?.position ? toMapPoint(vehicle.position) : vehicleLocation ? toMapPoint(vehicleLocation.position) : undefined;
 
   return (
     <aside className="minimap" aria-label="District map">

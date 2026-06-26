@@ -1331,6 +1331,38 @@ function travelHoursBetweenLocations(state: GameState, fromLocationId: string, t
   return Math.max(0.08, Math.hypot(from.position.x - to.position.x, from.position.z - to.position.z) * 0.018 / Math.max(0.4, speed));
 }
 
+function nearestVehicleStop(state: GameState, position: { x: number; z: number }): Location | undefined {
+  const ranked = Object.values(state.locations)
+    .map((location) => ({
+      location,
+      distance: Math.hypot(location.position.x - position.x, location.position.z - position.z)
+    }))
+    .sort((a, b) => a.distance - b.distance);
+
+  const nearest = ranked[0];
+  return nearest && nearest.distance <= 6.25 ? nearest.location : undefined;
+}
+
+function parkedVehiclePose(location: Location): { heading: number; position: { x: number; z: number } } {
+  const streetSide = location.position.z > 0 ? -1 : 1;
+  return {
+    position: {
+      x: location.position.x + 4,
+      z: location.position.z + streetSide * 2.25
+    },
+    heading: location.id === "garage" || location.position.z > 0 ? -Math.PI / 2 : Math.PI / 2
+  };
+}
+
+function normalizeHeading(heading: number): number {
+  if (!Number.isFinite(heading)) {
+    return 0;
+  }
+
+  const fullTurn = Math.PI * 2;
+  return ((heading % fullTurn) + fullTurn) % fullTurn;
+}
+
 function contractProductOptions(location: Location): ProductId[] {
   if (location.demandTags.includes("gym")) {
     return ["energy", "protein_bar", "water", "soda", "hygiene_kit"];
@@ -2505,9 +2537,39 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       vehicle.condition = Math.max(0.35, (vehicle.condition ?? 1) - travelHours * 0.018);
       applyAdvanceTime(state, events, travelHours);
       vehicle.locationId = location.id;
+      const pose = parkedVehiclePose(location);
+      vehicle.position = pose.position;
+      vehicle.heading = pose.heading;
       log(state, events, `${vehicle.name} moved to ${location.name}.`, "good");
       applyRouteCheckpoint(state, events, vehicle.id, location.id);
       maybeTriggerRouteAmbush(state, events, vehicle.id, location.id);
+      break;
+    }
+
+    case "drive_vehicle": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      const vehicle = state.vehicles[command.vehicleId];
+      if (!vehicle) {
+        break;
+      }
+
+      const distance = Math.max(0, Math.min(80, Number.isFinite(command.distance) ? command.distance : 0));
+      vehicle.position = {
+        x: Number.isFinite(command.position.x) ? command.position.x : state.locations[vehicle.locationId]?.position.x ?? 0,
+        z: Number.isFinite(command.position.z) ? command.position.z : state.locations[vehicle.locationId]?.position.z ?? 0
+      };
+      vehicle.heading = normalizeHeading(command.heading);
+      vehicle.odometer = (vehicle.odometer ?? 0) + distance;
+      vehicle.condition = Math.max(0.28, (vehicle.condition ?? 1) - distance * 0.00045);
+      state.economy.traffic.vehicleMaintenanceDue[vehicle.id] = (state.economy.traffic.vehicleMaintenanceDue[vehicle.id] ?? 0) + distance * 0.035;
+
+      const nearest = nearestVehicleStop(state, vehicle.position);
+      if (nearest) {
+        vehicle.locationId = nearest.id;
+      }
       break;
     }
 

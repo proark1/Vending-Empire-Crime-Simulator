@@ -14,6 +14,8 @@ export function Hud({ feedbackEvent, nextActionLabel, state }: HudProps) {
   const player = state.factions[state.playerFactionId];
   const cargoUnits = carriedCrateUnits(state);
   const crate = state.player.carriedCrate;
+  const loadRatio = crate ? cargoUnits / Math.max(1, state.player.cargoCapacity) : 0;
+  const loadLabel = loadRatio >= 0.75 ? "heavy" : loadRatio >= 0.45 ? "loaded" : "";
   const progress = missionProgress(state);
   const inspections = activeLawInspections(state);
   const [pulse, setPulse] = useState<SceneFeedbackEvent["kind"] | null>(null);
@@ -50,6 +52,7 @@ export function Hud({ feedbackEvent, nextActionLabel, state }: HudProps) {
           <span>
             {crate ? `${state.products[crate.productId].name} ${crate.quantity}` : `${cargoUnits}/${state.player.cargoCapacity}`}
           </span>
+          {loadLabel ? <small>{loadLabel}</small> : null}
         </div>
         <div className="stat-pill mission-pill">
           <Trophy size={17} aria-hidden="true" />

@@ -782,6 +782,25 @@ describe("game reducer", () => {
     expect(result.economy.finance.ledger.some((entry) => entry.category === "fuel")).toBe(true);
   });
 
+  it("tracks direct driving position and snaps the van to nearby stops", () => {
+    const initial = createInitialState();
+    const result = reduceGameState(initial, {
+      type: "drive_vehicle",
+      actorId: "player",
+      vehicleId: "vehicle_starter_van",
+      position: { x: -5.2, z: -5.4 },
+      heading: Math.PI,
+      distance: 12
+    }).state;
+
+    const vehicle = result.vehicles.vehicle_starter_van;
+    expect(vehicle.position).toEqual({ x: -5.2, z: -5.4 });
+    expect(vehicle.locationId).toBe("laundromat");
+    expect(vehicle.condition).toBeLessThan(1);
+    expect(vehicle.odometer).toBeGreaterThanOrEqual(12);
+    expect(result.economy.traffic.vehicleMaintenanceDue.vehicle_starter_van).toBeGreaterThan(0);
+  });
+
   it("levels employees after repeated successful automation work", () => {
     const initial = withInstalledStarter();
     initial.factions.player.money = 400;

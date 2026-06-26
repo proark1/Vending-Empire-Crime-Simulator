@@ -158,7 +158,10 @@ export function migrateGameState(parsed: GameState): GameState {
           ...vehicle,
           inventory: vehicle.inventory ?? {},
           escapeRating: vehicle.escapeRating ?? baseline.vehicles[vehicleId]?.escapeRating ?? 0.35,
-          condition: vehicle.condition ?? baseline.vehicles[vehicleId]?.condition ?? 1
+          condition: vehicle.condition ?? baseline.vehicles[vehicleId]?.condition ?? 1,
+          position: vehicle.position ?? baseline.vehicles[vehicleId]?.position,
+          heading: vehicle.heading ?? baseline.vehicles[vehicleId]?.heading,
+          odometer: vehicle.odometer ?? baseline.vehicles[vehicleId]?.odometer ?? 0
         }
       ])
     ),

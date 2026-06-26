@@ -3,6 +3,7 @@ import { Camera, ChevronDown, ChevronUp, CreditCard, HandCoins, Lightbulb, Lock,
 import type { ConflictEvent, GameCommand, GameState, MachineUpgradeId } from "../game/core/types";
 import { machineUpgradeList } from "../game/content/machineUpgrades";
 import { machineModels } from "../game/content/machineModels";
+import { neighborhoodHotspots } from "../game/content/world";
 import { effectiveMachineSecurity, effectiveMachineVisibility, getMachineUpgradeEffects, machineHasUpgrade, priceDemandMultiplier } from "../game/core/machineStats";
 import {
   activeAlarmForMachine,
@@ -172,6 +173,8 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
   const targetLocationId =
     target.type === "base" || target.type === "supplier" || target.type === "placement"
       ? target.id
+      : target.type === "vehicle" || target.type === "neighborhood"
+        ? null
       : state.machines[target.id]?.locationId;
   const conflictAtTarget = targetLocationId ? activeConflictEvents(state).find((conflict) => conflict.locationId === targetLocationId) : undefined;
 
@@ -495,6 +498,92 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
         )}
         {storedBlocked && <p className="empty-note">Repair {storedMachine?.name} at the garage before placing it.</p>}
         {!unlocked && <p className="empty-note">{unmetRequirements ? `Needs ${unmetRequirements}.` : "Scout and open this area before installing machines."}</p>}
+      </section>
+    );
+  }
+
+  if (target.type === "neighborhood") {
+    const hotspot = neighborhoodHotspots.find((candidate) => candidate.id === target.id);
+    const district = hotspot ? state.districts[hotspot.districtId] : undefined;
+    const unlockInfo = district ? districtUnlockInfo(state, district.id) : undefined;
+
+    if (!hotspot || !district || !unlockInfo) {
+      return null;
+    }
+
+    return (
+      <section className={panelClassName}>
+        <h2>{hotspot.label}</h2>
+        {primaryInteraction && <PrimaryHint interaction={primaryInteraction} />}
+        {detailsToggle}
+        <div className="machine-readout">
+          <span>{district.name}</span>
+          <span>{unlockInfo.progress.access}</span>
+          <span>{hotspot.kind.replace("_", " ")}</span>
+          <span>{hotspot.demandTags.join(" / ")}</span>
+        </div>
+        <div className="machine-section neighborhood-dossier">
+          <p>{hotspot.description}</p>
+          <strong>{hotspot.riskNote}</strong>
+        </div>
+        {unlockInfo.progress.access === "locked" && (
+          <div className="action-grid">
+            <ActionButton
+              disabled={!unlockInfo.canScout}
+              icon={<Lightbulb size={17} aria-hidden="true" />}
+              onClick={() => onCommand({ type: "scout_district", actorId: state.playerFactionId, districtId: district.id })}
+            >
+              Scout ${district.scoutCost}
+            </ActionButton>
+          </div>
+        )}
+        {unlockInfo.progress.access === "scouted" && (
+          <div className="action-grid">
+            <ActionButton
+              disabled={!unlockInfo.canUnlock}
+              icon={<PackagePlus size={17} aria-hidden="true" />}
+              onClick={() => onCommand({ type: "unlock_district", actorId: state.playerFactionId, districtId: district.id })}
+            >
+              Open ${district.unlockCost}
+            </ActionButton>
+          </div>
+        )}
+        {unlockInfo.unmetRequirements.length > 0 && <p className="empty-note">Needs {unlockInfo.unmetRequirements.join(" · ")}.</p>}
+      </section>
+    );
+  }
+
+  if (target.type === "vehicle") {
+    const vehicle = state.vehicles[target.id];
+    const location = vehicle ? state.locations[vehicle.locationId] : undefined;
+    if (!vehicle) {
+      return null;
+    }
+
+    return (
+      <section className={panelClassName}>
+        <h2>{vehicle.name}</h2>
+        {detailsToggle}
+        <div className="machine-readout">
+          <span>{location?.name ?? "Street parked"}</span>
+          <span>{vehicleInventoryUnits(state, vehicle)}/{vehicle.capacity} cargo</span>
+          <span>{vehicleSpaceRemaining(state, vehicle)} open</span>
+          <span>{Math.round((vehicle.condition ?? 1) * 100)}% condition</span>
+          <span>{Math.round(vehicle.odometer ?? 0)}m driven</span>
+        </div>
+        <div className="machine-section vehicle-dossier">
+          <p>Manual driving is active from the street view when you are beside the van. Park near a stop to use its cargo on that machine route.</p>
+        </div>
+        {location?.id === "garage" && (
+          <div className="action-grid">
+            <ActionButton
+              icon={<Wrench size={17} aria-hidden="true" />}
+              onClick={() => onCommand({ type: "service_vehicle", actorId: state.playerFactionId, vehicleId: vehicle.id })}
+            >
+              Service
+            </ActionButton>
+          </div>
+        )}
       </section>
     );
   }

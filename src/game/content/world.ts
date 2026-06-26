@@ -113,6 +113,22 @@ export interface DistrictVisualProfile {
   lightColor: string;
 }
 
+export type NeighborhoodHotspotKind = "landmark" | "market" | "route_choke" | "social" | "supplier_shadow";
+
+export interface NeighborhoodHotspot {
+  color: string;
+  demandTags: string[];
+  description: string;
+  districtId: string;
+  id: string;
+  kind: NeighborhoodHotspotKind;
+  label: string;
+  radius: number;
+  riskNote: string;
+  x: number;
+  z: number;
+}
+
 export interface WorldMapLayout {
   backdropBuildings: CityBackdropBuilding[];
   buildings: WorldBuilding[];
@@ -130,6 +146,165 @@ export const worldBounds: Bounds2 = {
   minZ: -92,
   maxZ: 92
 };
+
+export const neighborhoodHotspots: NeighborhoodHotspot[] = [
+  {
+    id: "foam_fold_backlot",
+    districtId: "starter_suburb",
+    label: "Foam & Fold Backlot",
+    kind: "social",
+    x: -7.5,
+    z: -8.8,
+    radius: 5.2,
+    color: "#38bdf8",
+    demandTags: ["laundry", "student"],
+    description: "Laundry regulars, shift workers, and bored students cycle through this alley all day.",
+    riskNote: "Low police pressure, but Redline scouts watch the first profitable machine here."
+  },
+  {
+    id: "bus_shelter_triangle",
+    districtId: "starter_suburb",
+    label: "Bus Shelter Triangle",
+    kind: "route_choke",
+    x: -12.5,
+    z: -3.8,
+    radius: 4.8,
+    color: "#5eead4",
+    demandTags: ["commuter", "utility"],
+    description: "Three bus stops feed the same sidewalk pocket, making cheap drinks and chargers move quickly.",
+    riskNote: "More eyes on the route means complaints travel faster than the van."
+  },
+  {
+    id: "freight_gate_clock",
+    districtId: "industrial_yards",
+    label: "Freight Gate Clock",
+    kind: "route_choke",
+    x: -34,
+    z: 4,
+    radius: 7,
+    color: "#f59e0b",
+    demandTags: ["commuter", "utility", "meal"],
+    description: "Shift changes dump workers onto the same service road in hard waves.",
+    riskNote: "Great for bulk meals and energy stock, but ambush risk spikes after dark."
+  },
+  {
+    id: "dock_lamp_market",
+    districtId: "industrial_yards",
+    label: "Dock Lamp Market",
+    kind: "supplier_shadow",
+    x: -94,
+    z: 55,
+    radius: 7.5,
+    color: "#fbbf24",
+    demandTags: ["night", "utility"],
+    description: "Truckers trade favors, repair tips, and off-menu stock rumors under sodium lamps.",
+    riskNote: "Black-market supply talk helps margins, but raises route heat when abused."
+  },
+  {
+    id: "metro_ticket_wall",
+    districtId: "downtown_loop",
+    label: "Metro Ticket Wall",
+    kind: "market",
+    x: 30,
+    z: -9,
+    radius: 6.6,
+    color: "#60a5fa",
+    demandTags: ["commuter", "office"],
+    description: "Commuters queue, miss trains, and buy anything that solves a small panic.",
+    riskNote: "High sales, high inspection visibility, and corporate permit pressure."
+  },
+  {
+    id: "skybridge_lunch_rush",
+    districtId: "downtown_loop",
+    label: "Skybridge Lunch Rush",
+    kind: "landmark",
+    x: 88,
+    z: 24,
+    radius: 6.8,
+    color: "#93c5fd",
+    demandTags: ["office", "commuter"],
+    description: "Office traffic crosses in predictable surges, favoring polished machines and premium snacks.",
+    riskNote: "Clean paperwork matters here; illegal placements sour public reputation quickly."
+  },
+  {
+    id: "underpass_tokens",
+    districtId: "neon_quarter",
+    label: "Underpass Tokens",
+    kind: "social",
+    x: 63,
+    z: -44,
+    radius: 8,
+    color: "#c084fc",
+    demandTags: ["arcade", "night"],
+    description: "Arcade crowds and after-hours customers make weird products feel normal.",
+    riskNote: "Grey goods sell fast, but rival retaliation and heat rise faster."
+  },
+  {
+    id: "cinema_smoke_line",
+    districtId: "neon_quarter",
+    label: "Cinema Smoke Line",
+    kind: "market",
+    x: 80,
+    z: -64,
+    radius: 6.4,
+    color: "#fb7185",
+    demandTags: ["night", "student"],
+    description: "Late shows create impatient lines and impulse buys between screenings.",
+    riskNote: "Crowds are profitable cover until customer complaints turn into inspections."
+  },
+  {
+    id: "library_steps",
+    districtId: "campus_strip",
+    label: "Library Steps",
+    kind: "landmark",
+    x: -50,
+    z: -21,
+    radius: 6,
+    color: "#38bdf8",
+    demandTags: ["student", "utility"],
+    description: "Study traffic rewards caffeine, snacks, chargers, and anything packaged like a life hack.",
+    riskNote: "Campus security is complaint-sensitive and patrols are steady."
+  },
+  {
+    id: "stadium_spill",
+    districtId: "campus_strip",
+    label: "Stadium Spill",
+    kind: "market",
+    x: -97,
+    z: -73,
+    radius: 7,
+    color: "#22c55e",
+    demandTags: ["student", "commuter", "gym"],
+    description: "Event crowds spill past the gate and punish empty machines immediately.",
+    riskNote: "Demand bursts are huge, but route access gets crowded and visible."
+  },
+  {
+    id: "motel_deadend",
+    districtId: "old_town",
+    label: "Motel Dead End",
+    kind: "route_choke",
+    x: 51,
+    z: 25,
+    radius: 6.2,
+    color: "#f97316",
+    demandTags: ["night", "commuter"],
+    description: "Tourists, clerks, and street contacts pass through a narrow motel lane.",
+    riskNote: "Profitable if defended; bad escapes if a former partner sets a trap."
+  },
+  {
+    id: "courthouse_shadow",
+    districtId: "old_town",
+    label: "Courthouse Shadow",
+    kind: "landmark",
+    x: 57,
+    z: 33,
+    radius: 6.5,
+    color: "#f8fafc",
+    demandTags: ["commuter", "office"],
+    description: "Civic traffic wants safe, boring products in a place where everyone watches paperwork.",
+    riskNote: "Legal machines thrive; bribes and contraband are punished hard."
+  }
+];
 
 export const districts: Record<string, District> = {
   starter_suburb: {
