@@ -1070,6 +1070,10 @@ function generatedAudioFilePathFromUrl(urlValue) {
   return filePath.startsWith(generatedAudioDir) ? filePath : null;
 }
 
+function isGeneratedAudioFileUrl(urlValue) {
+  return Boolean(generatedAudioFilePathFromUrl(urlValue));
+}
+
 async function generatedAudioSizeFromUrl(urlValue) {
   const filePath = generatedAudioFilePathFromUrl(urlValue);
   if (!filePath) {
@@ -1090,7 +1094,15 @@ async function enrichAudioConfigFileSizes(config) {
   }
 
   const assets = await Promise.all(config.assets.map(async (asset) => {
-    if (!asset || typeof asset !== "object" || asset.sizeBytes) {
+    if (!asset || typeof asset !== "object") {
+      return asset;
+    }
+
+    if (isGeneratedAudioFileUrl(asset.url)) {
+      return { ...asset, sizeBytes: await generatedAudioSizeFromUrl(asset.url) };
+    }
+
+    if (asset.sizeBytes) {
       return asset;
     }
 
@@ -1103,7 +1115,15 @@ async function enrichAudioConfigFileSizes(config) {
 async function enrichProviderFileSizes(settings) {
   const normalized = normalizeAudioProviderSettings(settings);
   const generationPrompts = await Promise.all(normalized.generationPrompts.map(async (prompt) => {
-    if (prompt.generatedSizeBytes || !prompt.generatedUrl) {
+    if (!prompt.generatedUrl) {
+      return prompt;
+    }
+
+    if (isGeneratedAudioFileUrl(prompt.generatedUrl)) {
+      return { ...prompt, generatedSizeBytes: await generatedAudioSizeFromUrl(prompt.generatedUrl) };
+    }
+
+    if (prompt.generatedSizeBytes) {
       return prompt;
     }
 

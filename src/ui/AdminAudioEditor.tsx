@@ -1,4 +1,4 @@
-import { Copy, History, KeyRound, Mic2, Music, Play, Plus, RotateCcw, Save, Trash2, Volume2, VolumeX } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, History, KeyRound, Mic2, Play, Plus, RotateCcw, Save, Trash2, Volume2, VolumeX } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   audioTriggerOptions,
@@ -46,6 +46,22 @@ const categoryLabels: Record<AudioCategory, string> = {
   voice: "Voice"
 };
 
+type CollapsibleSectionId = "voiceDesign" | "voiceText" | "generation" | "assets" | "cues";
+
+interface GeneratedAudioInfo {
+  playable: boolean;
+  previewTitle: string;
+  sizeBytes: number | null | undefined;
+  status: "missing" | "ready" | "unavailable";
+  statusLabel: string;
+  url: string;
+}
+
+interface AssetPreviewInfo {
+  playable: boolean;
+  title: string;
+}
+
 function slug(value: string, fallback: string): string {
   const id = value
     .toLowerCase()
@@ -74,7 +90,7 @@ function categoryVolume(config: AudioConfig, category: AudioCategory, asset: Aud
 }
 
 function formatBytes(bytes: number | null | undefined): string {
-  if (!bytes) {
+  if (bytes === null || bytes === undefined) {
     return "--";
   }
 
@@ -93,12 +109,77 @@ function generatedAssetId(prompt: Pick<ElevenLabsGenerationPrompt, "id">): strin
   return `generated_${prompt.id}`;
 }
 
-function generatedAudioInfo(config: AudioConfig, prompt: ElevenLabsGenerationPrompt): { sizeBytes: number | null | undefined; url: string } {
+function isGeneratedAudioUrl(url: string): boolean {
+  return url.startsWith("/generated-audio/");
+}
+
+function isAudioSourcePlayable(url: string, sizeBytes: number | null | undefined): boolean {
+  if (!url) {
+    return false;
+  }
+
+  return !isGeneratedAudioUrl(url) || (typeof sizeBytes === "number" && sizeBytes > 0);
+}
+
+function generatedAudioInfo(config: AudioConfig, prompt: ElevenLabsGenerationPrompt): GeneratedAudioInfo {
   const asset = config.assets.find((candidate) => candidate.id === generatedAssetId(prompt));
+  const promptUrl = prompt.generatedUrl || "";
+  const promptSizeBytes = prompt.generatedSizeBytes;
+  const assetUrl = asset?.url || "";
+  const assetSizeBytes = asset?.sizeBytes;
+  const useAssetFallback = !isAudioSourcePlayable(promptUrl, promptSizeBytes) && isAudioSourcePlayable(assetUrl, assetSizeBytes);
+  const url = useAssetFallback ? assetUrl : promptUrl || assetUrl;
+  const sizeBytes = useAssetFallback ? assetSizeBytes : promptSizeBytes ?? assetSizeBytes;
+  const generatedUrl = isGeneratedAudioUrl(url);
+  const playable = isAudioSourcePlayable(url, sizeBytes);
+  const generatedAt = prompt.generatedAt ? ` · ${new Date(prompt.generatedAt).toLocaleString()}` : "";
+
+  if (!url) {
+    return {
+      playable: false,
+      previewTitle: "Generate audio before previewing this prompt.",
+      sizeBytes,
+      status: "unavailable",
+      statusLabel: "Not generated",
+      url: ""
+    };
+  }
+
+  if (!playable) {
+    return {
+      playable: false,
+      previewTitle: "The saved generated-audio file is missing. Regenerate this prompt to restore preview.",
+      sizeBytes,
+      status: "missing",
+      statusLabel: "Missing file",
+      url
+    };
+  }
+
   return {
-    sizeBytes: prompt.generatedSizeBytes ?? asset?.sizeBytes,
-    url: prompt.generatedUrl || asset?.url || ""
+    playable,
+    previewTitle: `${formatBytes(sizeBytes)}${generatedAt}`,
+    sizeBytes,
+    status: "ready",
+    statusLabel: generatedUrl ? `Ready · ${formatBytes(sizeBytes)}` : `Linked · ${formatBytes(sizeBytes)}`,
+    url
   };
+}
+
+function assetPreviewInfo(asset: AudioAsset): AssetPreviewInfo {
+  if (!asset.url) {
+    return { playable: false, title: "Add an asset URL before previewing." };
+  }
+
+  if (asset.url.startsWith("synth://")) {
+    return { playable: false, title: "Procedural synth assets play in-game and do not have a browser preview file." };
+  }
+
+  if (!isAudioSourcePlayable(asset.url, asset.sizeBytes)) {
+    return { playable: false, title: "The saved generated-audio file is missing. Regenerate the prompt to restore preview." };
+  }
+
+  return { playable: true, title: "Preview audio" };
 }
 
 function configWithGeneratedAsset(config: AudioConfig, prompts: ElevenLabsGenerationPrompt[], asset: AudioAsset): AudioConfig {
@@ -143,6 +224,19 @@ function configWithGeneratedAsset(config: AudioConfig, prompts: ElevenLabsGenera
   };
 }
 
+function CollapsibleButton({ collapsed, label, meta, onClick }: { collapsed: boolean; label: string; meta: string; onClick: () => void }) {
+  const Icon = collapsed ? ChevronRight : ChevronDown;
+  return (
+    <button aria-expanded={!collapsed} className="admin-audio-section-toggle" onClick={onClick} type="button">
+      <Icon size={15} aria-hidden="true" />
+      <span>
+        <strong>{label}</strong>
+        <small>{meta}</small>
+      </span>
+    </button>
+  );
+}
+
 export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: AdminAudioEditorProps) {
   const [config, setConfig] = useState<AudioConfig>(() => normalizeAudioConfig(initialConfig));
   const [providerSettings, setProviderSettings] = useState<AudioProviderSettings>(() => createDefaultAudioProviderSettings());
@@ -152,6 +246,13 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
   const [previewingId, setPreviewingId] = useState<string | null>(null);
+  const [collapsedSections, setCollapsedSections] = useState<Record<CollapsibleSectionId, boolean>>({
+    assets: true,
+    cues: true,
+    generation: false,
+    voiceDesign: false,
+    voiceText: true
+  });
   const previewRef = useRef<HTMLAudioElement | null>(null);
   const previewTimerRef = useRef<number | null>(null);
 
@@ -249,6 +350,26 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
     }));
   }, [setNormalizedProviderSettings]);
 
+  const toggleSection = useCallback((section: CollapsibleSectionId) => {
+    setCollapsedSections((current) => ({
+      ...current,
+      [section]: !current[section]
+    }));
+  }, []);
+
+  const persistProviderSettings = useCallback((nextSettings: AudioProviderSettings, successMessage: string) => {
+    const normalizedSettings = normalizeAudioProviderSettings(nextSettings);
+    setProviderSettings(normalizedSettings);
+    setProviderSaving(true);
+    saveAdminAudioProviderSettings(session, normalizedSettings)
+      .then((response) => {
+        setProviderSettings(normalizeAudioProviderSettings(response.settings ?? normalizedSettings));
+        setStatus(successMessage);
+      })
+      .catch((error) => setStatus(error instanceof Error ? error.message : "ElevenLabs settings save failed."))
+      .finally(() => setProviderSaving(false));
+  }, [session]);
+
   const handleAddAsset = useCallback(() => {
     setNormalizedConfig((current) => {
       const id = nextId("asset", current.assets.map((asset) => asset.id));
@@ -333,27 +454,27 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
   }, [setNormalizedProviderSettings]);
 
   const handleAddGenerationPrompt = useCallback(() => {
-    setNormalizedProviderSettings((current) => {
-      const id = nextId("prompt", current.generationPrompts.map((prompt) => prompt.id));
-      return {
-        ...current,
-        generationPrompts: [
-          ...current.generationPrompts,
-          {
-            durationSeconds: 3,
-            enabled: true,
-            id,
-            label: "New Prompt",
-            negativePrompt: "",
-            prompt: "",
-            purpose: "sound",
-            trigger: "feedback.cash",
-            voiceProfileId: ""
-          }
-        ]
-      };
+    const id = nextId("prompt", providerSettings.generationPrompts.map((prompt) => prompt.id));
+    const nextSettings = normalizeAudioProviderSettings({
+      ...providerSettings,
+      generationPrompts: [
+        ...providerSettings.generationPrompts,
+        {
+          durationSeconds: 3,
+          enabled: true,
+          id,
+          label: "New Prompt",
+          negativePrompt: "",
+          prompt: "",
+          purpose: "sound",
+          trigger: "feedback.cash",
+          voiceProfileId: ""
+        }
+      ]
     });
-  }, [setNormalizedProviderSettings]);
+    setCollapsedSections((current) => ({ ...current, generation: false }));
+    persistProviderSettings(nextSettings, "Added and saved a new generation prompt.");
+  }, [persistProviderSettings, providerSettings]);
 
   const handleResetGenerationPrompts = useCallback(() => {
     setNormalizedProviderSettings((current) => ({
@@ -409,15 +530,17 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
   }, [setNormalizedProviderSettings]);
 
   const handleDeleteGenerationPrompt = useCallback((promptId: string) => {
-    setNormalizedProviderSettings((current) => ({
-      ...current,
-      generationPrompts: current.generationPrompts.filter((prompt) => prompt.id !== promptId)
-    }));
-  }, [setNormalizedProviderSettings]);
+    const nextSettings = normalizeAudioProviderSettings({
+      ...providerSettings,
+      generationPrompts: providerSettings.generationPrompts.filter((prompt) => prompt.id !== promptId)
+    });
+    persistProviderSettings(nextSettings, "Deleted and saved the generation prompt.");
+  }, [persistProviderSettings, providerSettings]);
 
   const handlePreview = useCallback((asset: AudioAsset) => {
-    if (!asset.url) {
-      setStatus("Add an asset URL before previewing.");
+    const availability = assetPreviewInfo(asset);
+    if (!availability.playable) {
+      setStatus(availability.title);
       return;
     }
 
@@ -668,8 +791,13 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
             </button>
           </div>
 
-          <div className="admin-audio-subheading">
-            <h3>Voice Design Prompts</h3>
+          <div className="admin-audio-subheading collapsible">
+            <CollapsibleButton
+              collapsed={collapsedSections.voiceDesign}
+              label="Voice Design Prompts"
+              meta={`${providerSettings.voiceProfiles.length} voice profiles`}
+              onClick={() => toggleSection("voiceDesign")}
+            />
             <div className="admin-audio-heading-actions">
               <button onClick={handleResetVoiceProfiles} type="button">
                 <RotateCcw size={14} aria-hidden="true" />
@@ -678,37 +806,44 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
             </div>
           </div>
 
-          <div className="admin-audio-table provider">
-            {providerSettings.voiceProfiles.length === 0 ? (
-              <p>No ElevenLabs voice profiles configured.</p>
-            ) : (
-              providerSettings.voiceProfiles.map((profile, index) => (
-                <div className="admin-audio-row provider" key={`${profile.id}-${index}`}>
-                  <input aria-label="Voice profile id" value={profile.id} onChange={(event) => updateVoiceProfile(index, { id: slug(event.target.value, profile.id || `voice_${index + 1}`) })} />
-                  <input aria-label="Voice profile label" value={profile.label} onChange={(event) => updateVoiceProfile(index, { label: event.target.value })} />
-                  <textarea aria-label="ElevenLabs voice design prompt" value={profile.designPrompt} onChange={(event) => updateVoiceProfile(index, { designPrompt: event.target.value })} />
-                  <input aria-label="ElevenLabs voice id" className="wide" placeholder="Voice ID" value={profile.voiceId} onChange={(event) => updateVoiceProfile(index, { voiceId: event.target.value })} />
-                  <input aria-label="ElevenLabs model id" className="wide" value={profile.modelId} onChange={(event) => updateVoiceProfile(index, { modelId: event.target.value })} />
-                  <input aria-label="Stability" max="1" min="0" step="0.05" type="number" value={profile.stability} onChange={(event) => updateVoiceProfile(index, { stability: Number(event.target.value) })} />
-                  <input aria-label="Similarity boost" max="1" min="0" step="0.05" type="number" value={profile.similarityBoost} onChange={(event) => updateVoiceProfile(index, { similarityBoost: Number(event.target.value) })} />
-                  <input aria-label="Style" max="1" min="0" step="0.05" type="number" value={profile.style} onChange={(event) => updateVoiceProfile(index, { style: Number(event.target.value) })} />
-                  <label className="admin-audio-compact-check">
-                    <input checked={profile.useSpeakerBoost} type="checkbox" onChange={(event) => updateVoiceProfile(index, { useSpeakerBoost: event.target.checked })} />
-                    Boost
-                  </label>
-                  <button onClick={() => handleCopyPrompt(profile.designPrompt)} type="button">
-                    <Copy size={14} aria-hidden="true" />
-                  </button>
-                  <button className="danger" onClick={() => handleDeleteVoiceProfile(profile.id)} type="button">
-                    <Trash2 size={14} aria-hidden="true" />
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
+          {!collapsedSections.voiceDesign && (
+            <div className="admin-audio-table provider">
+              {providerSettings.voiceProfiles.length === 0 ? (
+                <p>No ElevenLabs voice profiles configured.</p>
+              ) : (
+                providerSettings.voiceProfiles.map((profile, index) => (
+                  <div className="admin-audio-row provider" key={`${profile.id}-${index}`}>
+                    <input aria-label="Voice profile id" value={profile.id} onChange={(event) => updateVoiceProfile(index, { id: slug(event.target.value, profile.id || `voice_${index + 1}`) })} />
+                    <input aria-label="Voice profile label" value={profile.label} onChange={(event) => updateVoiceProfile(index, { label: event.target.value })} />
+                    <textarea aria-label="ElevenLabs voice design prompt" value={profile.designPrompt} onChange={(event) => updateVoiceProfile(index, { designPrompt: event.target.value })} />
+                    <input aria-label="ElevenLabs voice id" className="wide" placeholder="Voice ID" value={profile.voiceId} onChange={(event) => updateVoiceProfile(index, { voiceId: event.target.value })} />
+                    <input aria-label="ElevenLabs model id" className="wide" value={profile.modelId} onChange={(event) => updateVoiceProfile(index, { modelId: event.target.value })} />
+                    <input aria-label="Stability" max="1" min="0" step="0.05" type="number" value={profile.stability} onChange={(event) => updateVoiceProfile(index, { stability: Number(event.target.value) })} />
+                    <input aria-label="Similarity boost" max="1" min="0" step="0.05" type="number" value={profile.similarityBoost} onChange={(event) => updateVoiceProfile(index, { similarityBoost: Number(event.target.value) })} />
+                    <input aria-label="Style" max="1" min="0" step="0.05" type="number" value={profile.style} onChange={(event) => updateVoiceProfile(index, { style: Number(event.target.value) })} />
+                    <label className="admin-audio-compact-check">
+                      <input checked={profile.useSpeakerBoost} type="checkbox" onChange={(event) => updateVoiceProfile(index, { useSpeakerBoost: event.target.checked })} />
+                      Boost
+                    </label>
+                    <button aria-label={`Copy ${profile.label || profile.id} voice design prompt`} onClick={() => handleCopyPrompt(profile.designPrompt)} title="Copy prompt" type="button">
+                      <Copy size={14} aria-hidden="true" />
+                    </button>
+                    <button aria-label={`Delete ${profile.label || profile.id} voice profile`} className="danger" onClick={() => handleDeleteVoiceProfile(profile.id)} title="Delete voice profile" type="button">
+                      <Trash2 size={14} aria-hidden="true" />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
 
-          <div className="admin-audio-subheading">
-            <h3>Voice Text Prompts</h3>
+          <div className="admin-audio-subheading collapsible">
+            <CollapsibleButton
+              collapsed={collapsedSections.voiceText}
+              label="Voice Text Prompts"
+              meta={`${voicePromptRows.length} voice lines`}
+              onClick={() => toggleSection("voiceText")}
+            />
             <div className="admin-audio-heading-actions">
               <button disabled={providerSaving} onClick={handleAssignRecommendedVoiceProfiles} type="button">
                 <Mic2 size={14} aria-hidden="true" />
@@ -721,226 +856,246 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
             </div>
           </div>
 
-          <div className="admin-audio-table voice-prompts">
-            {voicePromptRows.length === 0 ? (
-              <p>No voice text prompts configured.</p>
-            ) : (
-              voicePromptRows.map(({ index, prompt }) => {
-                const generated = generatedAudioInfo(config, prompt);
-                return (
-                  <div className="admin-audio-row voice-text" key={`voice-text-${prompt.id}-${index}`}>
-                    <label className="admin-audio-compact-check">
-                      <input checked={prompt.enabled} type="checkbox" onChange={(event) => updateGenerationPrompt(index, { enabled: event.target.checked })} />
-                      On
-                    </label>
-                    <input aria-label="Voice prompt label" value={prompt.label} onChange={(event) => updateGenerationPrompt(index, { label: event.target.value })} />
-                    <select aria-label="Voice prompt trigger" value={prompt.trigger} onChange={(event) => updateGenerationPrompt(index, { trigger: event.target.value })}>
-                      {audioTriggerOptions.filter((option) => option.category === "voice").map((option) => (
-                        <option key={option.trigger} value={option.trigger}>{option.label}</option>
-                      ))}
-                    </select>
-                    <select aria-label="Voice prompt profile" value={prompt.voiceProfileId} onChange={(event) => updateGenerationPrompt(index, { voiceProfileId: event.target.value })}>
-                      <option value="">No voice profile</option>
-                      {providerSettings.voiceProfiles.map((profile) => (
-                        <option key={profile.id} value={profile.id}>{profile.label || profile.id}</option>
-                      ))}
-                    </select>
-                    <textarea aria-label="Voice text prompt" value={prompt.prompt} onChange={(event) => updateGenerationPrompt(index, { prompt: event.target.value })} />
-                    <textarea aria-label="Voice direction negative prompt" value={prompt.negativePrompt} onChange={(event) => updateGenerationPrompt(index, { negativePrompt: event.target.value })} />
-                    <input aria-label="Voice duration" max="30" min="0.5" step="0.5" type="number" value={prompt.durationSeconds} onChange={(event) => updateGenerationPrompt(index, { durationSeconds: Number(event.target.value) })} />
-                    <span className="admin-audio-file-size">{formatBytes(generated.sizeBytes)}</span>
-                    <button disabled={!generated.url} onClick={() => handlePreview({ category: "voice", id: prompt.id, label: prompt.label, loop: false, url: generated.url, volume: 1 })} type="button">
-                      <Play size={14} aria-hidden="true" />
-                    </button>
-                    <button disabled={Boolean(generatingPromptId)} onClick={() => handleGeneratePrompt(index)} type="button">
-                      {generatingPromptId === prompt.id ? "Generating" : "Generate"}
-                    </button>
-                    <button onClick={() => handleCopyPrompt(prompt.prompt)} type="button">
-                      <Copy size={14} aria-hidden="true" />
-                    </button>
-                  </div>
-                );
-              })
-            )}
-          </div>
+          {!collapsedSections.voiceText && (
+            <div className="admin-audio-table voice-prompts">
+              {voicePromptRows.length === 0 ? (
+                <p>No voice text prompts configured.</p>
+              ) : (
+                voicePromptRows.map(({ index, prompt }) => {
+                  const generated = generatedAudioInfo(config, prompt);
+                  return (
+                    <div className="admin-audio-row voice-text" key={`voice-text-${prompt.id}-${index}`}>
+                      <label className="admin-audio-compact-check">
+                        <input checked={prompt.enabled} type="checkbox" onChange={(event) => updateGenerationPrompt(index, { enabled: event.target.checked })} />
+                        On
+                      </label>
+                      <input aria-label="Voice prompt label" value={prompt.label} onChange={(event) => updateGenerationPrompt(index, { label: event.target.value })} />
+                      <select aria-label="Voice prompt trigger" value={prompt.trigger} onChange={(event) => updateGenerationPrompt(index, { trigger: event.target.value })}>
+                        {audioTriggerOptions.filter((option) => option.category === "voice").map((option) => (
+                          <option key={option.trigger} value={option.trigger}>{option.label}</option>
+                        ))}
+                      </select>
+                      <select aria-label="Voice prompt profile" value={prompt.voiceProfileId} onChange={(event) => updateGenerationPrompt(index, { voiceProfileId: event.target.value })}>
+                        <option value="">No voice profile</option>
+                        {providerSettings.voiceProfiles.map((profile) => (
+                          <option key={profile.id} value={profile.id}>{profile.label || profile.id}</option>
+                        ))}
+                      </select>
+                      <textarea aria-label="Voice text prompt" value={prompt.prompt} onChange={(event) => updateGenerationPrompt(index, { prompt: event.target.value })} />
+                      <textarea aria-label="Voice direction negative prompt" value={prompt.negativePrompt} onChange={(event) => updateGenerationPrompt(index, { negativePrompt: event.target.value })} />
+                      <input aria-label="Voice duration" max="30" min="0.5" step="0.5" type="number" value={prompt.durationSeconds} onChange={(event) => updateGenerationPrompt(index, { durationSeconds: Number(event.target.value) })} />
+                      <span className={`admin-audio-generated-status ${generated.status}`} title={generated.previewTitle}>{generated.statusLabel}</span>
+                      <button aria-label={`Preview ${prompt.label}`} disabled={!generated.playable} onClick={() => handlePreview({ category: "voice", id: prompt.id, label: prompt.label, loop: false, sizeBytes: generated.sizeBytes, url: generated.url, volume: 1 })} title={generated.previewTitle} type="button">
+                        <Play size={14} aria-hidden="true" />
+                      </button>
+                      <button disabled={Boolean(generatingPromptId)} onClick={() => handleGeneratePrompt(index)} type="button">
+                        {generatingPromptId === prompt.id ? "Generating" : "Generate"}
+                      </button>
+                      <button aria-label={`Copy ${prompt.label} voice text`} onClick={() => handleCopyPrompt(prompt.prompt)} title="Copy prompt" type="button">
+                        <Copy size={14} aria-hidden="true" />
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
 
-          <div className="admin-audio-subheading">
-            <h3>Generation Prompts</h3>
+          <div className="admin-audio-subheading collapsible">
+            <CollapsibleButton
+              collapsed={collapsedSections.generation}
+              label="Generation Prompts"
+              meta={`${providerSettings.generationPrompts.length} total prompts`}
+              onClick={() => toggleSection("generation")}
+            />
             <div className="admin-audio-heading-actions">
               <button onClick={handleResetGenerationPrompts} type="button">
                 <RotateCcw size={14} aria-hidden="true" />
                 Defaults
               </button>
-              <button onClick={handleAddGenerationPrompt} type="button">
+              <button disabled={providerSaving} onClick={handleAddGenerationPrompt} type="button">
                 <Plus size={14} aria-hidden="true" />
                 Add Prompt
               </button>
             </div>
           </div>
 
-          <div className="admin-audio-table prompts">
-            {providerSettings.generationPrompts.length === 0 ? (
-              <p>No ElevenLabs prompts configured.</p>
-            ) : (
-              providerSettings.generationPrompts.map((prompt, index) => {
-                const generated = generatedAudioInfo(config, prompt);
-                return (
-                  <div className="admin-audio-row prompt" key={`${prompt.id}-${index}`}>
-                    <label className="admin-audio-compact-check">
-                      <input checked={prompt.enabled} type="checkbox" onChange={(event) => updateGenerationPrompt(index, { enabled: event.target.checked })} />
-                      On
-                    </label>
-                    <select value={prompt.purpose} onChange={(event) => updateGenerationPrompt(index, { purpose: event.target.value as AudioCategory })}>
-                      {Object.entries(categoryLabels).map(([category, label]) => (
-                        <option key={category} value={category}>{label}</option>
-                      ))}
-                    </select>
-                    <input aria-label="Prompt id" value={prompt.id} onChange={(event) => updateGenerationPrompt(index, { id: slug(event.target.value, prompt.id || `prompt_${index + 1}`) })} />
-                    <input aria-label="Prompt label" value={prompt.label} onChange={(event) => updateGenerationPrompt(index, { label: event.target.value })} />
-                    <select aria-label="Prompt trigger" value={prompt.trigger} onChange={(event) => updateGenerationPrompt(index, { trigger: event.target.value })}>
-                      {audioTriggerOptions.map((option) => (
-                        <option key={option.trigger} value={option.trigger}>{option.label}</option>
-                      ))}
-                    </select>
-                    <textarea aria-label="ElevenLabs prompt" value={prompt.prompt} onChange={(event) => updateGenerationPrompt(index, { prompt: event.target.value })} />
-                    <textarea aria-label="ElevenLabs negative prompt" value={prompt.negativePrompt} onChange={(event) => updateGenerationPrompt(index, { negativePrompt: event.target.value })} />
-                    <select aria-label="Prompt voice profile" value={prompt.voiceProfileId} onChange={(event) => updateGenerationPrompt(index, { voiceProfileId: event.target.value })}>
-                      <option value="">No voice profile</option>
-                      {providerSettings.voiceProfiles.map((profile) => (
-                        <option key={profile.id} value={profile.id}>{profile.label || profile.id}</option>
-                      ))}
-                    </select>
-                    <input aria-label="Prompt duration" max="180" min="0.5" step="0.5" type="number" value={prompt.durationSeconds} onChange={(event) => updateGenerationPrompt(index, { durationSeconds: Number(event.target.value) })} />
-                    <span className="admin-audio-file-size">{formatBytes(generated.sizeBytes)}</span>
-                    <button disabled={!generated.url} onClick={() => handlePreview({ category: prompt.purpose, id: prompt.id, label: prompt.label, loop: prompt.purpose === "music", url: generated.url, volume: 1 })} type="button">
-                      <Play size={14} aria-hidden="true" />
-                    </button>
-                    <button disabled={Boolean(generatingPromptId)} onClick={() => handleGeneratePrompt(index)} type="button">
-                      {generatingPromptId === prompt.id ? "Generating" : "Generate"}
-                    </button>
-                    <button className="danger" onClick={() => handleDeleteGenerationPrompt(prompt.id)} type="button">
-                      <Trash2 size={14} aria-hidden="true" />
-                    </button>
-                  </div>
-                );
-              })
-            )}
-          </div>
+          {!collapsedSections.generation && (
+            <div className="admin-audio-table prompts">
+              {providerSettings.generationPrompts.length === 0 ? (
+                <p>No ElevenLabs prompts configured.</p>
+              ) : (
+                providerSettings.generationPrompts.map((prompt, index) => {
+                  const generated = generatedAudioInfo(config, prompt);
+                  return (
+                    <div className="admin-audio-row prompt" key={`${prompt.id}-${index}`}>
+                      <label className="admin-audio-compact-check">
+                        <input checked={prompt.enabled} type="checkbox" onChange={(event) => updateGenerationPrompt(index, { enabled: event.target.checked })} />
+                        On
+                      </label>
+                      <select value={prompt.purpose} onChange={(event) => updateGenerationPrompt(index, { purpose: event.target.value as AudioCategory })}>
+                        {Object.entries(categoryLabels).map(([category, label]) => (
+                          <option key={category} value={category}>{label}</option>
+                        ))}
+                      </select>
+                      <input aria-label="Prompt id" value={prompt.id} onChange={(event) => updateGenerationPrompt(index, { id: slug(event.target.value, prompt.id || `prompt_${index + 1}`) })} />
+                      <input aria-label="Prompt label" value={prompt.label} onChange={(event) => updateGenerationPrompt(index, { label: event.target.value })} />
+                      <select aria-label="Prompt trigger" value={prompt.trigger} onChange={(event) => updateGenerationPrompt(index, { trigger: event.target.value })}>
+                        {audioTriggerOptions.map((option) => (
+                          <option key={option.trigger} value={option.trigger}>{option.label}</option>
+                        ))}
+                      </select>
+                      <textarea aria-label="ElevenLabs prompt" rows={2} value={prompt.prompt} onChange={(event) => updateGenerationPrompt(index, { prompt: event.target.value })} />
+                      <textarea aria-label="ElevenLabs negative prompt" rows={2} value={prompt.negativePrompt} onChange={(event) => updateGenerationPrompt(index, { negativePrompt: event.target.value })} />
+                      <select aria-label="Prompt voice profile" value={prompt.voiceProfileId} onChange={(event) => updateGenerationPrompt(index, { voiceProfileId: event.target.value })}>
+                        <option value="">No voice profile</option>
+                        {providerSettings.voiceProfiles.map((profile) => (
+                          <option key={profile.id} value={profile.id}>{profile.label || profile.id}</option>
+                        ))}
+                      </select>
+                      <input aria-label="Prompt duration" max="180" min="0.5" step="0.5" type="number" value={prompt.durationSeconds} onChange={(event) => updateGenerationPrompt(index, { durationSeconds: Number(event.target.value) })} />
+                      <span className={`admin-audio-generated-status ${generated.status}`} title={generated.previewTitle}>{generated.statusLabel}</span>
+                      <button aria-label={`Preview ${prompt.label}`} disabled={!generated.playable} onClick={() => handlePreview({ category: prompt.purpose, id: prompt.id, label: prompt.label, loop: prompt.purpose === "music", sizeBytes: generated.sizeBytes, url: generated.url, volume: 1 })} title={generated.previewTitle} type="button">
+                        <Play size={14} aria-hidden="true" />
+                      </button>
+                      <button disabled={Boolean(generatingPromptId)} onClick={() => handleGeneratePrompt(index)} type="button">
+                        {generatingPromptId === prompt.id ? "Generating" : "Generate"}
+                      </button>
+                      <button aria-label={`Delete ${prompt.label}`} className="danger" disabled={providerSaving} onClick={() => handleDeleteGenerationPrompt(prompt.id)} title="Delete prompt" type="button">
+                        <Trash2 size={14} aria-hidden="true" />
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
         </section>
 
         <section className="admin-audio-panel">
-          <div className="admin-audio-panel-heading">
-            <h2>
-              <Music size={17} aria-hidden="true" />
-              Assets
-            </h2>
+          <div className="admin-audio-panel-heading collapsible">
+            <CollapsibleButton
+              collapsed={collapsedSections.assets}
+              label="Assets"
+              meta={`${config.assets.length} files and fallbacks`}
+              onClick={() => toggleSection("assets")}
+            />
             <button onClick={handleAddAsset} type="button">
               <Plus size={15} aria-hidden="true" />
               Add Asset
             </button>
           </div>
-          <div className="admin-audio-table assets">
-            {config.assets.length === 0 ? (
-              <p>No audio assets configured.</p>
-            ) : (
-              config.assets.map((asset, index) => (
-                <div className="admin-audio-row" key={`${asset.id}-${index}`}>
-                  <select value={asset.category} onChange={(event) => updateAsset(index, { category: event.target.value as AudioCategory, loop: event.target.value === "music" ? true : asset.loop })}>
-                    {Object.entries(categoryLabels).map(([category, label]) => (
-                      <option key={category} value={category}>{label}</option>
-                    ))}
-                  </select>
-                  <input aria-label="Asset id" value={asset.id} onChange={(event) => updateAsset(index, { id: slug(event.target.value, asset.id || `asset_${index + 1}`) })} />
-                  <input aria-label="Asset label" value={asset.label} onChange={(event) => updateAsset(index, { label: event.target.value })} />
-                  <input aria-label="Asset URL" className="wide" placeholder="/audio/example.mp3" value={asset.url} onChange={(event) => updateAsset(index, { url: event.target.value })} />
-                  <input aria-label="Asset volume" max="1" min="0" step="0.05" type="number" value={asset.volume} onChange={(event) => updateAsset(index, { volume: Number(event.target.value) })} />
-                  <label className="admin-audio-compact-check">
-                    <input checked={asset.loop} type="checkbox" onChange={(event) => updateAsset(index, { loop: event.target.checked })} />
-                    Loop
-                  </label>
-                  <span className="admin-audio-file-size">{formatBytes(asset.sizeBytes)}</span>
-                  <button disabled={!asset.url} onClick={() => handlePreview(asset)} type="button">
-                    <Play size={14} aria-hidden="true" />
-                    {previewingId === asset.id ? "Playing" : "Preview"}
-                  </button>
-                  <button className="danger" onClick={() => handleDeleteAsset(asset.id)} type="button">
-                    <Trash2 size={14} aria-hidden="true" />
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
+          {!collapsedSections.assets && (
+            <div className="admin-audio-table assets">
+              {config.assets.length === 0 ? (
+                <p>No audio assets configured.</p>
+              ) : (
+                config.assets.map((asset, index) => {
+                  const previewInfo = assetPreviewInfo(asset);
+                  return (
+                    <div className="admin-audio-row" key={`${asset.id}-${index}`}>
+                      <select value={asset.category} onChange={(event) => updateAsset(index, { category: event.target.value as AudioCategory, loop: event.target.value === "music" ? true : asset.loop })}>
+                        {Object.entries(categoryLabels).map(([category, label]) => (
+                          <option key={category} value={category}>{label}</option>
+                        ))}
+                      </select>
+                      <input aria-label="Asset id" value={asset.id} onChange={(event) => updateAsset(index, { id: slug(event.target.value, asset.id || `asset_${index + 1}`) })} />
+                      <input aria-label="Asset label" value={asset.label} onChange={(event) => updateAsset(index, { label: event.target.value })} />
+                      <input aria-label="Asset URL" className="wide" placeholder="/audio/example.mp3" value={asset.url} onChange={(event) => updateAsset(index, { url: event.target.value })} />
+                      <input aria-label="Asset volume" max="1" min="0" step="0.05" type="number" value={asset.volume} onChange={(event) => updateAsset(index, { volume: Number(event.target.value) })} />
+                      <label className="admin-audio-compact-check">
+                        <input checked={asset.loop} type="checkbox" onChange={(event) => updateAsset(index, { loop: event.target.checked })} />
+                        Loop
+                      </label>
+                      <span className="admin-audio-file-size">{formatBytes(asset.sizeBytes)}</span>
+                      <button aria-label={`Preview ${asset.label || asset.id}`} disabled={!previewInfo.playable} onClick={() => handlePreview(asset)} title={previewInfo.title} type="button">
+                        <Play size={14} aria-hidden="true" />
+                        {previewingId === asset.id ? "Playing" : "Preview"}
+                      </button>
+                      <button aria-label={`Delete ${asset.label || asset.id}`} className="danger" onClick={() => handleDeleteAsset(asset.id)} title="Delete asset" type="button">
+                        <Trash2 size={14} aria-hidden="true" />
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
         </section>
 
         <section className="admin-audio-panel">
-          <div className="admin-audio-panel-heading">
-            <h2>
-              <Mic2 size={17} aria-hidden="true" />
-              Cues
-            </h2>
+          <div className="admin-audio-panel-heading collapsible">
+            <CollapsibleButton
+              collapsed={collapsedSections.cues}
+              label="Cues"
+              meta={`${config.cues.length} trigger mappings`}
+              onClick={() => toggleSection("cues")}
+            />
             <button onClick={handleAddCue} type="button">
               <Plus size={15} aria-hidden="true" />
               Add Cue
             </button>
           </div>
-          <div className="admin-audio-table cues">
-            {config.cues.length === 0 ? (
-              <p>No cue mappings configured.</p>
-            ) : (
-              config.cues.map((cue, index) => {
-                const triggerMeta = audioTriggerOptions.find((option) => option.trigger === cue.trigger);
-                const assets = config.assets.filter((asset) => asset.category === cue.category);
-                return (
-                  <div className="admin-audio-row cue" key={`${cue.id}-${index}`}>
-                    <label className="admin-audio-compact-check">
-                      <input checked={cue.enabled} type="checkbox" onChange={(event) => updateCue(index, { enabled: event.target.checked })} />
-                      On
-                    </label>
-                    <input aria-label="Cue id" value={cue.id} onChange={(event) => updateCue(index, { id: slug(event.target.value, cue.id || `cue_${index + 1}`) })} />
-                    <input aria-label="Cue label" value={cue.label} onChange={(event) => updateCue(index, { label: event.target.value })} />
-                    <select
-                      className="wide"
-                      value={cue.trigger}
-                      onChange={(event) => {
-                        const nextTrigger = audioTriggerOptions.find((option) => option.trigger === event.target.value) ?? audioTriggerOptions[0];
-                        updateCue(index, {
-                          category: nextTrigger.category,
-                          duckMusic: nextTrigger.category === "voice" ? cue.duckMusic : false,
-                          label: cue.label || nextTrigger.label,
-                          trigger: nextTrigger.trigger
-                        });
-                      }}
-                    >
-                      {audioTriggerOptions.map((option) => (
-                        <option key={option.trigger} value={option.trigger}>{option.label}</option>
-                      ))}
-                    </select>
-                    <select value={cue.assetId} onChange={(event) => updateCue(index, { assetId: event.target.value })}>
-                      <option value="">Fallback</option>
-                      {assets.map((asset) => (
-                        <option key={asset.id} value={asset.id}>{asset.label || asset.id}</option>
-                      ))}
-                    </select>
-                    <input aria-label="Cue priority" type="number" value={cue.priority} onChange={(event) => updateCue(index, { priority: Number(event.target.value) })} />
-                    <input aria-label="Cue cooldown" min="0" step="250" type="number" value={cue.cooldownMs} onChange={(event) => updateCue(index, { cooldownMs: Number(event.target.value) })} />
-                    {cue.category === "voice" || triggerMeta?.category === "voice" ? (
-                      <>
-                        <input aria-label="Speaker" placeholder="Speaker" value={cue.speaker} onChange={(event) => updateCue(index, { speaker: event.target.value })} />
-                        <input aria-label="Subtitle" className="wide" placeholder="Subtitle" value={cue.subtitle} onChange={(event) => updateCue(index, { subtitle: event.target.value })} />
-                        <label className="admin-audio-compact-check">
-                          <input checked={cue.duckMusic} type="checkbox" onChange={(event) => updateCue(index, { duckMusic: event.target.checked })} />
-                          Duck
-                        </label>
-                      </>
-                    ) : null}
-                    <button className="danger" onClick={() => handleDeleteCue(cue.id)} type="button">
-                      <Trash2 size={14} aria-hidden="true" />
-                    </button>
-                  </div>
-                );
-              })
-            )}
-          </div>
+          {!collapsedSections.cues && (
+            <div className="admin-audio-table cues">
+              {config.cues.length === 0 ? (
+                <p>No cue mappings configured.</p>
+              ) : (
+                config.cues.map((cue, index) => {
+                  const triggerMeta = audioTriggerOptions.find((option) => option.trigger === cue.trigger);
+                  const assets = config.assets.filter((asset) => asset.category === cue.category);
+                  return (
+                    <div className="admin-audio-row cue" key={`${cue.id}-${index}`}>
+                      <label className="admin-audio-compact-check">
+                        <input checked={cue.enabled} type="checkbox" onChange={(event) => updateCue(index, { enabled: event.target.checked })} />
+                        On
+                      </label>
+                      <input aria-label="Cue id" value={cue.id} onChange={(event) => updateCue(index, { id: slug(event.target.value, cue.id || `cue_${index + 1}`) })} />
+                      <input aria-label="Cue label" value={cue.label} onChange={(event) => updateCue(index, { label: event.target.value })} />
+                      <select
+                        className="wide"
+                        value={cue.trigger}
+                        onChange={(event) => {
+                          const nextTrigger = audioTriggerOptions.find((option) => option.trigger === event.target.value) ?? audioTriggerOptions[0];
+                          updateCue(index, {
+                            category: nextTrigger.category,
+                            duckMusic: nextTrigger.category === "voice" ? cue.duckMusic : false,
+                            label: cue.label || nextTrigger.label,
+                            trigger: nextTrigger.trigger
+                          });
+                        }}
+                      >
+                        {audioTriggerOptions.map((option) => (
+                          <option key={option.trigger} value={option.trigger}>{option.label}</option>
+                        ))}
+                      </select>
+                      <select value={cue.assetId} onChange={(event) => updateCue(index, { assetId: event.target.value })}>
+                        <option value="">Fallback</option>
+                        {assets.map((asset) => (
+                          <option key={asset.id} value={asset.id}>{asset.label || asset.id}</option>
+                        ))}
+                      </select>
+                      <input aria-label="Cue priority" type="number" value={cue.priority} onChange={(event) => updateCue(index, { priority: Number(event.target.value) })} />
+                      <input aria-label="Cue cooldown" min="0" step="250" type="number" value={cue.cooldownMs} onChange={(event) => updateCue(index, { cooldownMs: Number(event.target.value) })} />
+                      {cue.category === "voice" || triggerMeta?.category === "voice" ? (
+                        <>
+                          <input aria-label="Speaker" placeholder="Speaker" value={cue.speaker} onChange={(event) => updateCue(index, { speaker: event.target.value })} />
+                          <input aria-label="Subtitle" className="wide" placeholder="Subtitle" value={cue.subtitle} onChange={(event) => updateCue(index, { subtitle: event.target.value })} />
+                          <label className="admin-audio-compact-check">
+                            <input checked={cue.duckMusic} type="checkbox" onChange={(event) => updateCue(index, { duckMusic: event.target.checked })} />
+                            Duck
+                          </label>
+                        </>
+                      ) : null}
+                      <button aria-label={`Delete ${cue.label || cue.id} cue`} className="danger" onClick={() => handleDeleteCue(cue.id)} title="Delete cue" type="button">
+                        <Trash2 size={14} aria-hidden="true" />
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
         </section>
       </div>
 
