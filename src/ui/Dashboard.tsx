@@ -190,6 +190,31 @@ function rivalLikelyMove(state: GameState, rivalId: string): string {
   return "probe pressure around your route";
 }
 
+function initialsForName(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
+}
+
+function relationshipBrief(relationship: string): string {
+  if (relationship === "hostile") {
+    return "Will act openly if a route looks weak.";
+  }
+
+  if (relationship === "truce") {
+    return "Quiet for now, but still watching territory.";
+  }
+
+  if (relationship === "allied") {
+    return "Can be turned into leverage against other factions.";
+  }
+
+  return "Testing the route through pressure and offers.";
+}
+
 export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQualityChange, showDebug }: DashboardProps) {
   const [tab, setTab] = useState<DashboardTab>("machines");
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -395,6 +420,42 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
             </span>
           </article>
 
+          {vehicle && (
+            <article className="vehicle-card hero">
+              <div className="vehicle-heading">
+                <Truck size={18} aria-hidden="true" />
+                <div>
+                  <h3>{vehicle.name}</h3>
+                  <p>
+                    Parked at {state.locations[vehicle.locationId]?.name ?? "unknown stop"} · {vehicleInventoryUnits(state, vehicle)}/{vehicle.capacity} cargo · {Math.round((vehicle.condition ?? 1) * 100)}% condition
+                  </p>
+                </div>
+              </div>
+              <div className="vehicle-meter">
+                <span style={{ width: `${Math.min(100, (vehicleInventoryUnits(state, vehicle) / vehicle.capacity) * 100)}%` }} />
+              </div>
+              <div className="fleet-readiness-grid">
+                <span>
+                  <strong>{vehicleSpaceRemaining(state, vehicle)}</strong>
+                  open cargo
+                </span>
+                <span>
+                  <strong>{Math.round(vehicle.security * 100)}</strong>
+                  security
+                </span>
+                <span>
+                  <strong>{Math.round(vehicle.escapeRating * 100)}</strong>
+                  escape
+                </span>
+                <span>
+                  <strong>{Math.round(state.economy.traffic.vehicleMaintenanceDue[vehicle.id] ?? 0)}</strong>
+                  maintenance
+                </span>
+              </div>
+            </article>
+          )}
+
+          <div className="panel-section-title">Machine procurement</div>
           {procurementQuotes.map((quote) => (
             <article className={`route-task ${quote.unlocked ? "good" : "warning"}`} key={quote.model.id}>
               <div>
@@ -1024,6 +1085,27 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
                   </p>
                 </div>
               </div>
+              <div className="route-strip" aria-label="Route stop order">
+                {routePlan.stops.map((stop) => (
+                  <span className={stop.task.tone} key={`strip_${stop.task.id}`}>
+                    {stop.order}
+                  </span>
+                ))}
+              </div>
+              <div className="route-load-card">
+                <strong>Load before departure</strong>
+                {routePlan.loadRecommendations.length > 0 ? (
+                  <div className="route-load-list">
+                    {routePlan.loadRecommendations.map((recommendation) => (
+                      <span key={recommendation.productId}>
+                        {recommendation.quantity}x {state.products[recommendation.productId]?.name ?? recommendation.productId} · {recommendation.source}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p>No extra cargo needed for this loop.</p>
+                )}
+              </div>
               <div className="storage-list">
                 {routePlan.stops.map((stop) => {
                   const location = state.locations[stop.locationId];
@@ -1042,15 +1124,6 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
                   );
                 })}
               </div>
-              {routePlan.loadRecommendations.length > 0 && (
-                <div className="route-load-list">
-                  {routePlan.loadRecommendations.map((recommendation) => (
-                    <span key={recommendation.productId}>
-                      {recommendation.quantity}x {state.products[recommendation.productId]?.name ?? recommendation.productId} · {recommendation.source}
-                    </span>
-                  ))}
-                </div>
-              )}
             </article>
           )}
 
@@ -1479,7 +1552,7 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
             return (
               <article className="rival-panel" key={organization.factionId}>
                 <div className="rival-header">
-                  <Users size={20} aria-hidden="true" />
+                  <span className={`rival-portrait ${organization.relationship}`}>{initialsForName(organization.bossName)}</span>
                   <div>
                     <h3>{organization.bossName}</h3>
                     <p>
@@ -1488,6 +1561,7 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
                   </div>
                 </div>
                 <p>{organization.agenda}</p>
+                <p className="rival-brief">{relationshipBrief(organization.relationship)}</p>
                 <p className="rival-intel">Likely next move: {rivalLikelyMove(state, organization.factionId)}</p>
                 <div className="storage-list">
                   {activeOperations.length === 0 ? (
@@ -1535,7 +1609,7 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
           {rivals.map((rival) => (
             <article className="rival-panel" key={rival.id}>
               <div className="rival-header">
-                <AlertTriangle size={20} aria-hidden="true" />
+                <span className="rival-portrait faction">{initialsForName(rival.name)}</span>
                 <div>
                   <h3>{rival.name}</h3>
                   <p>
@@ -1589,6 +1663,7 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
                         {rival?.name ?? organization.factionId} · {organization.relationship} · leverage {Math.round(organization.leverage)}
                       </p>
                       <p>{quest?.definition.openingLine ?? organization.agenda}</p>
+                      <p>{relationshipBrief(organization.relationship)}</p>
                       {operation && <p>Current scene pressure: {rivalOperationLabel(operation.kind)} at {state.locations[operation.locationId]?.name ?? operation.locationId}</p>}
                     </div>
                     <strong>{quest?.state.status ?? "dossier"}</strong>
@@ -1661,7 +1736,7 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
                 <h3>{pillar.title}</h3>
                 <p>{pillar.promise}</p>
               </div>
-              <strong>{pillar.designChecks.length} checks</strong>
+              <strong>{pillar.designChecks.length} beats</strong>
             </article>
           ))}
 
@@ -1704,8 +1779,8 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
             <div className="vehicle-heading">
               <Users size={18} aria-hidden="true" />
               <div>
-                <h3>NPC role backlog</h3>
-                <p>Authored roles for mission and systemic expansion.</p>
+                <h3>Street contacts</h3>
+                <p>People who can deliver missions, calls, warnings, and visible street behavior.</p>
               </div>
             </div>
             <div className="storage-list">
@@ -1715,6 +1790,7 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
                     <h3>{role.title}</h3>
                     <p>{role.function}</p>
                   </div>
+                  <strong>contact</strong>
                 </article>
               ))}
             </div>

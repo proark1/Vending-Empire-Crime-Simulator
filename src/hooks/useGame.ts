@@ -81,7 +81,7 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
     const session = sessionRef.current;
     saveGame(currentState);
 
-    if (!session) {
+    if (!session || session.local) {
       return;
     }
 

@@ -25,16 +25,17 @@ function iconForTone(tone: GameEventTone) {
 }
 
 interface ToastStackProps {
+  docked?: boolean;
   messages: ToastMessage[];
 }
 
-export function ToastStack({ messages }: ToastStackProps) {
+export function ToastStack({ docked = false, messages }: ToastStackProps) {
   if (messages.length === 0) {
     return null;
   }
 
   return (
-    <section className="toast-stack" aria-label="Notifications">
+    <section className={docked ? "toast-stack docked" : "toast-stack"} aria-label="Notifications">
       {messages.map((message) => (
         <article className={`toast-message ${message.tone}`} key={message.id}>
           {iconForTone(message.tone)}

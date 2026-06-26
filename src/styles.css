@@ -920,6 +920,23 @@ button {
   box-shadow: 0 16px 46px rgba(20, 184, 166, 0.24);
 }
 
+.access-demo-button {
+  border-color: rgba(226, 232, 240, 0.2) !important;
+  background: rgba(15, 23, 42, 0.82) !important;
+  box-shadow: none !important;
+}
+
+.access-demo-button:hover {
+  border-color: rgba(45, 212, 191, 0.48) !important;
+  background: rgba(20, 184, 166, 0.18) !important;
+}
+
+.access-demo-note {
+  margin-top: -4px !important;
+  color: #94a3b8 !important;
+  text-align: center;
+}
+
 .access-panel button:disabled,
 .access-panel input:disabled {
   cursor: not-allowed;
@@ -1856,6 +1873,15 @@ button {
   backdrop-filter: blur(14px);
 }
 
+.mission-tracker.compact {
+  width: min(360px, calc(100vw - 430px));
+  min-width: 280px;
+}
+
+.mission-tracker.compact .mission-guidance {
+  display: none;
+}
+
 .mission-title-row {
   display: flex;
   align-items: center;
@@ -2118,6 +2144,36 @@ button {
   background: linear-gradient(90deg, #2dd4bf, #a3e635);
 }
 
+.target-work-cues {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  margin-top: 1px;
+}
+
+.target-work-cues span {
+  min-width: 0;
+  padding: 3px 4px;
+  border: 1px solid rgba(226, 232, 240, 0.12);
+  border-radius: 5px;
+  background: rgba(2, 6, 23, 0.38);
+  color: #64748b;
+  font-size: 10px;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.target-work-cues span.active {
+  border-color: rgba(45, 212, 191, 0.38);
+  background: rgba(20, 184, 166, 0.22);
+  color: #ccfbf1;
+  box-shadow: 0 0 16px rgba(45, 212, 191, 0.14);
+}
+
+.game-shell.servicing .world-vignette {
+  box-shadow: inset 0 0 90px rgba(45, 212, 191, 0.1), inset 0 0 240px rgba(2, 6, 23, 0.78);
+}
+
 .target-work-meter.warning {
   border-color: rgba(251, 191, 36, 0.34);
   color: #fde68a;
@@ -2201,6 +2257,13 @@ kbd {
   gap: 8px;
   width: min(380px, calc(100vw - 32px));
   pointer-events: none;
+}
+
+.toast-stack.docked {
+  right: auto;
+  top: 390px;
+  left: 16px;
+  width: min(500px, calc(100vw - 430px));
 }
 
 .toast-message {
@@ -4960,11 +5023,24 @@ kbd {
     bottom: 174px;
   }
 
+  .mission-tracker.compact {
+    top: 124px;
+    width: auto;
+    min-width: 0;
+  }
+
   .toast-stack {
-    top: 258px;
+    top: 300px;
     right: 10px;
     left: 10px;
     bottom: auto;
+    width: auto;
+  }
+
+  .toast-stack.docked {
+    top: 258px;
+    right: 10px;
+    left: 10px;
     width: auto;
   }
 

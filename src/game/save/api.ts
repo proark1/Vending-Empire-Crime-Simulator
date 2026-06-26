@@ -8,6 +8,7 @@ const GAME_SESSION_KEY = "vendetta-vending.game-session.v1";
 const ADMIN_SESSION_KEY = "vendetta-vending.admin-session.v1";
 
 export interface GameSession {
+  local?: boolean;
   profile: {
     id: string;
     name: string;

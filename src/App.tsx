@@ -24,6 +24,7 @@ import { endgamePaths, storyMissionArcs } from "./game/content/story";
 import { products } from "./game/content/products";
 import { clearWorldMapLayout, loadWorldMapLayout, saveWorldMapLayout } from "./game/world/mapLayoutStorage";
 import { clearStoredGameSession, loadRemoteAudioConfig, loadRemoteGame, loadRemoteMapLayout, loadStoredGameSession, loginGame, registerGame, type GameSession } from "./game/save/api";
+import { loadGame } from "./game/save/storage";
 import { createInitialState } from "./game/content/initialState";
 import { configureGameAudio, playEventCue, playFeedbackCue, startGameAmbience, unlockGameAudio, updateGameAmbience } from "./ui/audio";
 import { MultiplayerClient } from "./game/network/multiplayerClient";
@@ -196,6 +197,27 @@ function serviceHoldStage(hold: ServiceHoldState): string {
             ? ["Watch corner", "Check signs", "Mark route", "Log intel"]
             : ["Start work", "Keep pressure", "Finish task", "Confirm"];
   return stages[Math.min(stages.length - 1, Math.floor(progress * stages.length))];
+}
+
+function serviceHoldCueLabels(verb: string): string[] {
+  const lowered = verb.toLowerCase();
+  if (lowered.includes("repair")) {
+    return ["panel", "parts", "test"];
+  }
+
+  if (lowered.includes("load") || lowered.includes("unload") || lowered.includes("stock") || lowered.includes("storing") || lowered.includes("buying")) {
+    return ["grab", "shift", "secure"];
+  }
+
+  if (lowered.includes("fight") || lowered.includes("jamming")) {
+    return ["ready", "move", "break"];
+  }
+
+  if (lowered.includes("scout") || lowered.includes("evidence")) {
+    return ["watch", "mark", "log"];
+  }
+
+  return ["start", "work", "done"];
 }
 
 interface GameAppProps {
@@ -633,6 +655,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
   const rivalMachines = Object.values(state.machines).filter((machine) => machine.ownerFactionId !== state.playerFactionId && machine.placementStatus === "installed").length;
   const starterArc = storyMissionArcs[0];
   const showDebugTools = useMemo(() => new URLSearchParams(window.location.search).has("debug"), []);
+  const isLocalSession = session.local === true;
   const multiplayerRoom = multiplayerStatus.room;
   const multiplayerStatusLabel = multiplayerRoom
     ? multiplayerStatus.role === "host"
@@ -1052,7 +1075,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
   }, [cancelServiceHold, entered, handlePrimaryInteraction]);
 
   return (
-    <main className="game-shell">
+    <main className={serviceHold ? "game-shell servicing" : "game-shell"}>
       <ThreeScene
         graphicsQuality={graphicsQuality}
         guidanceLocationId={guidanceLocationId}
@@ -1067,7 +1090,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
       />
       <div className="world-vignette" aria-hidden="true" />
       {entered && <Hud feedbackEvent={sceneFeedback} nextActionLabel={nextActionLabel} state={state} />}
-      {entered && <MissionTracker state={state} playerPosition={playerPosition} />}
+      {entered && <MissionTracker compact={dashboardOpen} state={state} playerPosition={playerPosition} />}
       {entered && <div className="crosshair" aria-hidden="true" />}
       <div className="game-menu" ref={gameMenuRef}>
         <button
@@ -1082,10 +1105,10 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
         {gameMenuOpen && (
           <div className="game-menu-popover" role="menu">
             <div className="game-menu-profile">
-              <span>Signed in</span>
+              <span>{isLocalSession ? "Local save" : "Signed in"}</span>
               <strong>{session.profile.name}</strong>
             </div>
-            <div className="multiplayer-menu-panel" role="group" aria-label="Multiplayer room">
+            {!isLocalSession && <div className="multiplayer-menu-panel" role="group" aria-label="Multiplayer room">
               <div className="multiplayer-menu-heading">
                 <Network size={16} aria-hidden="true" />
                 <div>
@@ -1139,7 +1162,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
                 </>
               )}
               {multiplayerStatus.message && <p>{multiplayerStatus.message}</p>}
-            </div>
+            </div>}
             {entered && (
               <button
                 onClick={() => {
@@ -1194,6 +1217,13 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
               <i aria-hidden="true">
                 <b style={{ width: `${serviceHold.progress * 100}%` }} />
               </i>
+              <span className="target-work-cues" aria-hidden="true">
+                {serviceHoldCueLabels(serviceHold.verb).map((label, index, labels) => (
+                  <span className={serviceHold.progress >= index / labels.length ? "active" : ""} key={label}>
+                    {label}
+                  </span>
+                ))}
+              </span>
             </span>
           )}
           {primaryInteraction.disabled && primaryInteraction.disabledReason && <span className="target-reason">{primaryInteraction.disabledReason}</span>}
@@ -1297,7 +1327,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
       )}
       {entered && <Minimap state={state} playerPosition={playerPosition} guidanceLocationId={guidanceLocationId} target={activeTarget} />}
       {entered && <InteractionPanel state={state} target={activeTarget} onCommand={sendCommandAtActiveTarget} onSave={save} onReload={reload} onRestart={handleRestart} />}
-      <ToastStack messages={toasts} />
+      <ToastStack docked={dashboardOpen} messages={toasts} />
     </main>
   );
 }
@@ -1311,7 +1341,8 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
   >({ status: "loading" });
   const [credentials, setCredentials] = useState({ name: "", pin: "" });
   const [submitting, setSubmitting] = useState(false);
-  const actionLabel = accessMode === "register" ? "Register" : "Login";
+  const actionLabel = accessMode === "register" ? "Create profile" : "Login";
+  const busy = authState.status === "loading" || submitting;
 
   useEffect(() => {
     const session = loadStoredGameSession();
@@ -1336,7 +1367,7 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
       .catch(() => {
         clearStoredGameSession();
         if (!cancelled) {
-          setAuthState({ status: "login", message: "Session expired. Enter your name and PIN." });
+          setAuthState({ status: "login", message: "Remote session unavailable. Log in again or use Quick Start for local play." });
         }
       });
 
@@ -1362,12 +1393,37 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
           });
         })
         .catch((error) => {
-          setAuthState({ status: "login", message: error instanceof Error ? error.message : `${actionLabel} failed.` });
+          const message = error instanceof Error ? error.message : `${actionLabel} failed.`;
+          setAuthState({
+            status: "login",
+            message: message.includes("DATABASE_URL")
+              ? "Remote database is not configured. Use Quick Start for local play, or set DATABASE_URL before logging in."
+              : message
+          });
         })
         .finally(() => setSubmitting(false));
     },
     [accessMode, actionLabel, credentials.name, credentials.pin]
   );
+
+  const handleQuickStart = useCallback(() => {
+    clearStoredGameSession();
+    setSubmitting(false);
+    setAuthState({
+      status: "ready",
+      session: {
+        local: true,
+        profile: {
+          id: "local-demo",
+          name: "Local Route"
+        },
+        saveRevision: null,
+        saveUpdatedAt: null,
+        token: "local-demo"
+      },
+      initialState: loadGame()
+    });
+  }, []);
 
   const switchAccessMode = useCallback((mode: "login" | "register") => {
     setAccessMode(mode);
@@ -1420,7 +1476,7 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
           <div className="access-mode-tabs" aria-label="Game access mode">
             <button
               aria-pressed={accessMode === "login"}
-              disabled={authState.status === "loading" || submitting}
+              disabled={busy}
               onClick={() => switchAccessMode("login")}
               type="button"
             >
@@ -1428,7 +1484,7 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
             </button>
             <button
               aria-pressed={accessMode === "register"}
-              disabled={authState.status === "loading" || submitting}
+              disabled={busy}
               onClick={() => switchAccessMode("register")}
               type="button"
             >
@@ -1439,7 +1495,7 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
             Player name
             <input
               autoComplete="username"
-              disabled={authState.status === "loading" || submitting}
+              disabled={busy}
               maxLength={36}
               value={credentials.name}
               onChange={(event) => setCredentials((current) => ({ ...current, name: event.target.value }))}
@@ -1449,7 +1505,7 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
             PIN
             <input
               autoComplete={accessMode === "register" ? "new-password" : "current-password"}
-              disabled={authState.status === "loading" || submitting}
+              disabled={busy}
               inputMode="numeric"
               maxLength={12}
               type="password"
@@ -1458,9 +1514,13 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
             />
           </label>
           {authState.status === "login" && authState.message && <p>{authState.message}</p>}
-          <button disabled={authState.status === "loading" || submitting} type="submit">
+          <button disabled={busy} type="submit">
             {submitting ? `${actionLabel}...` : actionLabel}
           </button>
+          <button className="access-demo-button" disabled={busy} onClick={handleQuickStart} type="button">
+            Quick Start
+          </button>
+          <span className="access-demo-note">Local save only. No database required.</span>
         </form>
         <div className="access-longform">
           <LandingFeatureGrid />

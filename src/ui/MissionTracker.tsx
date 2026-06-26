@@ -4,11 +4,12 @@ import { getStarterMissionStep, getStarterTutorialSteps } from "../game/core/mis
 import { activeConflictEvents, activeMachineAlarms, playerHeatTier } from "../game/core/selectors";
 
 interface MissionTrackerProps {
+  compact?: boolean;
   state: GameState;
   playerPosition: Vec2;
 }
 
-export function MissionTracker({ state, playerPosition }: MissionTrackerProps) {
+export function MissionTracker({ compact = false, state, playerPosition }: MissionTrackerProps) {
   const step = getStarterMissionStep(state, playerPosition);
   const tutorialSteps = getStarterTutorialSteps(state);
   const showTutorial = !state.mission.completed && tutorialSteps.some((tutorialStep) => !tutorialStep.completed);
@@ -25,7 +26,7 @@ export function MissionTracker({ state, playerPosition }: MissionTrackerProps) {
   const pressureTone = alarm || conflict ? "danger" : heatTier.tone;
 
   return (
-    <section className="mission-tracker" aria-label="Current mission">
+    <section className={compact ? "mission-tracker compact" : "mission-tracker"} aria-label="Current mission">
       <div className="mission-title-row">
         {state.mission.completed ? <CheckCircle2 size={17} aria-hidden="true" /> : <ClipboardList size={17} aria-hidden="true" />}
         <span>{step.title}</span>
@@ -37,7 +38,7 @@ export function MissionTracker({ state, playerPosition }: MissionTrackerProps) {
         <span style={{ width: `${step.progressRatio * 100}%` }} />
       </div>
       <span className="mission-progress-label">{step.progressLabel}</span>
-      {showTutorial && (
+      {showTutorial && !compact && (
         <ol className="tutorial-steps" aria-label="Starter tutorial">
           {tutorialSteps.map((tutorialStep) => (
             <li className={tutorialStep.active ? "active" : ""} data-complete={tutorialStep.completed} key={tutorialStep.id}>
