@@ -2860,10 +2860,11 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
   const vehicle = activeVehicle(currentState);
   const vehicleLocation = vehicle ? currentState.locations[vehicle.locationId] : undefined;
   if (vehicle && vehicleLocation) {
-    const vehiclePosition = new THREE.Vector3(vehicleLocation.position.x + 1.15, 0, vehicleLocation.position.z + 0.88);
+    const vehiclePlacement = activeVehiclePlacementForLocation(vehicleLocation);
+    const vehiclePosition = vehiclePlacement.position;
     const vehicleGroup = createVehicleMesh(quality);
     vehicleGroup.position.copy(vehiclePosition);
-    vehicleGroup.rotation.y = vehicleLocation.id === "garage" || vehicleLocation.position.z > 0 ? -Math.PI / 2 : Math.PI / 2;
+    vehicleGroup.rotation.y = vehiclePlacement.rotationY;
     group.add(vehicleGroup);
 
     const loadedProductIds = Object.entries(vehicle.inventory)
@@ -2871,13 +2872,13 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       .map(([productId]) => productId as ProductId);
     if (loadedProductIds.length > 0) {
       const trunkStack = createCrateStack(loadedProductIds);
-      trunkStack.position.set(vehiclePosition.x + 0.15, 0.58, vehiclePosition.z);
+      trunkStack.position.set(vehiclePosition.x + 0.15, 0.76, vehiclePosition.z);
       trunkStack.scale.setScalar(0.58);
       trunkStack.rotation.y = vehicleGroup.rotation.y;
       group.add(trunkStack);
     }
 
-    addLabel(group, vehicle.name, "#d9f99d", vehiclePosition, 1.65);
+    addLabel(group, vehicle.name, "#d9f99d", vehiclePosition, WORLD_SCALE.vehicle.height + 0.38);
   }
 
   return interactables;
