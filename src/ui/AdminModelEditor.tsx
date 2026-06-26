@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls, type TransformControlsMode } from "three/examples/jsm/controls/TransformControls.js";
+import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import {
   createDefaultModelConfig,
   defaultModelTransform,
@@ -89,6 +90,10 @@ function vehicleColor(modelId: string): string {
   return "#38bdf8";
 }
 
+function previewRoundedBox(width: number, height: number, depth: number, radius: number): RoundedBoxGeometry {
+  return new RoundedBoxGeometry(width, height, depth, 3, radius);
+}
+
 function createPreviewVehicle(modelId: string): THREE.Group {
   const group = new THREE.Group();
   const isDelivery = modelId === "vehicle.delivery" || modelId === "vehicle.route_van";
@@ -96,38 +101,88 @@ function createPreviewVehicle(modelId: string): THREE.Group {
   const length = isDelivery ? WORLD_SCALE.vehicle.deliveryLength : WORLD_SCALE.vehicle.length;
   const width = isDelivery ? WORLD_SCALE.vehicle.deliveryWidth : WORLD_SCALE.vehicle.width;
   const bodyHeight = isDelivery ? 1.05 : 0.72;
-  const baseY = 0.44;
-  const paint = new THREE.MeshStandardMaterial({ color: vehicleColor(modelId), roughness: 0.45, metalness: 0.08 });
-  const trim = new THREE.MeshStandardMaterial({ color: "#0f172a", roughness: 0.6, metalness: 0.08 });
-  const glass = new THREE.MeshBasicMaterial({ color: "#bae6fd", transparent: true, opacity: 0.68 });
+  const cabHeight = isDelivery ? 0.82 : 0.66;
+  const wheelRadius = isDelivery ? 0.38 : 0.34;
+  const baseY = wheelRadius + 0.14;
+  const paint = new THREE.MeshPhysicalMaterial({ color: vehicleColor(modelId), roughness: 0.36, metalness: 0.12, clearcoat: 0.28, clearcoatRoughness: 0.44 });
+  const trim = new THREE.MeshStandardMaterial({ color: "#0f172a", roughness: 0.52, metalness: 0.18 });
+  const glass = new THREE.MeshPhysicalMaterial({ color: "#93c5fd", roughness: 0.03, metalness: 0.02, transparent: true, opacity: 0.58, transmission: 0.1 });
+  const hub = new THREE.MeshStandardMaterial({ color: "#cbd5e1", roughness: 0.34, metalness: 0.42 });
 
-  const chassis = new THREE.Mesh(new THREE.BoxGeometry(width * 0.9, 0.16, length * 0.84), trim);
-  chassis.position.y = baseY;
+  const chassis = new THREE.Mesh(new THREE.BoxGeometry(width * 0.86, 0.16, length * 0.86), trim);
+  chassis.position.set(0, baseY, 0);
   group.add(chassis);
 
-  const body = new THREE.Mesh(new THREE.BoxGeometry(width * 0.92, bodyHeight, length * (isDelivery ? 0.52 : 0.62)), paint);
-  body.position.set(0, baseY + bodyHeight * 0.55, isDelivery ? length * 0.12 : 0.05);
+  const body = new THREE.Mesh(previewRoundedBox(width * 0.92, bodyHeight * 0.74, length * (isDelivery ? 0.5 : 0.58), 0.08), paint);
+  body.position.set(0, baseY + bodyHeight * 0.42, isDelivery ? length * 0.14 : 0.06);
   group.add(body);
 
-  const cab = new THREE.Mesh(new THREE.BoxGeometry(width * 0.72, 0.64, length * 0.22), glass);
-  cab.position.set(0, baseY + bodyHeight + 0.18, -length * 0.22);
+  const hood = new THREE.Mesh(previewRoundedBox(width * 0.8, bodyHeight * 0.34, length * 0.2, 0.07), paint);
+  hood.position.set(0, baseY + bodyHeight * 0.42, -length * 0.34);
+  group.add(hood);
+
+  const cab = new THREE.Mesh(previewRoundedBox(width * 0.72, cabHeight, length * 0.24, 0.08), glass);
+  cab.position.set(0, baseY + bodyHeight * 0.94, isDelivery ? -length * 0.22 : -length * 0.06);
   group.add(cab);
+
+  for (const z of [-length / 2 - 0.04, length / 2 + 0.04]) {
+    const bumper = new THREE.Mesh(previewRoundedBox(width * 0.86, 0.1, 0.08, 0.025), trim);
+    bumper.position.set(0, baseY + 0.18, z);
+    group.add(bumper);
+  }
+
+  for (const side of [-1, 1]) {
+    const sideWindow = new THREE.Mesh(new THREE.BoxGeometry(0.035, cabHeight * 0.46, length * 0.14), glass);
+    sideWindow.position.set(side * (width / 2 + 0.03), cab.position.y + 0.02, cab.position.z);
+    group.add(sideWindow);
+
+    const handle = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.035, 0.16), trim);
+    handle.position.set(side * (width / 2 + 0.06), baseY + bodyHeight * 0.58, cab.position.z + length * 0.05);
+    group.add(handle);
+  }
 
   if (isPolice) {
     const stripe = new THREE.Mesh(new THREE.BoxGeometry(width + 0.04, 0.09, length * 0.68), new THREE.MeshBasicMaterial({ color: "#2563eb" }));
     stripe.position.set(0, baseY + 0.55, 0);
     group.add(stripe);
-    const lightbar = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.08, 0.18), new THREE.MeshBasicMaterial({ color: "#ef4444" }));
-    lightbar.position.set(0, cab.position.y + 0.36, cab.position.z);
+    const lightbar = new THREE.Group();
+    lightbar.position.set(0, cab.position.y + 0.42, cab.position.z);
+    const red = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.08, 0.18), new THREE.MeshBasicMaterial({ color: "#ef4444" }));
+    red.position.x = -0.15;
+    const blue = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.08, 0.18), new THREE.MeshBasicMaterial({ color: "#2563eb" }));
+    blue.position.x = 0.15;
+    lightbar.add(red, blue);
     group.add(lightbar);
+  }
+
+  if (isDelivery) {
+    const cargoBox = new THREE.Mesh(previewRoundedBox(width * 0.94, bodyHeight * 0.98, length * 0.46, 0.08), paint);
+    cargoBox.position.set(0, baseY + bodyHeight * 0.64, length * 0.16);
+    group.add(cargoBox);
+
+    for (const side of [-1, 1]) {
+      const panel = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.46, length * 0.26), new THREE.MeshBasicMaterial({ color: modelId === "vehicle.route_van" ? "#2dd4bf" : "#facc15" }));
+      panel.position.set(side * (width / 2 + 0.03), baseY + bodyHeight * 0.68, length * 0.14);
+      group.add(panel);
+    }
   }
 
   for (const x of [-width / 2 - 0.06, width / 2 + 0.06]) {
     for (const z of [-length * 0.32, length * 0.32]) {
-      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.16, 18), trim);
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(wheelRadius, wheelRadius, 0.17, 22), trim);
       wheel.position.set(x, 0.32, z);
       wheel.rotation.z = Math.PI / 2;
       group.add(wheel);
+
+      const wheelHub = new THREE.Mesh(new THREE.CylinderGeometry(wheelRadius * 0.44, wheelRadius * 0.44, 0.18, 14), hub);
+      wheelHub.position.copy(wheel.position);
+      wheelHub.rotation.z = Math.PI / 2;
+      group.add(wheelHub);
+
+      const arch = new THREE.Mesh(new THREE.TorusGeometry(wheelRadius * 1.08, 0.028, 8, 20, Math.PI), trim);
+      arch.position.set(x, wheelRadius + 0.14, z);
+      arch.rotation.x = Math.PI / 2;
+      group.add(arch);
     }
   }
 

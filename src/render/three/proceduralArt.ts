@@ -53,7 +53,27 @@ export function createAsphaltMaterial(quality: GraphicsQuality = "medium"): THRE
     quality === "low" ? 4 : quality === "high" ? 10 : 8
   );
 
-  return new THREE.MeshStandardMaterial({ map, color: "#2f3a47", roughness: 0.92, metalness: 0.02 });
+  const bumpMap = quality === "low"
+    ? undefined
+    : textureFromCanvas(
+      size,
+      (context, size) => {
+        context.fillStyle = "#777";
+        context.fillRect(0, 0, size, size);
+        jitter(context, size, quality === "high" ? 2200 : 1200, 0.36);
+        context.strokeStyle = "rgba(25, 25, 25, 0.48)";
+        context.lineWidth = 2;
+        for (let x = 24; x < size; x += 84) {
+          context.beginPath();
+          context.moveTo(x, 0);
+          context.lineTo(x + 18, size);
+          context.stroke();
+        }
+      },
+      quality === "high" ? 10 : 8
+    );
+
+  return new THREE.MeshStandardMaterial({ map, ...(bumpMap ? { bumpMap, bumpScale: 0.028 } : {}), color: "#2f3a47", roughness: 0.92, metalness: 0.02 });
 }
 
 export function createRoadMaterial(quality: GraphicsQuality = "medium"): THREE.MeshStandardMaterial {
@@ -74,7 +94,27 @@ export function createRoadMaterial(quality: GraphicsQuality = "medium"): THREE.M
     quality === "low" ? 3 : quality === "high" ? 8 : 6
   );
 
-  return new THREE.MeshStandardMaterial({ map, color: "#222a35", roughness: 0.96 });
+  const bumpMap = quality === "low"
+    ? undefined
+    : textureFromCanvas(
+      size,
+      (context, size) => {
+        context.fillStyle = "#666";
+        context.fillRect(0, 0, size, size);
+        jitter(context, size, quality === "high" ? 2600 : 1500, 0.4);
+        context.strokeStyle = "rgba(10, 10, 10, 0.5)";
+        context.lineWidth = 2;
+        for (let y = 0; y < size; y += 96) {
+          context.beginPath();
+          context.moveTo(0, y + Math.random() * 12);
+          context.lineTo(size, y + 4 + Math.random() * 12);
+          context.stroke();
+        }
+      },
+      quality === "high" ? 8 : 6
+    );
+
+  return new THREE.MeshStandardMaterial({ map, ...(bumpMap ? { bumpMap, bumpScale: 0.024 } : {}), color: "#222a35", roughness: 0.96 });
 }
 
 export function createSidewalkMaterial(quality: GraphicsQuality = "medium"): THREE.MeshStandardMaterial {
@@ -103,7 +143,33 @@ export function createSidewalkMaterial(quality: GraphicsQuality = "medium"): THR
     quality === "low" ? 3 : quality === "high" ? 7 : 5
   );
 
-  return new THREE.MeshStandardMaterial({ map, color: "#8a94a5", roughness: 0.88 });
+  const bumpMap = quality === "low"
+    ? undefined
+    : textureFromCanvas(
+      size,
+      (context, size) => {
+        context.fillStyle = "#868686";
+        context.fillRect(0, 0, size, size);
+        context.strokeStyle = "#363636";
+        context.lineWidth = 3;
+        for (let x = 0; x <= size; x += 64) {
+          context.beginPath();
+          context.moveTo(x, 0);
+          context.lineTo(x, size);
+          context.stroke();
+        }
+        for (let y = 0; y <= size; y += 64) {
+          context.beginPath();
+          context.moveTo(0, y);
+          context.lineTo(size, y);
+          context.stroke();
+        }
+        jitter(context, size, quality === "high" ? 1200 : 700, 0.28);
+      },
+      quality === "high" ? 7 : 5
+    );
+
+  return new THREE.MeshStandardMaterial({ map, ...(bumpMap ? { bumpMap, bumpScale: 0.018 } : {}), color: "#8a94a5", roughness: 0.88 });
 }
 
 function createWallMaterial(base: string, mortar: string, quality: GraphicsQuality): THREE.MeshStandardMaterial {
@@ -755,11 +821,18 @@ function createBillboardSprite(kind: "poster" | "trash" | "pallet" | "graffiti",
   return sprite;
 }
 
-function capsuleLike(radius: number, height: number, color: string, roughness = 0.7): THREE.Mesh {
-  const mesh = new THREE.Mesh(
-    new THREE.CapsuleGeometry(radius, height, 8, 12),
-    new THREE.MeshStandardMaterial({ color, roughness })
-  );
+function createTaperedBody(topRadius: number, bottomRadius: number, height: number, depthScale: number, material: THREE.Material): THREE.Mesh {
+  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(topRadius, bottomRadius, height, 18), material);
+  mesh.scale.z = depthScale;
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+function createHorizontalCapsule(radius: number, length: number, material: THREE.Material, depthScale = 1): THREE.Mesh {
+  const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(radius, length, 6, 16), material);
+  mesh.rotation.z = Math.PI / 2;
+  mesh.scale.z = depthScale;
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   return mesh;
@@ -786,6 +859,13 @@ function addFace(group: THREE.Group, y: number, z: number, skinColor = "#9f6b45"
   const mouth = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.01, 0.012), new THREE.MeshBasicMaterial({ color: "#7f1d1d" }));
   mouth.position.set(0, y - 0.095, z - 0.01);
   group.add(mouth);
+
+  for (const x of [-0.085, 0.085]) {
+    const cheek = new THREE.Mesh(new THREE.SphereGeometry(0.018, 8, 6), new THREE.MeshBasicMaterial({ color: skinColor, transparent: true, opacity: 0.62 }));
+    cheek.position.set(x, y - 0.058, z - 0.006);
+    cheek.scale.set(1.35, 0.7, 0.3);
+    group.add(cheek);
+  }
 }
 
 type NpcVariant = "customer" | "rival" | "worker" | "scout";
@@ -798,14 +878,14 @@ interface NpcLimbRig {
 }
 
 function createJoint(radius: number, material: THREE.Material): THREE.Mesh {
-  const joint = new THREE.Mesh(new THREE.SphereGeometry(radius, 10, 8), material);
+  const joint = new THREE.Mesh(new THREE.SphereGeometry(radius, 14, 10), material);
   joint.castShadow = true;
   joint.receiveShadow = true;
   return joint;
 }
 
 function createLimbSegment(length: number, topRadius: number, bottomRadius: number, material: THREE.Material): THREE.Mesh {
-  const segment = new THREE.Mesh(new THREE.CylinderGeometry(topRadius, bottomRadius, length, 10), material);
+  const segment = new THREE.Mesh(new THREE.CylinderGeometry(topRadius, bottomRadius, length, 14), material);
   segment.position.y = -length / 2;
   segment.castShadow = true;
   segment.receiveShadow = true;
@@ -970,37 +1050,57 @@ export function createNpcCharacter(variant: NpcVariant, quality: GraphicsQuality
   shadow.position.y = 0.012;
   group.add(shadow);
 
-  const body = capsuleLike(0.22, 0.48, palette.jacket, 0.62);
+  const body = new THREE.Group();
   body.position.set(0, 0.84, 0);
-  body.scale.x = 0.92;
+  const torso = createTaperedBody(0.23, 0.17, 0.54, 0.62, jacketMaterial);
+  torso.rotation.x = 0.02;
+  body.add(torso);
+
+  const shirt = new THREE.Mesh(new THREE.BoxGeometry(0.23, 0.4, 0.028), shirtMaterial);
+  shirt.position.set(0, -0.02, -0.15);
+  shirt.scale.x = variant === "rival" ? 0.78 : 0.9;
+  body.add(shirt);
+
+  for (const side of [-1, 1] as const) {
+    const lapel = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.32, 0.024), jacketMaterial);
+    lapel.position.set(side * 0.055, 0.08, -0.168);
+    lapel.rotation.z = side * 0.32;
+    body.add(lapel);
+  }
+
+  const belt = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.042, 0.032), new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.5, metalness: 0.08 }));
+  belt.position.set(0, -0.28, -0.15);
+  body.add(belt);
   group.add(body);
 
-  const hips = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.12, 0.22), pantsMaterial);
-  hips.position.set(0, 0.58, -0.005);
-  hips.castShadow = true;
+  const hips = new THREE.Group();
+  hips.position.set(0, 0.58, -0.004);
+  const hipRoll = createHorizontalCapsule(0.07, 0.24, pantsMaterial, 1.2);
+  hips.add(hipRoll);
+  const beltBack = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.035, 0.18), pantsMaterial);
+  beltBack.position.set(0, 0.035, 0.015);
+  beltBack.castShadow = true;
+  hips.add(beltBack);
   group.add(hips);
 
-  const shoulders = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.16, 0.24), jacketMaterial);
-  shoulders.position.set(0, 1.05, -0.01);
-  shoulders.castShadow = true;
+  const shoulders = new THREE.Group();
+  shoulders.position.set(0, 1.06, -0.012);
+  const shoulderRoll = createHorizontalCapsule(0.076, 0.39, jacketMaterial, 1.08);
+  shoulders.add(shoulderRoll);
+  const collarBack = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.05, 0.13), jacketMaterial);
+  collarBack.position.set(0, 0.045, -0.02);
+  collarBack.castShadow = true;
+  shoulders.add(collarBack);
   group.add(shoulders);
 
-  const shirt = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.42, 0.035), shirtMaterial);
-  shirt.position.set(0, 0.82, -0.205);
-  group.add(shirt);
-
   const collarLeft = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.04, 0.025), new THREE.MeshBasicMaterial({ color: palette.shirt }));
-  collarLeft.position.set(-0.055, 1.1, -0.205);
+  collarLeft.position.set(-0.055, 1.1, -0.19);
   collarLeft.rotation.z = -0.42;
   group.add(collarLeft);
   const collarRight = collarLeft.clone();
   collarRight.position.x = 0.055;
   collarRight.rotation.z = 0.42;
   group.add(collarRight);
-
-  const belt = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.045, 0.035), new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.5, metalness: 0.08 }));
-  belt.position.set(0, 0.57, -0.19);
-  group.add(belt);
 
   const leftLeg = createLegRig(-1, pantsMaterial, shoeMaterial);
   const rightLeg = createLegRig(1, pantsMaterial, shoeMaterial);
