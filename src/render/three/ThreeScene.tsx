@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
-import type { DistrictAccess, GameState, GameEventTone, Location, MachineUpgradeId, ProductId, StockCrate, StreetActivity, VendingMachine } from "../../game/core/types";
+import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
+import type { DistrictAccess, GameState, GameEventTone, Location, MachineId, MachineUpgradeId, ProductId, StockCrate, StreetActivity, VendingMachine } from "../../game/core/types";
 import { activeConflictEvents, activeMachineAlarms, activeVehicle, carriedCrateUnits, districtProgress, garageStorageUnits, machineAtLocation, machineRoutePressure } from "../../game/core/selectors";
 import {
   districtLabels,
@@ -117,6 +118,10 @@ const worldDepth = worldBounds.maxZ - worldBounds.minZ;
 const worldCenterX = (worldBounds.minX + worldBounds.maxX) / 2;
 const worldCenterZ = (worldBounds.minZ + worldBounds.maxZ) / 2;
 const worldChunkSize = 24;
+
+function roundedBox(width: number, height: number, depth: number, radius: number, quality: GraphicsQuality): RoundedBoxGeometry {
+  return new RoundedBoxGeometry(width, height, depth, quality === "low" ? 1 : 3, radius);
+}
 
 function chunkIndexForCoordinate(value: number, min: number): number {
   return Math.floor((value - min) / worldChunkSize);
@@ -1219,81 +1224,129 @@ function createRoutePressureRing(tone: "good" | "warning" | "danger"): THREE.Gro
 
 function createVehicleMesh(quality: GraphicsQuality = "medium"): THREE.Group {
   const group = new THREE.Group();
-  const bodyMaterial = new THREE.MeshStandardMaterial({ color: "#d9f99d", roughness: 0.48, metalness: 0.08 });
-  const trimMaterial = new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.42, metalness: 0.12 });
-  const glassMaterial = new THREE.MeshPhysicalMaterial({ color: "#bae6fd", roughness: 0.08, transparent: true, opacity: 0.72 });
+  const paintMaterial = new THREE.MeshStandardMaterial({ color: "#d9f99d", roughness: 0.42, metalness: 0.12 });
+  const panelMaterial = new THREE.MeshStandardMaterial({ color: "#bef264", roughness: 0.5, metalness: 0.08 });
+  const trimMaterial = new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.46, metalness: 0.18 });
+  const tireMaterial = new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.68, metalness: 0.08 });
+  const hubMaterial = new THREE.MeshStandardMaterial({ color: "#cbd5e1", roughness: 0.34, metalness: 0.42 });
+  const glassMaterial = new THREE.MeshPhysicalMaterial({ color: "#bae6fd", roughness: 0.04, metalness: 0.02, transparent: true, opacity: 0.68 });
+  const lightMaterial = new THREE.MeshBasicMaterial({ color: "#fde68a" });
+  const tailLightMaterial = new THREE.MeshBasicMaterial({ color: "#ef4444" });
   const { bodyHeight, length, width } = WORLD_SCALE.vehicle;
   const wheelRadius = 0.36;
+  const baseY = wheelRadius + 0.2;
 
-  const body = new THREE.Mesh(new THREE.BoxGeometry(length, bodyHeight, width), bodyMaterial);
-  body.position.y = 0.56 + bodyHeight / 2;
-  body.castShadow = true;
-  body.receiveShadow = true;
-  group.add(body);
+  const chassis = new THREE.Mesh(new THREE.BoxGeometry(length * 0.9, 0.18, width * 0.82), trimMaterial);
+  chassis.position.y = baseY;
+  chassis.castShadow = true;
+  chassis.receiveShadow = true;
+  group.add(chassis);
 
-  const cab = new THREE.Mesh(new THREE.BoxGeometry(1.45, 0.78, width * 0.82), bodyMaterial);
-  cab.position.set(-length * 0.23, 1.42, 0);
+  const cargoBody = new THREE.Mesh(roundedBox(length * 0.48, bodyHeight * 1.08, width * 0.92, 0.08, quality), paintMaterial);
+  cargoBody.position.set(length * 0.18, baseY + bodyHeight * 0.58, 0);
+  cargoBody.castShadow = true;
+  cargoBody.receiveShadow = true;
+  group.add(cargoBody);
+
+  const hood = new THREE.Mesh(roundedBox(length * 0.22, bodyHeight * 0.42, width * 0.78, 0.09, quality), paintMaterial);
+  hood.position.set(-length * 0.34, baseY + bodyHeight * 0.42, 0);
+  hood.castShadow = true;
+  hood.receiveShadow = true;
+  group.add(hood);
+
+  const cab = new THREE.Mesh(roundedBox(length * 0.26, bodyHeight * 0.9, width * 0.82, 0.11, quality), panelMaterial);
+  cab.position.set(-length * 0.17, baseY + bodyHeight * 0.82, 0);
   cab.castShadow = true;
   cab.receiveShadow = true;
   group.add(cab);
 
-  const windshield = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.48, width * 0.58), glassMaterial);
-  windshield.position.set(-length * 0.41, 1.43, 0);
+  const roof = new THREE.Mesh(roundedBox(length * 0.24, 0.12, width * 0.74, 0.04, quality), paintMaterial);
+  roof.position.set(-length * 0.17, baseY + bodyHeight * 1.32, 0);
+  roof.castShadow = true;
+  group.add(roof);
+
+  const windshield = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.5, width * 0.56), glassMaterial);
+  windshield.position.set(-length * 0.31, baseY + bodyHeight * 0.96, 0);
+  windshield.rotation.z = -0.18;
   group.add(windshield);
 
-  const stripe = new THREE.Mesh(new THREE.BoxGeometry(length * 0.82, 0.12, 0.04), new THREE.MeshBasicMaterial({ color: "#2dd4bf" }));
-  stripe.position.set(0.08, 0.82, -width / 2 - 0.02);
-  group.add(stripe);
+  for (const z of [-1, 1]) {
+    const sideWindow = new THREE.Mesh(new THREE.BoxGeometry(length * 0.17, 0.36, 0.035), glassMaterial);
+    sideWindow.position.set(-length * 0.14, baseY + bodyHeight * 0.99, z * (width / 2 + 0.022));
+    group.add(sideWindow);
+
+    const cargoPanel = new THREE.Mesh(new THREE.BoxGeometry(length * 0.3, 0.5, 0.028), new THREE.MeshStandardMaterial({ color: "#a3e635", roughness: 0.52, metalness: 0.06 }));
+    cargoPanel.position.set(length * 0.2, baseY + bodyHeight * 0.58, z * (width / 2 + 0.024));
+    group.add(cargoPanel);
+
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(length * 0.74, 0.105, 0.035), new THREE.MeshBasicMaterial({ color: "#2dd4bf" }));
+    stripe.position.set(0.04, baseY + bodyHeight * 0.45, z * (width / 2 + 0.032));
+    group.add(stripe);
+  }
+
+  const grille = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.24, width * 0.44), trimMaterial);
+  grille.position.set(-length / 2 - 0.035, baseY + 0.3, 0);
+  group.add(grille);
+
+  const rearDoor = new THREE.Mesh(new THREE.BoxGeometry(0.035, bodyHeight * 0.76, width * 0.68), panelMaterial);
+  rearDoor.position.set(length * 0.43, baseY + bodyHeight * 0.58, 0);
+  group.add(rearDoor);
 
   if (quality !== "low") {
-    const sideDoor = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.62, 0.032), new THREE.MeshStandardMaterial({ color: "#bef264", roughness: 0.5, metalness: 0.08 }));
-    sideDoor.position.set(-length * 0.09, 0.98, -width / 2 - 0.025);
-    group.add(sideDoor);
-
     const mirrorMaterial = new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.4, metalness: 0.16 });
-    for (const z of [-0.56, 0.56]) {
-      const mirror = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.12, 0.045), mirrorMaterial);
-      mirror.position.set(-length * 0.4, 1.38, z * width * 0.48);
+    for (const z of [-1, 1]) {
+      const mirror = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.1, 0.045), mirrorMaterial);
+      mirror.position.set(-length * 0.32, baseY + bodyHeight * 0.94, z * (width / 2 + 0.12));
       group.add(mirror);
     }
   }
 
   if (quality === "high") {
     const roofRack = new THREE.Group();
-    roofRack.position.set(0.32, 1.2, 0);
+    roofRack.position.set(length * 0.12, baseY + bodyHeight * 1.18, 0);
     for (const z of [-width * 0.28, width * 0.28]) {
-      const rail = new THREE.Mesh(new THREE.BoxGeometry(length * 0.46, 0.04, 0.04), trimMaterial);
-      rail.position.set(0, 0.62, z);
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(length * 0.38, 0.04, 0.04), trimMaterial);
+      rail.position.set(0, 0.35, z);
       roofRack.add(rail);
     }
-    for (const x of [-length * 0.18, length * 0.18]) {
+    for (const x of [-length * 0.14, length * 0.14]) {
       const crossbar = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.04, width * 0.62), trimMaterial);
-      crossbar.position.set(x, 0.62, 0);
+      crossbar.position.set(x, 0.35, 0);
       roofRack.add(crossbar);
     }
     group.add(roofRack);
-
-    const rearHandle = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.04, 0.035), new THREE.MeshBasicMaterial({ color: "#f8fafc" }));
-    rearHandle.position.set(length / 2 + 0.02, 0.92, 0);
-    rearHandle.rotation.y = Math.PI / 2;
-    group.add(rearHandle);
   }
 
-  for (const x of [-length * 0.31, length * 0.31]) {
-    for (const z of [-width / 2 - 0.04, width / 2 + 0.04]) {
-      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(wheelRadius, wheelRadius, 0.18, 20), trimMaterial);
+  for (const x of [-length * 0.32, length * 0.3]) {
+    for (const z of [-width / 2 - 0.045, width / 2 + 0.045]) {
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(wheelRadius, wheelRadius, 0.2, quality === "low" ? 12 : 24), tireMaterial);
       wheel.position.set(x, wheelRadius, z);
       wheel.rotation.x = Math.PI / 2;
       wheel.castShadow = true;
       group.add(wheel);
+
+      if (quality !== "low") {
+        const hub = new THREE.Mesh(new THREE.CylinderGeometry(wheelRadius * 0.46, wheelRadius * 0.46, 0.214, 16), hubMaterial);
+        hub.position.copy(wheel.position);
+        hub.rotation.x = Math.PI / 2;
+        group.add(hub);
+
+        const wheelArch = new THREE.Mesh(new THREE.TorusGeometry(wheelRadius * 1.12, 0.032, 8, 22, Math.PI), trimMaterial);
+        wheelArch.position.set(x, wheelRadius + 0.15, z);
+        wheelArch.rotation.z = Math.PI;
+        group.add(wheelArch);
+      }
     }
   }
 
-  const headlightMaterial = new THREE.MeshBasicMaterial({ color: "#fde68a" });
-  for (const z of [-width * 0.26, width * 0.26]) {
-    const light = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.11, 0.22), headlightMaterial);
-    light.position.set(-length / 2 - 0.025, 0.84, z);
+  for (const z of [-width * 0.25, width * 0.25]) {
+    const light = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.11, 0.2), lightMaterial);
+    light.position.set(-length / 2 - 0.055, baseY + 0.32, z);
     group.add(light);
+
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.12, 0.16), tailLightMaterial);
+    tail.position.set(length * 0.45, baseY + 0.42, z);
+    group.add(tail);
   }
 
   return group;
@@ -1468,16 +1521,28 @@ function activityActorVariant(activity: StreetActivity): "customer" | "rival" | 
   return "customer";
 }
 
-function createActivityActor(activity: StreetActivity, placement: { position: THREE.Vector3; rotationY: number }, servicePoint: THREE.Vector3, currentWorldTime: number, quality: GraphicsQuality): THREE.Group {
+function createActivityActor(
+  activity: StreetActivity,
+  placement: { position: THREE.Vector3; rotationY: number },
+  servicePoint: THREE.Vector3,
+  currentWorldTime: number,
+  quality: GraphicsQuality,
+  laneIndex = 0
+): THREE.Group {
   const variant = activityActorVariant(activity);
   const character = createNpcCharacter(variant, quality);
   const front = machineFrontVector(placement.rotationY).normalize();
   const side = new THREE.Vector3(-front.z, 0, front.x);
   const sideDirection = activity.id.charCodeAt(activity.id.length - 1) % 2 === 0 ? 1 : -1;
-  const approach = servicePoint.clone().add(front.clone().multiplyScalar(1.45));
-  const start = approach.clone().add(side.clone().multiplyScalar(1.6 * sideDirection));
-  const stop = servicePoint.clone().add(front.clone().multiplyScalar(activity.kind === "rival_scout" ? 1.25 : 0.42));
-  const exit = approach.clone().add(side.clone().multiplyScalar(-1.8 * sideDirection)).add(front.clone().multiplyScalar(0.55));
+  const laneOffset = ((laneIndex % 3) - 1) * 0.38;
+  const approach = servicePoint.clone().add(front.clone().multiplyScalar(1.95 + (laneIndex % 2) * 0.34));
+  const start = approach.clone().add(side.clone().multiplyScalar((1.95 + laneIndex * 0.16) * sideDirection));
+  const stopDistance = activity.kind === "rival_scout" ? 1.35 : 0.95;
+  const stop = servicePoint
+    .clone()
+    .add(front.clone().multiplyScalar(stopDistance))
+    .add(side.clone().multiplyScalar((0.52 + Math.abs(laneOffset)) * sideDirection));
+  const exit = approach.clone().add(side.clone().multiplyScalar((-2.15 - laneIndex * 0.12) * sideDirection)).add(front.clone().multiplyScalar(0.7));
 
   character.position.copy(start);
   character.scale.setScalar(activity.kind === "customer_complaint" ? 1.02 : 0.96);
@@ -1511,11 +1576,14 @@ function createAmbientMachineActor(machine: VendingMachine, location: Location, 
   const front = machineFrontVector(placement.rotationY).normalize();
   const side = new THREE.Vector3(-front.z, 0, front.x);
   const sideDirection = index % 2 === 0 ? 1 : -1;
-  const trafficOffset = Math.max(0.7, location.footTraffic) * 0.24;
+  const trafficOffset = Math.max(0.7, location.footTraffic) * 0.32;
   const customerPull = machine.ownerFactionId === "player" ? Math.min(0.28, machine.revenueStored * 0.004) : 0;
-  const start = servicePoint.clone().add(front.clone().multiplyScalar(1.1 + trafficOffset)).add(side.clone().multiplyScalar((1.35 + index * 0.08) * sideDirection));
-  const linger = servicePoint.clone().add(front.clone().multiplyScalar(0.5 + trafficOffset * 0.2 - customerPull));
-  const exit = servicePoint.clone().add(front.clone().multiplyScalar(1.32 + trafficOffset)).add(side.clone().multiplyScalar((-1.45 - index * 0.06) * sideDirection));
+  const start = servicePoint.clone().add(front.clone().multiplyScalar(1.75 + trafficOffset)).add(side.clone().multiplyScalar((2.1 + index * 0.1) * sideDirection));
+  const linger = servicePoint
+    .clone()
+    .add(front.clone().multiplyScalar(1.0 + trafficOffset * 0.18 - customerPull))
+    .add(side.clone().multiplyScalar((0.72 + (index % 3) * 0.18) * sideDirection));
+  const exit = servicePoint.clone().add(front.clone().multiplyScalar(2.05 + trafficOffset)).add(side.clone().multiplyScalar((-2.2 - index * 0.08) * sideDirection));
 
   character.position.copy(start);
   character.scale.setScalar(machine.ownerFactionId === "player" ? 0.92 : 0.98);
@@ -1561,6 +1629,43 @@ function createAlarmIntruderActor(placement: { position: THREE.Vector3; rotation
   warning.position.set(0, 1.62, 0);
   character.add(warning);
   return character;
+}
+
+function renderedActivityLimit(quality: GraphicsQuality): number {
+  if (quality === "low") {
+    return 2;
+  }
+
+  return quality === "high" ? 5 : 4;
+}
+
+function activitySceneKey(activity: StreetActivity): string {
+  return activity.machineId ?? activity.locationId;
+}
+
+function selectRenderedActivities(activities: StreetActivity[], currentWorldTime: number, quality: GraphicsQuality): StreetActivity[] {
+  const maxActivities = renderedActivityLimit(quality);
+  const usedSceneKeys = new Set<string>();
+  const selected: StreetActivity[] = [];
+
+  for (const activity of activities) {
+    if (currentWorldTime - activity.hour > 0.9) {
+      continue;
+    }
+
+    const key = activitySceneKey(activity);
+    if (usedSceneKeys.has(key)) {
+      continue;
+    }
+
+    usedSceneKeys.add(key);
+    selected.push(activity);
+    if (selected.length >= maxActivities) {
+      break;
+    }
+  }
+
+  return selected;
 }
 
 function sceneFeedbackText(event: SceneFeedbackEvent): string {
@@ -2318,38 +2423,71 @@ function createPolicePatrolLayer(patrols: PolicePatrolPath[], maxPatrols: number
 function createTrafficVehicleMesh(loop: TrafficLoop, enableShadows: boolean, quality: GraphicsQuality): THREE.Group {
   const group = new THREE.Group();
   const bodyColor = loop.kind === "police" ? "#f8fafc" : loop.color;
-  const bodyMaterial = new THREE.MeshStandardMaterial({ color: bodyColor, roughness: 0.48, metalness: 0.08 });
+  const bodyMaterial = new THREE.MeshStandardMaterial({ color: bodyColor, roughness: 0.42, metalness: 0.12 });
+  const secondaryBodyMaterial = new THREE.MeshStandardMaterial({ color: bodyColor, roughness: 0.5, metalness: 0.08 });
   const trimMaterial = new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.52, metalness: 0.18 });
-  const glassMaterial = new THREE.MeshBasicMaterial({ color: "#bae6fd", transparent: true, opacity: 0.58 });
+  const tireMaterial = new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.72, metalness: 0.08 });
+  const hubMaterial = new THREE.MeshStandardMaterial({ color: "#cbd5e1", roughness: 0.34, metalness: 0.42 });
+  const glassMaterial = new THREE.MeshBasicMaterial({ color: "#bae6fd", transparent: true, opacity: 0.6 });
   const length = loop.kind === "delivery" ? WORLD_SCALE.vehicle.deliveryLength : loop.kind === "police" ? WORLD_SCALE.vehicle.policeLength : WORLD_SCALE.vehicle.length;
   const width = loop.kind === "delivery" ? WORLD_SCALE.vehicle.deliveryWidth : loop.kind === "police" ? WORLD_SCALE.vehicle.policeWidth : WORLD_SCALE.vehicle.width;
-  const bodyHeight = loop.kind === "delivery" ? 1.02 : 0.72;
-  const cabHeight = loop.kind === "delivery" ? 0.82 : 0.68;
-  const cabDepth = loop.kind === "delivery" ? 1.2 : 1.05;
+  const bodyHeight = loop.kind === "delivery" ? 1.05 : 0.72;
+  const cabHeight = loop.kind === "delivery" ? 0.82 : 0.66;
   const wheelRadius = loop.kind === "delivery" ? 0.38 : 0.34;
+  const baseY = wheelRadius + 0.14;
 
-  const body = new THREE.Mesh(new THREE.BoxGeometry(width, bodyHeight, length), bodyMaterial);
-  body.position.y = wheelRadius + 0.12 + bodyHeight / 2;
+  const chassis = new THREE.Mesh(new THREE.BoxGeometry(width * 0.82, 0.16, length * 0.84), trimMaterial);
+  chassis.position.y = baseY;
+  chassis.castShadow = enableShadows;
+  chassis.receiveShadow = enableShadows;
+  group.add(chassis);
+
+  const bodyDepth = loop.kind === "delivery" ? length * 0.56 : length * 0.58;
+  const body = new THREE.Mesh(roundedBox(width * 0.92, bodyHeight * 0.74, bodyDepth, 0.08, quality), bodyMaterial);
+  body.position.set(0, baseY + bodyHeight * 0.42, loop.kind === "delivery" ? length * 0.14 : 0.06);
   body.castShadow = enableShadows;
   body.receiveShadow = enableShadows;
   group.add(body);
 
-  const cab = new THREE.Mesh(new THREE.BoxGeometry(width * 0.72, cabHeight, cabDepth), glassMaterial);
-  cab.position.set(0, body.position.y + bodyHeight / 2 + cabHeight / 2 - 0.12, -length * 0.18);
+  const hood = new THREE.Mesh(roundedBox(width * 0.8, bodyHeight * 0.34, length * 0.2, 0.08, quality), secondaryBodyMaterial);
+  hood.position.set(0, baseY + bodyHeight * 0.42, -length * 0.34);
+  hood.castShadow = enableShadows;
+  hood.receiveShadow = enableShadows;
+  group.add(hood);
+
+  const rearDeck = new THREE.Mesh(roundedBox(width * 0.78, bodyHeight * 0.3, length * 0.2, 0.07, quality), secondaryBodyMaterial);
+  rearDeck.position.set(0, baseY + bodyHeight * 0.42, length * 0.34);
+  rearDeck.castShadow = enableShadows;
+  rearDeck.receiveShadow = enableShadows;
+  if (loop.kind !== "delivery") {
+    group.add(rearDeck);
+  }
+
+  const cabWidth = loop.kind === "delivery" ? width * 0.72 : width * 0.74;
+  const cabDepth = loop.kind === "delivery" ? length * 0.22 : length * 0.28;
+  const cabZ = loop.kind === "delivery" ? -length * 0.22 : -length * 0.06;
+  const cab = new THREE.Mesh(roundedBox(cabWidth, cabHeight, cabDepth, 0.09, quality), glassMaterial);
+  cab.position.set(0, baseY + bodyHeight * 0.74 + cabHeight / 2 - 0.08, cabZ);
   group.add(cab);
 
   if (quality !== "low") {
     const bumperMaterial = new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.42, metalness: 0.2 });
     for (const z of [-length / 2 - 0.04, length / 2 + 0.04]) {
       const bumper = new THREE.Mesh(new THREE.BoxGeometry(width * 0.86, 0.1, 0.08), bumperMaterial);
-      bumper.position.set(0, wheelRadius + 0.26, z);
+      bumper.position.set(0, baseY + 0.18, z);
       group.add(bumper);
+    }
+
+    for (const side of [-1, 1]) {
+      const sideGlass = new THREE.Mesh(new THREE.BoxGeometry(0.035, cabHeight * 0.5, cabDepth * 0.58), glassMaterial);
+      sideGlass.position.set(side * (cabWidth / 2 + 0.025), cab.position.y + 0.02, cabZ);
+      group.add(sideGlass);
     }
   }
 
   if (loop.kind === "police") {
-    const stripe = new THREE.Mesh(new THREE.BoxGeometry(width + 0.04, 0.1, length * 0.9), new THREE.MeshBasicMaterial({ color: "#1d4ed8" }));
-    stripe.position.set(0, body.position.y + 0.05, 0);
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(width + 0.04, 0.1, length * 0.72), new THREE.MeshBasicMaterial({ color: "#1d4ed8" }));
+    stripe.position.set(0, baseY + bodyHeight * 0.55, 0);
     group.add(stripe);
     const lightbar = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.1, 0.2), new THREE.MeshBasicMaterial({ color: "#ef4444" }));
     lightbar.position.set(0, cab.position.y + cabHeight / 2 + 0.07, -0.08);
@@ -2358,30 +2496,48 @@ function createTrafficVehicleMesh(loop: TrafficLoop, enableShadows: boolean, qua
   }
 
   if (loop.kind === "delivery") {
+    const cargoBox = new THREE.Mesh(roundedBox(width * 0.94, bodyHeight * 1.04, length * 0.5, 0.08, quality), bodyMaterial);
+    cargoBox.position.set(0, baseY + bodyHeight * 0.62, length * 0.15);
+    cargoBox.castShadow = enableShadows;
+    cargoBox.receiveShadow = enableShadows;
+    group.add(cargoBox);
+
     const cargoLine = new THREE.Mesh(new THREE.BoxGeometry(width + 0.04, 0.1, length * 0.42), new THREE.MeshBasicMaterial({ color: "#451a03" }));
-    cargoLine.position.set(0, body.position.y + 0.12, length * 0.16);
+    cargoLine.position.set(0, baseY + bodyHeight * 0.72, length * 0.16);
     group.add(cargoLine);
     if (quality === "high") {
       const cargoDoor = new THREE.Mesh(new THREE.BoxGeometry(width * 0.78, 0.68, 0.035), new THREE.MeshStandardMaterial({ color: "#78350f", roughness: 0.55, metalness: 0.08 }));
-      cargoDoor.position.set(0, body.position.y + 0.08, length / 2 + 0.02);
+      cargoDoor.position.set(0, baseY + bodyHeight * 0.62, length / 2 + 0.02);
       group.add(cargoDoor);
     }
   }
 
   for (const x of [-width / 2 - 0.05, width / 2 + 0.05]) {
     for (const z of [-length * 0.32, length * 0.34]) {
-      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(wheelRadius, wheelRadius, 0.16, quality === "low" ? 10 : 16), trimMaterial);
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(wheelRadius, wheelRadius, 0.17, quality === "low" ? 12 : 22), tireMaterial);
       wheel.position.set(x, wheelRadius, z);
       wheel.rotation.z = Math.PI / 2;
       wheel.castShadow = enableShadows;
       group.add(wheel);
+
+      if (quality !== "low") {
+        const hub = new THREE.Mesh(new THREE.CylinderGeometry(wheelRadius * 0.44, wheelRadius * 0.44, 0.18, 14), hubMaterial);
+        hub.position.copy(wheel.position);
+        hub.rotation.z = Math.PI / 2;
+        group.add(hub);
+
+        const arch = new THREE.Mesh(new THREE.TorusGeometry(wheelRadius * 1.1, 0.028, 8, 20, Math.PI), trimMaterial);
+        arch.position.set(x, wheelRadius + 0.14, z);
+        arch.rotation.x = Math.PI / 2;
+        group.add(arch);
+      }
     }
   }
 
   const headlightMaterial = new THREE.MeshBasicMaterial({ color: "#fde68a", transparent: true, opacity: 0.76 });
   for (const x of [-width * 0.24, width * 0.24]) {
     const light = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.08, 0.024), headlightMaterial);
-    light.position.set(x, body.position.y + 0.02, -length / 2 - 0.015);
+    light.position.set(x, baseY + bodyHeight * 0.42, -length / 2 - 0.015);
     group.add(light);
   }
 
@@ -2389,7 +2545,7 @@ function createTrafficVehicleMesh(loop: TrafficLoop, enableShadows: boolean, qua
     const tailLightMaterial = new THREE.MeshBasicMaterial({ color: "#ef4444", transparent: true, opacity: 0.78 });
     for (const x of [-width * 0.26, width * 0.26]) {
       const tail = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.07, 0.024), tailLightMaterial);
-      tail.position.set(x, body.position.y + 0.01, length / 2 + 0.015);
+      tail.position.set(x, baseY + bodyHeight * 0.42, length / 2 + 0.015);
       group.add(tail);
     }
   }
@@ -2794,16 +2950,20 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
     }
   }
 
+  const renderedActivities = selectRenderedActivities(currentState.streetLife?.recentActivities ?? [], currentState.worldTimeHours, quality);
+  const activityMachineIds = new Set(renderedActivities.map((activity) => activity.machineId).filter((machineId): machineId is MachineId => Boolean(machineId)));
+
   Object.values(currentState.machines)
     .filter((machine) => (machine.placementStatus ?? "installed") === "installed")
     .filter((machine) => machine.damage < 96)
     .filter((machine) => !activeAlarmByMachine.has(machine.id))
+    .filter((machine) => !activityMachineIds.has(machine.id))
     .sort((a, b) => {
       const aLocation = currentState.locations[a.locationId];
       const bLocation = currentState.locations[b.locationId];
       return (bLocation?.footTraffic ?? 0) + b.revenueStored * 0.004 - ((aLocation?.footTraffic ?? 0) + a.revenueStored * 0.004);
     })
-    .slice(0, quality === "low" ? 4 : quality === "high" ? 12 : 9)
+    .slice(0, quality === "low" ? 2 : quality === "high" ? 5 : 4)
     .forEach((machine, index) => {
       const location = currentState.locations[machine.locationId];
       if (!location) {
@@ -2813,10 +2973,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       group.add(createAmbientMachineActor(machine, location, index, currentState.worldTimeHours, quality));
     });
 
-  const recentActivities = currentState.streetLife?.recentActivities ?? [];
-  recentActivities
-    .filter((activity) => currentState.worldTimeHours - activity.hour <= 1.25)
-    .slice(0, quality === "low" ? 4 : quality === "high" ? 10 : 8)
+  renderedActivities
     .forEach((activity, index) => {
       const machine = activity.machineId ? currentState.machines[activity.machineId] : undefined;
       const location = machine ? currentState.locations[machine.locationId] : currentState.locations[activity.locationId];
@@ -2837,7 +2994,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
         pulse.userData.phase = index * 0.7;
         group.add(pulse);
 
-        const actor = createActivityActor(activity, placement, servicePoint, currentState.worldTimeHours, quality);
+        const actor = createActivityActor(activity, placement, servicePoint, currentState.worldTimeHours, quality, index);
         actor.userData.phase = index * 0.9 + activity.hour;
         group.add(actor);
       }
