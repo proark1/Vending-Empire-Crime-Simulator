@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { defaultWorldMapLayout, locations, machinePlacementAnchors, patrolZones, policePatrolPaths, trafficLoops, worldBuildings, worldDecorations, worldInteriors, worldRoads } from "./world";
+import { defaultWorldMapLayout, districts, locations, machinePlacementAnchors, patrolZones, policePatrolPaths, trafficLoops, worldBounds, worldBuildings, worldDecorations, worldInteriors, worldRoads } from "./world";
 import { createInitialState } from "./initialState";
-import { pathOnRoads, pointOnRoad } from "../world/roadGraph";
+import { connectedRoadComponents, pathOnRoads, pointOnRoad } from "../world/roadGraph";
 import { rectsIntersect, validateWorldMapLayout } from "../world/mapLayoutStorage";
 import { WORLD_SCALE } from "../world/scale";
 import { roadFootprintBounds, sidewalkFootprintBounds, sidewalkFootprintsForRoads } from "../world/sidewalks";
@@ -66,6 +66,25 @@ describe("world content", () => {
       }
 
       expect(pathOnRoads(loop.path, worldRoads), `${loop.id} drives outside road geometry`).toBe(true);
+    }
+  });
+
+  it("keeps the authored street network connected", () => {
+    const components = connectedRoadComponents(worldRoads);
+
+    expect(components.map((component) => component.map((road) => road.id))).toHaveLength(1);
+  });
+
+  it("expands the city with dense authored districts instead of empty fields", () => {
+    expect(worldBounds.maxX - worldBounds.minX).toBeGreaterThanOrEqual(240);
+    expect(worldBounds.maxZ - worldBounds.minZ).toBeGreaterThanOrEqual(180);
+    expect(worldRoads.length).toBeGreaterThanOrEqual(40);
+    expect(Object.keys(locations).length).toBeGreaterThanOrEqual(34);
+
+    for (const districtId of Object.keys(districts)) {
+      expect(worldRoads.filter((road) => road.districtId === districtId).length, `${districtId} has too few roads`).toBeGreaterThanOrEqual(2);
+      expect(worldBuildings.filter((building) => building.districtId === districtId).length, `${districtId} has too few buildings`).toBeGreaterThanOrEqual(6);
+      expect(worldDecorations.filter((decoration) => decoration.districtId === districtId).length, `${districtId} has too few props`).toBeGreaterThanOrEqual(5);
     }
   });
 

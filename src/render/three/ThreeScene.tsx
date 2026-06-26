@@ -60,9 +60,19 @@ interface RectBounds {
 }
 
 interface WorldChunkRuntime {
+  built: boolean;
   group: THREE.Group;
   indexX: number;
   indexZ: number;
+  key: string;
+}
+
+type WorldChunkBuildJob = (chunk: WorldChunkRuntime) => void;
+
+interface WorldChunkBuildSpec {
+  indexX: number;
+  indexZ: number;
+  jobs: WorldChunkBuildJob[];
   key: string;
 }
 
@@ -186,6 +196,11 @@ function chunkKey(indexX: number, indexZ: number): string {
   return `${indexX}:${indexZ}`;
 }
 
+function parseChunkKey(key: string): { indexX: number; indexZ: number } {
+  const [x, z] = key.split(":").map(Number);
+  return { indexX: Number.isFinite(x) ? x : 0, indexZ: Number.isFinite(z) ? z : 0 };
+}
+
 function getOrCreateWorldChunk(chunks: Map<string, WorldChunkRuntime>, parent: THREE.Object3D, indexX: number, indexZ: number): WorldChunkRuntime {
   const key = chunkKey(indexX, indexZ);
   const existing = chunks.get(key);
@@ -198,9 +213,21 @@ function getOrCreateWorldChunk(chunks: Map<string, WorldChunkRuntime>, parent: T
   group.name = `world-chunk-${key}`;
   parent.add(group);
 
-  const chunk = { group, indexX, indexZ, key };
+  const chunk = { built: false, group, indexX, indexZ, key };
   chunks.set(key, chunk);
   return chunk;
+}
+
+function getOrCreateWorldChunkSpec(specs: Map<string, WorldChunkBuildSpec>, indexX: number, indexZ: number): WorldChunkBuildSpec {
+  const key = chunkKey(indexX, indexZ);
+  const existing = specs.get(key);
+  if (existing) {
+    return existing;
+  }
+
+  const spec = { indexX, indexZ, jobs: [], key };
+  specs.set(key, spec);
+  return spec;
 }
 
 function chunkBounds(indexX: number, indexZ: number): RectBounds {
@@ -227,6 +254,19 @@ function addObjectToWorldChunk(chunks: Map<string, WorldChunkRuntime>, parent: T
   const indexX = chunkIndexForCoordinate(x, worldBounds.minX);
   const indexZ = chunkIndexForCoordinate(z, worldBounds.minZ);
   getOrCreateWorldChunk(chunks, parent, indexX, indexZ).group.add(object);
+}
+
+function addObjectBuildJobToWorldChunk(
+  specs: Map<string, WorldChunkBuildSpec>,
+  createObject: () => THREE.Object3D,
+  x: number,
+  z: number
+): void {
+  const indexX = chunkIndexForCoordinate(x, worldBounds.minX);
+  const indexZ = chunkIndexForCoordinate(z, worldBounds.minZ);
+  getOrCreateWorldChunkSpec(specs, indexX, indexZ).jobs.push((chunk) => {
+    chunk.group.add(createObject());
+  });
 }
 
 function addRectMeshesToWorldChunks(
@@ -262,6 +302,40 @@ function addRectMeshesToWorldChunks(
   }
 }
 
+function addRectMeshBuildJobsToWorldChunks(
+  specs: Map<string, WorldChunkBuildSpec>,
+  bounds: RectBounds,
+  y: number,
+  height: number,
+  material: THREE.Material,
+  configure?: (mesh: THREE.Mesh) => void
+): void {
+  const range = chunkRangeForBounds(bounds);
+
+  for (let indexX = range.minIndexX; indexX <= range.maxIndexX; indexX += 1) {
+    for (let indexZ = range.minIndexZ; indexZ <= range.maxIndexZ; indexZ += 1) {
+      const currentChunkBounds = chunkBounds(indexX, indexZ);
+      const minX = Math.max(bounds.minX, currentChunkBounds.minX);
+      const maxX = Math.min(bounds.maxX, currentChunkBounds.maxX);
+      const minZ = Math.max(bounds.minZ, currentChunkBounds.minZ);
+      const maxZ = Math.min(bounds.maxZ, currentChunkBounds.maxZ);
+      const width = maxX - minX;
+      const depth = maxZ - minZ;
+
+      if (width <= 0.01 || depth <= 0.01) {
+        continue;
+      }
+
+      getOrCreateWorldChunkSpec(specs, indexX, indexZ).jobs.push((chunk) => {
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), material);
+        mesh.position.set((minX + maxX) / 2, y, (minZ + maxZ) / 2);
+        configure?.(mesh);
+        chunk.group.add(mesh);
+      });
+    }
+  }
+}
+
 function updateWorldChunkVisibility(chunks: Iterable<WorldChunkRuntime>, position: THREE.Vector3, radius: number): void {
   const currentIndexX = chunkIndexForCoordinate(position.x, worldBounds.minX);
   const currentIndexZ = chunkIndexForCoordinate(position.z, worldBounds.minZ);
@@ -269,6 +343,86 @@ function updateWorldChunkVisibility(chunks: Iterable<WorldChunkRuntime>, positio
   for (const chunk of chunks) {
     chunk.group.visible = Math.abs(chunk.indexX - currentIndexX) <= radius && Math.abs(chunk.indexZ - currentIndexZ) <= radius;
   }
+}
+
+function enqueueWorldChunksNear(
+  specs: Map<string, WorldChunkBuildSpec>,
+  chunks: Map<string, WorldChunkRuntime>,
+  queue: string[],
+  queued: Set<string>,
+  position: THREE.Vector3,
+  radius: number
+): void {
+  const currentIndexX = chunkIndexForCoordinate(position.x, worldBounds.minX);
+  const currentIndexZ = chunkIndexForCoordinate(position.z, worldBounds.minZ);
+  const candidates: Array<{ distance: number; key: string }> = [];
+
+  for (let indexX = currentIndexX - radius; indexX <= currentIndexX + radius; indexX += 1) {
+    for (let indexZ = currentIndexZ - radius; indexZ <= currentIndexZ + radius; indexZ += 1) {
+      const key = chunkKey(indexX, indexZ);
+      const runtime = chunks.get(key);
+      if (!specs.has(key) || runtime?.built || queued.has(key)) {
+        continue;
+      }
+
+      candidates.push({
+        distance: Math.abs(indexX - currentIndexX) + Math.abs(indexZ - currentIndexZ),
+        key
+      });
+    }
+  }
+
+  candidates
+    .sort((a, b) => a.distance - b.distance)
+    .forEach((candidate) => {
+      queued.add(candidate.key);
+      queue.push(candidate.key);
+    });
+
+  queue.sort((a, b) => {
+    const first = parseChunkKey(a);
+    const second = parseChunkKey(b);
+    return Math.abs(first.indexX - currentIndexX) + Math.abs(first.indexZ - currentIndexZ)
+      - (Math.abs(second.indexX - currentIndexX) + Math.abs(second.indexZ - currentIndexZ));
+  });
+}
+
+function processWorldChunkBuildQueue(
+  specs: Map<string, WorldChunkBuildSpec>,
+  chunks: Map<string, WorldChunkRuntime>,
+  parent: THREE.Object3D,
+  queue: string[],
+  queued: Set<string>,
+  maxChunks: number,
+  budgetMs: number
+): number {
+  const startedAt = performance.now();
+  let built = 0;
+
+  while (queue.length > 0 && built < maxChunks && performance.now() - startedAt <= budgetMs) {
+    const key = queue.shift();
+    if (!key) {
+      break;
+    }
+
+    queued.delete(key);
+    const spec = specs.get(key);
+    if (!spec) {
+      continue;
+    }
+
+    const chunk = getOrCreateWorldChunk(chunks, parent, spec.indexX, spec.indexZ);
+    if (chunk.built) {
+      continue;
+    }
+
+    chunk.group.visible = false;
+    spec.jobs.forEach((job) => job(chunk));
+    chunk.built = true;
+    built += 1;
+  }
+
+  return built;
 }
 
 function machineFrontVector(rotationY: number): THREE.Vector3 {
@@ -2675,6 +2829,48 @@ function addRoadMarkingsToChunks(chunks: Map<string, WorldChunkRuntime>, parent:
   }
 }
 
+function addRoadMarkingBuildJobsToChunks(specs: Map<string, WorldChunkBuildSpec>, road: WorldRoad): void {
+  const bounds = roadBounds(road);
+  const profile = districtVisualProfiles[road.districtId] ?? districtVisualProfiles.starter_suburb;
+  const laneMaterial = new THREE.MeshBasicMaterial({ color: profile.laneColor, transparent: true, opacity: 0.82 });
+  const curbMaterial = new THREE.MeshBasicMaterial({ color: profile.curbColor, transparent: true, opacity: 0.72 });
+  const horizontal = road.width >= road.depth;
+  const dashLength = 2.1;
+  const dashGap = 2.6;
+  const y = 0.095;
+
+  if (horizontal) {
+    for (let x = bounds.minX + 1.2; x < bounds.maxX - 0.8; x += dashLength + dashGap) {
+      const width = Math.min(dashLength, bounds.maxX - x - 0.8);
+      const dashX = x + width / 2;
+      addObjectBuildJobToWorldChunk(specs, () => {
+        const dash = new THREE.Mesh(new THREE.BoxGeometry(width, 0.012, 0.065), laneMaterial);
+        dash.position.set(dashX, y, road.z);
+        return dash;
+      }, dashX, road.z);
+    }
+
+    for (const z of [bounds.minZ + 0.16, bounds.maxZ - 0.16]) {
+      addRectMeshBuildJobsToWorldChunks(specs, { minX: bounds.minX, maxX: bounds.maxX, minZ: z - 0.025, maxZ: z + 0.025 }, y + 0.002, 0.014, curbMaterial);
+    }
+    return;
+  }
+
+  for (let z = bounds.minZ + 1.2; z < bounds.maxZ - 0.8; z += dashLength + dashGap) {
+    const depth = Math.min(dashLength, bounds.maxZ - z - 0.8);
+    const dashZ = z + depth / 2;
+    addObjectBuildJobToWorldChunk(specs, () => {
+      const dash = new THREE.Mesh(new THREE.BoxGeometry(0.065, 0.012, depth), laneMaterial);
+      dash.position.set(road.x, y, dashZ);
+      return dash;
+    }, road.x, dashZ);
+  }
+
+  for (const x of [bounds.minX + 0.16, bounds.maxX - 0.16]) {
+    addRectMeshBuildJobsToWorldChunks(specs, { minX: x - 0.025, maxX: x + 0.025, minZ: bounds.minZ, maxZ: bounds.maxZ }, y + 0.002, 0.014, curbMaterial);
+  }
+}
+
 function createWorldDecoration(decoration: WorldDecoration, enableLocalLights: boolean, quality: GraphicsQuality): THREE.Group {
   const group = new THREE.Group();
   const color = decoration.color ?? "#94a3b8";
@@ -3210,27 +3406,30 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
 
     scene.add(createDistrictTintOverlay(stateRef.current));
 
+    const staticChunkSpecs = new Map<string, WorldChunkBuildSpec>();
     const staticChunks = new Map<string, WorldChunkRuntime>();
-    const addStaticObject = (object: THREE.Object3D, x: number, z: number) => {
-      addObjectToWorldChunk(staticChunks, scene, object, x, z);
+    const staticChunkQueue: string[] = [];
+    const queuedStaticChunks = new Set<string>();
+    const animatedProps: THREE.Object3D[] = [];
+    const addStaticObject = (createObject: () => THREE.Object3D, x: number, z: number) => {
+      addObjectBuildJobToWorldChunk(staticChunkSpecs, createObject, x, z);
     };
     const roadMaterial = createRoadMaterial(renderProfile.detail);
     const sidewalkMaterial = createSidewalkMaterial(renderProfile.detail);
     const sidewalks = sidewalkFootprintsForRoads(mapLayout.roads, mapLayout.buildings);
 
     for (const road of mapLayout.roads) {
-      addRectMeshesToWorldChunks(staticChunks, scene, roadBounds(road), 0.025, 0.035, roadMaterial, (mesh) => {
+      addRectMeshBuildJobsToWorldChunks(staticChunkSpecs, roadBounds(road), 0.025, 0.035, roadMaterial, (mesh) => {
         mesh.receiveShadow = true;
       });
       if (renderProfile.detail !== "low") {
-        addRoadMarkingsToChunks(staticChunks, scene, road);
+        addRoadMarkingBuildJobsToChunks(staticChunkSpecs, road);
       }
     }
 
     for (const sidewalk of sidewalks) {
-      addRectMeshesToWorldChunks(
-        staticChunks,
-        scene,
+      addRectMeshBuildJobsToWorldChunks(
+        staticChunkSpecs,
         {
           minX: sidewalk.x - sidewalk.width / 2,
           maxX: sidewalk.x + sidewalk.width / 2,
@@ -3252,46 +3451,54 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
         continue;
       }
 
-      const buildingGroup = createBuilding(building.width, building.depth, building.height, building.style, building.signText, renderProfile.detail);
-      buildingGroup.position.set(building.x, 0, building.z);
-      applyModelTransformById(buildingGroup, modelConfig, "building.storefront");
-      addStaticObject(buildingGroup, building.x, building.z);
+      addStaticObject(() => {
+        const buildingGroup = createBuilding(building.width, building.depth, building.height, building.style, building.signText, renderProfile.detail);
+        buildingGroup.position.set(building.x, 0, building.z);
+        applyModelTransformById(buildingGroup, modelConfig, "building.storefront");
+        return buildingGroup;
+      }, building.x, building.z);
     }
 
     for (const interior of mapLayout.interiors) {
-      addStaticObject(createInteriorCell(interior, renderProfile.detail), interior.x, interior.z);
+      addStaticObject(() => createInteriorCell(interior, renderProfile.detail), interior.x, interior.z);
     }
 
     mapLayout.backdropBuildings.slice(0, renderProfile.maxBackdropBuildings).forEach((building) => {
-      const backdrop = createBackdropBuilding(building, renderProfile.detail);
-      applyModelTransformById(backdrop, modelConfig, "building.backdrop");
-      addStaticObject(backdrop, building.x, building.z);
+      addStaticObject(() => {
+        const backdrop = createBackdropBuilding(building, renderProfile.detail);
+        applyModelTransformById(backdrop, modelConfig, "building.backdrop");
+        return backdrop;
+      }, building.x, building.z);
     });
 
     mapLayout.patrolZones.slice(0, renderProfile.maxPatrolZones).forEach((zone) => {
-      addStaticObject(createPatrolZone(zone), zone.x, zone.z);
+      addStaticObject(() => createPatrolZone(zone), zone.x, zone.z);
     });
 
     for (const decoration of mapLayout.decorations.slice(0, renderProfile.decorationLimit)) {
-      const decorationGroup = createWorldDecoration(decoration, renderProfile.enableLocalLights, renderProfile.detail);
-      applyModelTransformById(decorationGroup, modelConfig, `prop.${decoration.kind}`);
-      addStaticObject(decorationGroup, decoration.x, decoration.z);
+      addStaticObject(() => {
+        const decorationGroup = createWorldDecoration(decoration, renderProfile.enableLocalLights, renderProfile.detail);
+        applyModelTransformById(decorationGroup, modelConfig, `prop.${decoration.kind}`);
+        return decorationGroup;
+      }, decoration.x, decoration.z);
     }
 
     for (const label of districtLabels) {
       const district = stateRef.current.districts[label.districtId];
       if (district) {
-        const labelGroup = new THREE.Group();
-        const profile = districtVisualProfiles[label.districtId] ?? districtVisualProfiles.starter_suburb;
-        const marker = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.34, 0.34, 0.08, 24),
-          new THREE.MeshBasicMaterial({ color: profile.accentColor, transparent: true, opacity: 0.75 })
-        );
-        marker.position.y = 0.09;
-        labelGroup.add(marker);
-        addLabel(labelGroup, district.name, label.color, new THREE.Vector3(0, 0, 0), 1.35);
-        labelGroup.position.set(label.x, 0, label.z);
-        addStaticObject(labelGroup, label.x, label.z);
+        addStaticObject(() => {
+          const labelGroup = new THREE.Group();
+          const profile = districtVisualProfiles[label.districtId] ?? districtVisualProfiles.starter_suburb;
+          const marker = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.34, 0.34, 0.08, 24),
+            new THREE.MeshBasicMaterial({ color: profile.accentColor, transparent: true, opacity: 0.75 })
+          );
+          marker.position.y = 0.09;
+          labelGroup.add(marker);
+          addLabel(labelGroup, district.name, label.color, new THREE.Vector3(0, 0, 0), 1.35);
+          labelGroup.position.set(label.x, 0, label.z);
+          return labelGroup;
+        }, label.x, label.z);
       }
     }
 
@@ -3300,7 +3507,6 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       maxNpcs: renderProfile.maxAmbientNpcs,
       quality: renderProfile.detail
     });
-    const animatedProps: THREE.Object3D[] = [];
     streetProps.traverse((object) => {
       if (object.userData.floatSpeed) {
         animatedProps.push(object);
@@ -3309,7 +3515,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     [...streetProps.children].forEach((child) => {
       const worldPosition = new THREE.Vector3();
       child.getWorldPosition(worldPosition);
-      addStaticObject(child, worldPosition.x, worldPosition.z);
+      addStaticObject(() => child, worldPosition.x, worldPosition.z);
     });
 
     const trafficLayer = createTrafficLayer(mapLayout.trafficLoops, mapLayout.roads, renderProfile.maxTrafficLoops, renderProfile.enableShadows, renderProfile.detail, modelConfig);
@@ -3320,9 +3526,13 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     scene.add(trafficLayer.group);
     scene.add(policePatrolLayer.group);
 
-    const staticChunkRuntimes = Array.from(staticChunks.values());
     const activeChunkRadius = renderProfile.chunkRadius;
-    updateWorldChunkVisibility(staticChunkRuntimes, yaw.position, activeChunkRadius);
+    const preloadChunkRadius = activeChunkRadius + 1;
+    const chunkBuildBudgetMs = renderProfile.lowPower ? 2.5 : renderProfile.detail === "high" ? 6 : 4;
+    const chunksPerFrame = renderProfile.lowPower ? 1 : renderProfile.detail === "high" ? 3 : 2;
+    enqueueWorldChunksNear(staticChunkSpecs, staticChunks, staticChunkQueue, queuedStaticChunks, yaw.position, preloadChunkRadius);
+    processWorldChunkBuildQueue(staticChunkSpecs, staticChunks, scene, staticChunkQueue, queuedStaticChunks, chunksPerFrame, chunkBuildBudgetMs);
+    updateWorldChunkVisibility(staticChunks.values(), yaw.position, activeChunkRadius);
 
     const dynamicGroup = new THREE.Group();
     scene.add(dynamicGroup);
@@ -3516,9 +3726,22 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
         onPlayerHeadingChangeRef.current(THREE.MathUtils.radToDeg(-yaw.rotation.y));
       }
 
-      if (playerMoved || time - lastChunkVisibilityUpdate > 500) {
+      const shouldRefreshChunks = playerMoved || time - lastChunkVisibilityUpdate > 500 || staticChunkQueue.length === 0;
+      if (shouldRefreshChunks) {
+        enqueueWorldChunksNear(staticChunkSpecs, staticChunks, staticChunkQueue, queuedStaticChunks, yaw.position, preloadChunkRadius);
+      }
+      const chunksBuilt = processWorldChunkBuildQueue(
+        staticChunkSpecs,
+        staticChunks,
+        scene,
+        staticChunkQueue,
+        queuedStaticChunks,
+        chunksPerFrame,
+        chunkBuildBudgetMs
+      );
+      if (shouldRefreshChunks || chunksBuilt > 0) {
         lastChunkVisibilityUpdate = time;
-        updateWorldChunkVisibility(staticChunkRuntimes, yaw.position, activeChunkRadius);
+        updateWorldChunkVisibility(staticChunks.values(), yaw.position, activeChunkRadius);
       }
 
       atmosphere.rotation.y += delta * 0.015;

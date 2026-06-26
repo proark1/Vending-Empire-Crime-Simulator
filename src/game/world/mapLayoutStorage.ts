@@ -4,6 +4,7 @@ import {
   districts,
   locations,
   machinePlacementAnchors,
+  worldBounds,
   type CityBackdropBuilding,
   type PatrolZone,
   type PolicePatrolPath,
@@ -14,12 +15,12 @@ import {
   type WorldMapLayout,
   type WorldRoad
 } from "../content/world";
-import { pathOnRoads } from "./roadGraph";
+import { disconnectedRoadIds, pathOnRoads } from "./roadGraph";
 import { WORLD_SCALE } from "./scale";
 import { sidewalkFootprintBounds, sidewalkFootprintsForRoads } from "./sidewalks";
 
 const MAP_LAYOUT_KEY = "vendetta-vending.map-layout.v1";
-const MAP_LAYOUT_VERSION = 2;
+const MAP_LAYOUT_VERSION = 3;
 
 interface StoredWorldMapLayout {
   layout: WorldMapLayout;
@@ -152,12 +153,7 @@ function inWorld(point: Vec2, margin = 0): boolean {
     && point.z <= defaultWorldBounds.maxZ + margin;
 }
 
-const defaultWorldBounds = {
-  minX: -90,
-  maxX: 88,
-  minZ: -64,
-  maxZ: 62
-};
+const defaultWorldBounds = worldBounds;
 
 function boundsWithinWorld(bounds: Bounds2, margin = 0): boolean {
   return bounds.minX >= defaultWorldBounds.minX - margin
@@ -263,6 +259,16 @@ export function validateWorldMapLayout(layout: WorldMapLayout): MapValidationIss
 
     validateRect(issues, "roads", roadFootprint(road), label);
   });
+
+  const disconnectedRoads = disconnectedRoadIds(layout.roads);
+  if (disconnectedRoads.length > 0) {
+    pushIssue(
+      issues,
+      "error",
+      "roads",
+      `Road network has disconnected streets: ${disconnectedRoads.slice(0, 8).join(", ")}${disconnectedRoads.length > 8 ? ", ..." : ""}.`
+    );
+  }
 
   layout.buildings.forEach((building, buildingIndex) => {
     const label = objectLabel(building, buildingIndex);

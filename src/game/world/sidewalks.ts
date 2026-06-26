@@ -132,7 +132,9 @@ export function sidewalkFootprintsForRoads(
     const blockers = [...otherRoads, ...buildingBlockers];
 
     return sidewalkStripsForRoad(road).flatMap((strip) => {
-      const pieces = subtractMany(footprintFromSidewalk(strip), blockers);
+      const stripBounds = footprintFromSidewalk(strip);
+      const localBlockers = blockers.filter((blocker) => rectsOverlap(stripBounds, blocker));
+      const pieces = subtractMany(stripBounds, localBlockers);
       return pieces
         .map((piece) => sidewalkFromFootprint(piece, road.id))
         .filter((piece): piece is SidewalkFootprint => Boolean(piece));

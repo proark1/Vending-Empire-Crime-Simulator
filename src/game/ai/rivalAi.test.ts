@@ -16,15 +16,15 @@ describe("rival AI", () => {
     };
 
     const commands = planNpcCommands(state);
+    const expansion = commands.find((command) => command.type === "rival_action" && command.action === "expand");
 
-    expect(commands).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          action: "expand",
-          locationId: "warehouse_club",
-          type: "rival_action"
-        })
-      ])
-    );
+    expect(expansion).toMatchObject({
+      action: "expand",
+      type: "rival_action"
+    });
+    if (!expansion || expansion.type !== "rival_action" || expansion.action !== "expand" || !expansion.locationId) {
+      throw new Error("Expected rival expansion to choose an industrial location");
+    }
+    expect(state.locations[expansion.locationId]?.districtId).toBe("industrial_yards");
   });
 });

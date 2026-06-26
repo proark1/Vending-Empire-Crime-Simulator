@@ -125,10 +125,10 @@ export interface WorldMapLayout {
 }
 
 export const worldBounds: Bounds2 = {
-  minX: -90,
-  maxX: 88,
-  minZ: -64,
-  maxZ: 62
+  minX: -126,
+  maxX: 124,
+  minZ: -92,
+  maxZ: 92
 };
 
 export const districts: Record<string, District> = {
@@ -138,7 +138,7 @@ export const districts: Record<string, District> = {
     description: "Low-rent starter blocks with forgiving demand and enough rivals to teach the route.",
     customerArchetypes: ["laundry regulars", "bus commuters", "cheap snack students"],
     riskFlavor: "low police pressure, small rival probes, forgiving landlords",
-    bounds: { minX: -14, maxX: 12, minZ: -10, maxZ: 12 },
+    bounds: { minX: -20, maxX: 20, minZ: -12, maxZ: 14 },
     heatTolerance: 35,
     rentMultiplier: 1,
     requiredContractsCompleted: 0,
@@ -155,7 +155,7 @@ export const districts: Record<string, District> = {
     description: "Warehouse routes with safer cash flow, longer drives, and steady worker traffic.",
     customerArchetypes: ["shift workers", "drivers", "gym crews", "warehouse supervisors"],
     riskFlavor: "long routes, ambush-prone service roads, lower inspection density",
-    bounds: { minX: -40, maxX: -18, minZ: -6, maxZ: 24 },
+    bounds: { minX: -124, maxX: -18, minZ: -8, maxZ: 84 },
     heatTolerance: 48,
     rentMultiplier: 1.12,
     requiredContractsCompleted: 1,
@@ -172,7 +172,7 @@ export const districts: Record<string, District> = {
     description: "High-traffic transit and office stops with more police attention and higher rent.",
     customerArchetypes: ["office workers", "transit crowds", "premium snack buyers"],
     riskFlavor: "strict inspections, corporate legal pressure, expensive placement rights",
-    bounds: { minX: 18, maxX: 38, minZ: -10, maxZ: 16 },
+    bounds: { minX: 18, maxX: 124, minZ: -12, maxZ: 52 },
     heatTolerance: 28,
     rentMultiplier: 1.55,
     requiredContractsCompleted: 2,
@@ -189,7 +189,7 @@ export const districts: Record<string, District> = {
     description: "Late-night arcades and market lanes where demand is rich but pressure climbs fast.",
     customerArchetypes: ["nightlife crowd", "arcade regulars", "after-hours contacts"],
     riskFlavor: "high grey demand, fast rival retaliation, volatile street reputation",
-    bounds: { minX: 4, maxX: 34, minZ: -32, maxZ: -18 },
+    bounds: { minX: 4, maxX: 124, minZ: -90, maxZ: -18 },
     heatTolerance: 24,
     rentMultiplier: 1.42,
     requiredContractsCompleted: 2,
@@ -206,7 +206,7 @@ export const districts: Record<string, District> = {
     description: "Dorms, library steps, and security booths with steady snack demand and strict patrols.",
     customerArchetypes: ["students", "campus staff", "late study groups"],
     riskFlavor: "steady demand, strict patrols, complaint-sensitive placements",
-    bounds: { minX: -58, maxX: -42, minZ: -38, maxZ: -14 },
+    bounds: { minX: -124, maxX: -42, minZ: -90, maxZ: -14 },
     heatTolerance: 26,
     rentMultiplier: 1.28,
     requiredContractsCompleted: 3,
@@ -223,7 +223,7 @@ export const districts: Record<string, District> = {
     description: "Motels, civic stonework, and dead-end alleys where rival pressure is baked into the rent.",
     customerArchetypes: ["tourists", "court clerks", "motel regulars", "street contacts"],
     riskFlavor: "dead-end chases, former-partner traps, profitable but unstable stops",
-    bounds: { minX: 42, maxX: 58, minZ: 18, maxZ: 42 },
+    bounds: { minX: 42, maxX: 124, minZ: 18, maxZ: 90 },
     heatTolerance: 22,
     rentMultiplier: 1.35,
     requiredContractsCompleted: 4,
@@ -544,6 +544,216 @@ export const locations: Record<string, Location> = {
     placementCost: 195,
     rivalPressure: 0.52,
     demandTags: ["arcade", "night"]
+  },
+  refinery_breakroom: {
+    id: "refinery_breakroom",
+    districtId: "industrial_yards",
+    name: "Refinery Breakroom",
+    kind: "transit",
+    position: { x: -101, z: 37 },
+    footTraffic: 1.38,
+    safety: 0.56,
+    policePresence: 0.16,
+    rentCost: 32,
+    placementCost: 185,
+    rivalPressure: 0.34,
+    demandTags: ["commuter", "utility"]
+  },
+  night_loading_bay: {
+    id: "night_loading_bay",
+    districtId: "industrial_yards",
+    name: "Night Loading Bay",
+    kind: "corner",
+    position: { x: -88, z: 59 },
+    footTraffic: 1.44,
+    safety: 0.4,
+    policePresence: 0.12,
+    rentCost: 35,
+    placementCost: 205,
+    rivalPressure: 0.5,
+    demandTags: ["night", "utility"]
+  },
+  truck_stop: {
+    id: "truck_stop",
+    districtId: "industrial_yards",
+    name: "Last Mile Truck Stop",
+    kind: "transit",
+    position: { x: -108, z: -15 },
+    footTraffic: 1.5,
+    safety: 0.5,
+    policePresence: 0.2,
+    rentCost: 36,
+    placementCost: 210,
+    rivalPressure: 0.36,
+    demandTags: ["commuter", "utility", "meal"]
+  },
+  hospital_station: {
+    id: "hospital_station",
+    districtId: "downtown_loop",
+    name: "County Hospital Station",
+    kind: "transit",
+    position: { x: 82, z: 3 },
+    footTraffic: 1.82,
+    safety: 0.74,
+    policePresence: 0.46,
+    rentCost: 54,
+    placementCost: 290,
+    rivalPressure: 0.24,
+    demandTags: ["commuter", "office", "utility"]
+  },
+  skybridge_kiosk: {
+    id: "skybridge_kiosk",
+    districtId: "downtown_loop",
+    name: "Skybridge Kiosk",
+    kind: "corner",
+    position: { x: 86, z: 25 },
+    footTraffic: 1.9,
+    safety: 0.68,
+    policePresence: 0.4,
+    rentCost: 56,
+    placementCost: 310,
+    rivalPressure: 0.32,
+    demandTags: ["commuter", "office"]
+  },
+  corporate_arcade: {
+    id: "corporate_arcade",
+    districtId: "downtown_loop",
+    name: "Corporate Arcade Lounge",
+    kind: "arcade",
+    position: { x: 99, z: 9 },
+    footTraffic: 1.72,
+    safety: 0.6,
+    policePresence: 0.36,
+    rentCost: 52,
+    placementCost: 300,
+    rivalPressure: 0.4,
+    demandTags: ["arcade", "office", "night"]
+  },
+  night_bazaar: {
+    id: "night_bazaar",
+    districtId: "neon_quarter",
+    name: "Underpass Night Bazaar",
+    kind: "arcade",
+    position: { x: 64, z: -42 },
+    footTraffic: 1.88,
+    safety: 0.38,
+    policePresence: 0.2,
+    rentCost: 44,
+    placementCost: 255,
+    rivalPressure: 0.58,
+    demandTags: ["arcade", "night", "commuter"]
+  },
+  cinema_row: {
+    id: "cinema_row",
+    districtId: "neon_quarter",
+    name: "Cinema Row",
+    kind: "corner",
+    position: { x: 80, z: -67 },
+    footTraffic: 1.7,
+    safety: 0.46,
+    policePresence: 0.18,
+    rentCost: 42,
+    placementCost: 245,
+    rivalPressure: 0.48,
+    demandTags: ["night", "student"]
+  },
+  tower_arcade: {
+    id: "tower_arcade",
+    districtId: "neon_quarter",
+    name: "Tower Arcade Annex",
+    kind: "arcade",
+    position: { x: 94, z: -54 },
+    footTraffic: 1.8,
+    safety: 0.42,
+    policePresence: 0.24,
+    rentCost: 48,
+    placementCost: 275,
+    rivalPressure: 0.56,
+    demandTags: ["arcade", "night"]
+  },
+  science_hall: {
+    id: "science_hall",
+    districtId: "campus_strip",
+    name: "Science Hall Machines",
+    kind: "corner",
+    position: { x: -94, z: -39 },
+    footTraffic: 1.58,
+    safety: 0.68,
+    policePresence: 0.34,
+    rentCost: 40,
+    placementCost: 210,
+    rivalPressure: 0.28,
+    demandTags: ["student", "utility"]
+  },
+  stadium_gate: {
+    id: "stadium_gate",
+    districtId: "campus_strip",
+    name: "Stadium Gate",
+    kind: "transit",
+    position: { x: -96, z: -75 },
+    footTraffic: 1.78,
+    safety: 0.58,
+    policePresence: 0.32,
+    rentCost: 46,
+    placementCost: 240,
+    rivalPressure: 0.36,
+    demandTags: ["student", "commuter", "gym"]
+  },
+  print_lab: {
+    id: "print_lab",
+    districtId: "campus_strip",
+    name: "Print Lab Lounge",
+    kind: "laundromat",
+    position: { x: -80, z: -60 },
+    footTraffic: 1.42,
+    safety: 0.7,
+    policePresence: 0.3,
+    rentCost: 38,
+    placementCost: 205,
+    rivalPressure: 0.24,
+    demandTags: ["student", "utility"]
+  },
+  county_gym: {
+    id: "county_gym",
+    districtId: "old_town",
+    name: "County Gym",
+    kind: "gym",
+    position: { x: 73, z: 60.5 },
+    footTraffic: 1.38,
+    safety: 0.48,
+    policePresence: 0.26,
+    rentCost: 38,
+    placementCost: 215,
+    rivalPressure: 0.4,
+    demandTags: ["gym", "commuter"]
+  },
+  chapel_market: {
+    id: "chapel_market",
+    districtId: "old_town",
+    name: "Chapel Market",
+    kind: "corner",
+    position: { x: 79, z: 64 },
+    footTraffic: 1.46,
+    safety: 0.5,
+    policePresence: 0.3,
+    rentCost: 40,
+    placementCost: 225,
+    rivalPressure: 0.44,
+    demandTags: ["commuter", "night"]
+  },
+  canal_arcade: {
+    id: "canal_arcade",
+    districtId: "old_town",
+    name: "Canal Cabinet Arcade",
+    kind: "arcade",
+    position: { x: 96, z: 70 },
+    footTraffic: 1.62,
+    safety: 0.4,
+    policePresence: 0.22,
+    rentCost: 42,
+    placementCost: 245,
+    rivalPressure: 0.54,
+    demandTags: ["arcade", "night"]
   }
 };
 
@@ -567,7 +777,30 @@ export const worldRoads: WorldRoad[] = [
   { id: "industrial_outer_service", districtId: "industrial_yards", x: -54, z: 18, width: 36, depth: 4.4 },
   { id: "neon_service_cut", districtId: "neon_quarter", x: 44, z: -22, width: 4.6, depth: 60 },
   { id: "old_town_outer_row", districtId: "old_town", x: 60, z: 42, width: 34, depth: 4.4 },
-  { id: "campus_outer_walk", districtId: "campus_strip", x: -62, z: -31, width: 4.4, depth: 42 }
+  { id: "campus_outer_walk", districtId: "campus_strip", x: -62, z: -31, width: 4.4, depth: 42 },
+  { id: "west_far_artery", districtId: "industrial_yards", x: -112, z: 0, width: 4.8, depth: 160 },
+  { id: "east_far_artery", districtId: "downtown_loop", x: 112, z: 0, width: 4.8, depth: 160 },
+  { id: "north_far_ring", districtId: "old_town", x: 0, z: 82, width: 224, depth: 4.8 },
+  { id: "south_far_ring", districtId: "neon_quarter", x: 0, z: -82, width: 224, depth: 4.8 },
+  { id: "west_expansion_connector", districtId: "industrial_yards", x: -92, z: 0, width: 44, depth: 4.6 },
+  { id: "east_expansion_connector", districtId: "downtown_loop", x: 91, z: 0, width: 46, depth: 4.6 },
+  { id: "north_expansion_connector", districtId: "old_town", x: 0, z: 66, width: 4.6, depth: 36 },
+  { id: "south_expansion_connector", districtId: "neon_quarter", x: 0, z: -67, width: 4.6, depth: 34 },
+  { id: "industrial_far_spine", districtId: "industrial_yards", x: -92, z: 40, width: 4.4, depth: 84 },
+  { id: "industrial_refinery_row", districtId: "industrial_yards", x: -94, z: 40, width: 44, depth: 4.4 },
+  { id: "industrial_night_row", districtId: "industrial_yards", x: -94, z: 64, width: 44, depth: 4.4 },
+  { id: "campus_west_row", districtId: "campus_strip", x: -72, z: -44, width: 44, depth: 4.4 },
+  { id: "campus_south_spine", districtId: "campus_strip", x: -84, z: -60, width: 4.4, depth: 44 },
+  { id: "campus_south_row", districtId: "campus_strip", x: -86, z: -72, width: 56, depth: 4.4 },
+  { id: "financial_spine", districtId: "downtown_loop", x: 94, z: 14, width: 4.4, depth: 32 },
+  { id: "financial_row", districtId: "downtown_loop", x: 92, z: 28, width: 44, depth: 4.4 },
+  { id: "hospital_row", districtId: "downtown_loop", x: 82, z: 0, width: 34, depth: 4.4 },
+  { id: "neon_far_spine", districtId: "neon_quarter", x: 88, z: -52, width: 4.4, depth: 60 },
+  { id: "neon_market_cut", districtId: "neon_quarter", x: 66, z: -44, width: 48, depth: 4.4 },
+  { id: "neon_south_row", districtId: "neon_quarter", x: 66, z: -70, width: 92, depth: 4.4 },
+  { id: "old_town_north_spine", districtId: "old_town", x: 76, z: 55, width: 4.4, depth: 30 },
+  { id: "old_town_north_row", districtId: "old_town", x: 86, z: 68, width: 56, depth: 4.4 },
+  { id: "old_town_canal_row", districtId: "old_town", x: 96, z: 82, width: 36, depth: 4.4 }
 ];
 
 export const worldBuildings: WorldBuilding[] = [
@@ -611,7 +844,7 @@ export const worldBuildings: WorldBuilding[] = [
   { districtId: "campus_strip", locationId: "rec_center", x: -43.8, z: -37.1, width: 5.1, depth: 3.2, height: 3.9, style: "gym", signText: "REC CTR" },
   { districtId: "campus_strip", x: -57.8, z: -17.4, width: 3.8, depth: 4.2, height: 3.2, style: "rival", signText: "SECURITY" },
   { districtId: "campus_strip", x: -84.0, z: -31.0, width: 6.0, depth: 4.8, height: 7.2, style: "transit", signText: "DORMS" },
-  { districtId: "campus_strip", x: -84.0, z: -44.0, width: 5.8, depth: 4.2, height: 4.1, style: "laundromat", signText: "BIKES" },
+  { districtId: "campus_strip", x: -80.0, z: -34.0, width: 5.8, depth: 4.2, height: 4.1, style: "laundromat", signText: "BIKES" },
   { districtId: "campus_strip", x: -66.2, z: -7.2, width: 5.6, depth: 4.2, height: 6.6, style: "gym", signText: "STUDY" },
   { districtId: "old_town", locationId: "motel_cut", x: 50.0, z: 15.0, width: 5.0, depth: 3.0, height: 3.2, style: "rival", signText: "MOTEL" },
   { districtId: "old_town", locationId: "courthouse_steps", x: 57.8, z: 29.0, width: 4.8, depth: 2.8, height: 4.4, style: "transit", signText: "ANNEX" },
@@ -620,7 +853,43 @@ export const worldBuildings: WorldBuilding[] = [
   { districtId: "old_town", x: 63.0, z: 30.0, width: 5.0, depth: 4.0, height: 4.2, style: "rival", signText: "PAWN" },
   { districtId: "old_town", x: 76.5, z: 35.0, width: 5.0, depth: 4.0, height: 6.1, style: "supplier", signText: "PRINT" },
   { districtId: "old_town", x: 62.0, z: 46.0, width: 5.0, depth: 3.0, height: 6.3, style: "transit", signText: "HOTEL" },
-  { districtId: "old_town", x: 82.0, z: 24.0, width: 5.4, depth: 4.0, height: 4.4, style: "arcade", signText: "BILLIARDS" }
+  { districtId: "old_town", x: 82.0, z: 22.0, width: 5.4, depth: 4.0, height: 4.4, style: "arcade", signText: "BILLIARDS" },
+  { districtId: "industrial_yards", locationId: "refinery_breakroom", x: -101.0, z: 34.5, width: 6.0, depth: 3.4, height: 4.6, style: "transit", signText: "REFINERY" },
+  { districtId: "industrial_yards", locationId: "night_loading_bay", x: -85.0, z: 58.5, width: 6.0, depth: 4.2, height: 5.0, style: "rival", signText: "NIGHT BAY" },
+  { districtId: "industrial_yards", locationId: "truck_stop", x: -104.0, z: -15.0, width: 5.6, depth: 4.8, height: 4.2, style: "transit", signText: "TRUCK STOP" },
+  { districtId: "industrial_yards", x: -102.5, z: 45.6, width: 6.4, depth: 3.6, height: 5.8, style: "supplier", signText: "PIPEWORKS" },
+  { districtId: "industrial_yards", x: -84.5, z: 34.2, width: 7.2, depth: 4.0, height: 4.8, style: "garage", signText: "CRANE LOT" },
+  { districtId: "industrial_yards", x: -103.0, z: 69.2, width: 6.8, depth: 4.4, height: 6.2, style: "supplier", signText: "COLD CHAIN" },
+  { districtId: "industrial_yards", x: -84.0, z: 69.4, width: 7.2, depth: 4.2, height: 5.4, style: "garage", signText: "BAY 33" },
+  { districtId: "industrial_yards", x: -104.0, z: -25.5, width: 6.2, depth: 4.6, height: 5.2, style: "supplier", signText: "FUEL DESK" },
+  { districtId: "downtown_loop", locationId: "hospital_station", x: 82.0, z: 5.6, width: 6.2, depth: 4.0, height: 7.6, style: "transit", signText: "HOSPITAL" },
+  { districtId: "downtown_loop", locationId: "skybridge_kiosk", x: 86.0, z: 23.0, width: 6.0, depth: 3.6, height: 8.4, style: "transit", signText: "SKYBRIDGE" },
+  { districtId: "downtown_loop", locationId: "corporate_arcade", x: 102.5, z: 9.0, width: 5.8, depth: 4.8, height: 10.8, style: "arcade", signText: "LOUNGE" },
+  { districtId: "downtown_loop", x: 83.0, z: -6.4, width: 6.2, depth: 3.6, height: 9.4, style: "supplier", signText: "MED SUPPLY" },
+  { districtId: "downtown_loop", x: 102.0, z: 32.8, width: 6.6, depth: 4.4, height: 15.4, style: "supplier", signText: "FINANCE" },
+  { districtId: "downtown_loop", x: 106.0, z: 23.2, width: 5.4, depth: 4.2, height: 13.2, style: "gym", signText: "ROOFTOP FIT" },
+  { districtId: "downtown_loop", x: 79.0, z: 23.0, width: 5.8, depth: 3.8, height: 12.2, style: "transit", signText: "COURT WALK" },
+  { districtId: "neon_quarter", locationId: "night_bazaar", x: 64.0, z: -39.5, width: 6.2, depth: 4.0, height: 5.2, style: "arcade", signText: "BAZAAR" },
+  { districtId: "neon_quarter", locationId: "cinema_row", x: 80.0, z: -64.5, width: 6.6, depth: 4.0, height: 6.8, style: "rival", signText: "CINEMA" },
+  { districtId: "neon_quarter", locationId: "tower_arcade", x: 97.5, z: -54.0, width: 5.8, depth: 4.4, height: 9.6, style: "arcade", signText: "TOWER" },
+  { districtId: "neon_quarter", x: 56.0, z: -39.6, width: 5.8, depth: 3.8, height: 5.6, style: "laundromat", signText: "24H WASH" },
+  { districtId: "neon_quarter", x: 78.5, z: -39.8, width: 6.0, depth: 4.0, height: 7.2, style: "supplier", signText: "VAPOR" },
+  { districtId: "neon_quarter", x: 78.0, z: -75.8, width: 6.4, depth: 4.2, height: 6.4, style: "arcade", signText: "LASER" },
+  { districtId: "neon_quarter", x: 101.0, z: -75.6, width: 6.2, depth: 4.0, height: 8.6, style: "rival", signText: "AFTERHOURS" },
+  { districtId: "campus_strip", locationId: "science_hall", x: -94.0, z: -38.5, width: 5.8, depth: 4.0, height: 6.4, style: "transit", signText: "SCIENCE" },
+  { districtId: "campus_strip", locationId: "stadium_gate", x: -96.0, z: -76.5, width: 6.6, depth: 4.0, height: 5.8, style: "transit", signText: "STADIUM" },
+  { districtId: "campus_strip", locationId: "print_lab", x: -78.0, z: -60.0, width: 5.2, depth: 4.2, height: 4.4, style: "laundromat", signText: "PRINT LAB" },
+  { districtId: "campus_strip", x: -96.0, z: -48.5, width: 6.0, depth: 4.2, height: 7.6, style: "gym", signText: "FIELDHOUSE" },
+  { districtId: "campus_strip", x: -96.0, z: -66.0, width: 5.8, depth: 4.6, height: 6.8, style: "supplier", signText: "BOOKS" },
+  { districtId: "campus_strip", x: -73.0, z: -66.2, width: 5.4, depth: 4.2, height: 5.2, style: "arcade", signText: "LAN ROOM" },
+  { districtId: "campus_strip", x: -104.0, z: -76.8, width: 6.4, depth: 4.2, height: 8.4, style: "transit", signText: "ARENA BUS" },
+  { districtId: "old_town", locationId: "county_gym", x: 70.0, z: 60.5, width: 5.2, depth: 4.4, height: 4.6, style: "gym", signText: "COUNTY GYM" },
+  { districtId: "old_town", locationId: "chapel_market", x: 82.0, z: 62.0, width: 5.0, depth: 4.2, height: 4.0, style: "rival", signText: "CHAPEL" },
+  { districtId: "old_town", locationId: "canal_arcade", x: 96.0, z: 73.0, width: 6.0, depth: 4.0, height: 5.8, style: "arcade", signText: "CANAL" },
+  { districtId: "old_town", x: 68.0, z: 59.5, width: 5.2, depth: 4.4, height: 5.4, style: "rival", signText: "BAIL BONDS" },
+  { districtId: "old_town", x: 88.5, z: 62.0, width: 4.8, depth: 4.0, height: 6.2, style: "laundromat", signText: "SOAPY" },
+  { districtId: "old_town", x: 106.0, z: 73.2, width: 5.8, depth: 4.2, height: 7.4, style: "supplier", signText: "ANTIQUES" },
+  { districtId: "old_town", x: 102.0, z: 87.6, width: 6.0, depth: 4.4, height: 6.8, style: "transit", signText: "CANAL STOP" }
 ];
 
 export const worldInteriors: WorldInterior[] = [
@@ -682,16 +951,31 @@ export const machinePlacementAnchors: Record<string, MachinePlacementAnchor> = {
   rec_center: { x: -43.8, z: -34.75, rotationY: Math.PI },
   motel_cut: { x: 50.0, z: 17.2, rotationY: Math.PI },
   courthouse_steps: { x: 55.2, z: 29.0, rotationY: Math.PI / 2 },
-  ghost_arcade: { x: 46.0, z: 35.7, rotationY: 0 }
+  ghost_arcade: { x: 46.0, z: 35.7, rotationY: 0 },
+  refinery_breakroom: { x: -101.0, z: 36.45, rotationY: Math.PI },
+  night_loading_bay: { x: -88.2, z: 58.5, rotationY: Math.PI / 2 },
+  truck_stop: { x: -107.1, z: -15.0, rotationY: Math.PI / 2 },
+  hospital_station: { x: 82.0, z: 3.25, rotationY: 0 },
+  skybridge_kiosk: { x: 86.0, z: 25.15, rotationY: Math.PI },
+  corporate_arcade: { x: 99.35, z: 9.0, rotationY: Math.PI / 2 },
+  night_bazaar: { x: 64.0, z: -41.85, rotationY: 0 },
+  cinema_row: { x: 80.0, z: -66.85, rotationY: 0 },
+  tower_arcade: { x: 94.35, z: -54.0, rotationY: Math.PI / 2 },
+  science_hall: { x: -94.0, z: -40.85, rotationY: 0 },
+  stadium_gate: { x: -96.0, z: -74.2, rotationY: Math.PI },
+  print_lab: { x: -80.85, z: -60.0, rotationY: Math.PI / 2 },
+  county_gym: { x: 72.9, z: 60.5, rotationY: -Math.PI / 2 },
+  chapel_market: { x: 79.25, z: 62.0, rotationY: Math.PI / 2 },
+  canal_arcade: { x: 96.0, z: 70.7, rotationY: 0 }
 };
 
 export const districtLabels: DistrictLabel[] = [
   { districtId: "starter_suburb", x: -1.2, z: 10.8, color: "#2dd4bf" },
-  { districtId: "industrial_yards", x: -34.0, z: 18.8, color: "#f59e0b" },
-  { districtId: "downtown_loop", x: 33.0, z: 13.0, color: "#38bdf8" },
-  { districtId: "neon_quarter", x: 17.0, z: -30.0, color: "#e879f9" },
-  { districtId: "campus_strip", x: -53.5, z: -16.5, color: "#a7f3d0" },
-  { districtId: "old_town", x: 52.0, z: 42.0, color: "#fca5a5" }
+  { districtId: "industrial_yards", x: -96.0, z: 64.0, color: "#f59e0b" },
+  { districtId: "downtown_loop", x: 92.0, z: 31.5, color: "#38bdf8" },
+  { districtId: "neon_quarter", x: 74.0, z: -70.0, color: "#e879f9" },
+  { districtId: "campus_strip", x: -92.0, z: -72.0, color: "#a7f3d0" },
+  { districtId: "old_town", x: 88.0, z: 82.0, color: "#fca5a5" }
 ];
 
 export const districtVisualProfiles: Record<string, DistrictVisualProfile> = {
@@ -774,7 +1058,27 @@ export const cityBackdropBuildings: CityBackdropBuilding[] = [
   { districtId: "industrial_yards", x: -86, z: 4, width: 5.4, depth: 6.0, height: 12.8, color: "#27272a", lit: 0.18 },
   { districtId: "industrial_yards", x: -52, z: 34, width: 7.2, depth: 5.2, height: 11.6, color: "#3f3f46", lit: 0.22 },
   { districtId: "old_town", x: 84, z: 50, width: 5.6, depth: 4.0, height: 11.8, color: "#7f1d1d", lit: 0.5 },
-  { districtId: "old_town", x: 44, z: 58, width: 5.2, depth: 4.4, height: 10.8, color: "#450a0a", lit: 0.44 }
+  { districtId: "old_town", x: 44, z: 58, width: 5.2, depth: 4.4, height: 10.8, color: "#450a0a", lit: 0.44 },
+  { districtId: "industrial_yards", x: -118, z: 36, width: 7.6, depth: 6.2, height: 13.2, color: "#27272a", lit: 0.16 },
+  { districtId: "industrial_yards", x: -116, z: 62, width: 8.2, depth: 5.8, height: 12.6, color: "#3f3f46", lit: 0.18 },
+  { districtId: "industrial_yards", x: -88, z: 76, width: 7.4, depth: 5.0, height: 10.8, color: "#52525b", lit: 0.22 },
+  { districtId: "industrial_yards", x: -78, z: 52, width: 7.2, depth: 5.6, height: 9.6, color: "#334155", lit: 0.2 },
+  { districtId: "downtown_loop", x: 90, z: 38, width: 6.0, depth: 5.4, height: 22.0, color: "#082f49", lit: 0.72 },
+  { districtId: "downtown_loop", x: 106, z: 36, width: 6.4, depth: 5.8, height: 24.4, color: "#0c4a6e", lit: 0.76 },
+  { districtId: "downtown_loop", x: 118, z: 16, width: 5.8, depth: 6.0, height: 18.6, color: "#1e40af", lit: 0.66 },
+  { districtId: "downtown_loop", x: 88, z: -10, width: 5.6, depth: 5.2, height: 17.2, color: "#075985", lit: 0.64 },
+  { districtId: "neon_quarter", x: 58, z: -56, width: 6.4, depth: 4.8, height: 11.4, color: "#701a75", lit: 0.84 },
+  { districtId: "neon_quarter", x: 74, z: -56, width: 5.8, depth: 5.0, height: 12.8, color: "#831843", lit: 0.82 },
+  { districtId: "neon_quarter", x: 92, z: -86, width: 6.2, depth: 4.2, height: 15.6, color: "#9d174d", lit: 0.78 },
+  { districtId: "neon_quarter", x: 112, z: -62, width: 5.8, depth: 5.2, height: 14.2, color: "#581c87", lit: 0.76 },
+  { districtId: "campus_strip", x: -110, z: -70, width: 6.4, depth: 5.0, height: 10.4, color: "#0f766e", lit: 0.44 },
+  { districtId: "campus_strip", x: -98, z: -84, width: 5.8, depth: 4.8, height: 11.8, color: "#155e75", lit: 0.42 },
+  { districtId: "campus_strip", x: -74, z: -82, width: 5.6, depth: 5.2, height: 9.8, color: "#134e4a", lit: 0.4 },
+  { districtId: "campus_strip", x: -64, z: -56, width: 5.2, depth: 5.0, height: 8.8, color: "#115e59", lit: 0.46 },
+  { districtId: "old_town", x: 72, z: 74, width: 5.4, depth: 4.8, height: 9.4, color: "#7f1d1d", lit: 0.46 },
+  { districtId: "old_town", x: 88, z: 88, width: 6.2, depth: 4.4, height: 10.2, color: "#450a0a", lit: 0.42 },
+  { districtId: "old_town", x: 112, z: 70, width: 5.8, depth: 5.0, height: 8.6, color: "#991b1b", lit: 0.48 },
+  { districtId: "old_town", x: 116, z: 84, width: 5.4, depth: 4.2, height: 9.2, color: "#7f1d1d", lit: 0.44 }
 ];
 
 export const worldDecorations: WorldDecoration[] = [
@@ -825,14 +1129,44 @@ export const worldDecorations: WorldDecoration[] = [
   { id: "campus_machine_dorm_bollards", districtId: "campus_strip", kind: "bollard", x: -52.9, z: -33.8, rotationY: 0, scale: 0.88, color: "#a7f3d0" },
   { id: "campus_machine_quad_box", districtId: "campus_strip", kind: "utility_box", x: -51.0, z: -25.2, rotationY: -Math.PI / 2, scale: 0.78, color: "#10b981" },
   { id: "oldtown_machine_motel_light", districtId: "old_town", kind: "streetlight", x: 48.5, z: 17.7, rotationY: 0, scale: 0.9, color: "#fecaca" },
-  { id: "oldtown_machine_courthouse_bollards", districtId: "old_town", kind: "bollard", x: 55.4, z: 31.0, rotationY: Math.PI / 2, scale: 0.86, color: "#fca5a5" }
+  { id: "oldtown_machine_courthouse_bollards", districtId: "old_town", kind: "bollard", x: 55.4, z: 31.0, rotationY: Math.PI / 2, scale: 0.86, color: "#fca5a5" },
+  { id: "industrial_refinery_light", districtId: "industrial_yards", kind: "streetlight", x: -101.8, z: 37.3, rotationY: Math.PI, scale: 1.08, color: "#fed7aa" },
+  { id: "industrial_refinery_utility", districtId: "industrial_yards", kind: "utility_box", x: -98.0, z: 37.4, rotationY: 0.1, scale: 0.98, color: "#64748b" },
+  { id: "industrial_night_bay_bollards", districtId: "industrial_yards", kind: "bollard", x: -88.2, z: 61.4, rotationY: Math.PI / 2, scale: 1.05, color: "#f59e0b" },
+  { id: "industrial_truck_billboard", districtId: "industrial_yards", kind: "billboard", x: -106.2, z: -8.4, rotationY: Math.PI / 2, scale: 1.24, color: "#f59e0b" },
+  { id: "industrial_far_dumpster", districtId: "industrial_yards", kind: "dumpster", x: -84.8, z: 66.6, rotationY: -0.25, scale: 1.12, color: "#475569" },
+  { id: "downtown_hospital_light", districtId: "downtown_loop", kind: "streetlight", x: 78.0, z: 3.0, rotationY: 0, scale: 1.05, color: "#dbeafe" },
+  { id: "downtown_hospital_box", districtId: "downtown_loop", kind: "utility_box", x: 85.4, z: 3.2, rotationY: 0.2, scale: 0.9, color: "#38bdf8" },
+  { id: "downtown_skybridge_planter", districtId: "downtown_loop", kind: "planter", x: 88.6, z: 25.2, rotationY: -0.15, scale: 0.94, color: "#38bdf8" },
+  { id: "downtown_lounge_billboard", districtId: "downtown_loop", kind: "billboard", x: 98.6, z: 14.4, rotationY: Math.PI / 2, scale: 1.18, color: "#38bdf8" },
+  { id: "downtown_finance_bollards", districtId: "downtown_loop", kind: "bollard", x: 95.8, z: 25.4, rotationY: 0, scale: 1.0, color: "#dbeafe" },
+  { id: "neon_bazaar_light", districtId: "neon_quarter", kind: "streetlight", x: 61.2, z: -46.8, rotationY: Math.PI, scale: 1.02, color: "#f5d0fe" },
+  { id: "neon_bazaar_planter", districtId: "neon_quarter", kind: "planter", x: 67.4, z: -46.5, rotationY: 0.2, scale: 0.88, color: "#a855f7" },
+  { id: "neon_cinema_billboard", districtId: "neon_quarter", kind: "billboard", x: 84.2, z: -67.2, rotationY: -Math.PI / 2, scale: 1.22, color: "#e879f9" },
+  { id: "neon_tower_light", districtId: "neon_quarter", kind: "streetlight", x: 93.4, z: -56.8, rotationY: Math.PI / 2, scale: 1.0, color: "#f5d0fe" },
+  { id: "neon_south_dumpster", districtId: "neon_quarter", kind: "dumpster", x: 101.6, z: -72.6, rotationY: 0.2, scale: 1.08, color: "#581c87" },
+  { id: "campus_science_light", districtId: "campus_strip", kind: "streetlight", x: -78.8, z: -46.5, rotationY: Math.PI, scale: 1.0, color: "#ccfbf1" },
+  { id: "campus_science_planter", districtId: "campus_strip", kind: "planter", x: -73.2, z: -46.4, rotationY: -0.2, scale: 0.9, color: "#10b981" },
+  { id: "campus_stadium_bollards", districtId: "campus_strip", kind: "bollard", x: -82.4, z: -75.6, rotationY: 0, scale: 1.08, color: "#a7f3d0" },
+  { id: "campus_print_lab_box", districtId: "campus_strip", kind: "utility_box", x: -80.4, z: -62.8, rotationY: Math.PI / 2, scale: 0.84, color: "#10b981" },
+  { id: "campus_arena_billboard", districtId: "campus_strip", kind: "billboard", x: -104.0, z: -70.2, rotationY: Math.PI, scale: 1.2, color: "#a7f3d0" },
+  { id: "oldtown_county_light", districtId: "old_town", kind: "streetlight", x: 73.6, z: 52.4, rotationY: -Math.PI / 2, scale: 0.98, color: "#fee2e2" },
+  { id: "oldtown_chapel_planter", districtId: "old_town", kind: "planter", x: 79.0, z: 61.2, rotationY: 0.2, scale: 0.88, color: "#fca5a5" },
+  { id: "oldtown_canal_billboard", districtId: "old_town", kind: "billboard", x: 99.8, z: 70.4, rotationY: -Math.PI / 2, scale: 1.14, color: "#fca5a5" },
+  { id: "oldtown_canal_dumpster", districtId: "old_town", kind: "dumpster", x: 108.8, z: 75.8, rotationY: -0.2, scale: 1.02, color: "#7f1d1d" },
+  { id: "oldtown_north_utility", districtId: "old_town", kind: "utility_box", x: 76.8, z: 60.5, rotationY: 0.1, scale: 0.88, color: "#64748b" }
 ];
 
 export const patrolZones: PatrolZone[] = [
   { id: "starter_bus_patrol", districtId: "starter_suburb", label: "Patrol watch", x: -10, z: -1, radius: 4.6, color: "#38bdf8" },
   { id: "downtown_inspection_grid", districtId: "downtown_loop", label: "Inspection grid", x: 27, z: 1, radius: 7.2, color: "#93c5fd" },
   { id: "campus_security_ring", districtId: "campus_strip", label: "Campus security", x: -50, z: -28, radius: 7.0, color: "#a7f3d0" },
-  { id: "old_town_heat_box", districtId: "old_town", label: "Heat box", x: 53, z: 31, radius: 6.4, color: "#fca5a5" }
+  { id: "old_town_heat_box", districtId: "old_town", label: "Heat box", x: 53, z: 31, radius: 6.4, color: "#fca5a5" },
+  { id: "industrial_refinery_watch", districtId: "industrial_yards", label: "Refinery watch", x: -96, z: 52, radius: 10.5, color: "#fed7aa" },
+  { id: "downtown_financial_watch", districtId: "downtown_loop", label: "Financial watch", x: 94, z: 18, radius: 10.0, color: "#93c5fd" },
+  { id: "neon_underpass_heat", districtId: "neon_quarter", label: "Underpass heat", x: 86, z: -58, radius: 10.5, color: "#f0abfc" },
+  { id: "campus_stadium_security", districtId: "campus_strip", label: "Stadium security", x: -86, z: -68, radius: 10.5, color: "#a7f3d0" },
+  { id: "oldtown_canal_watch", districtId: "old_town", label: "Canal watch", x: 86, z: 68, radius: 11.0, color: "#fca5a5" }
 ];
 
 export const policePatrolPaths: PolicePatrolPath[] = [
@@ -890,6 +1224,76 @@ export const policePatrolPaths: PolicePatrolPath[] = [
       { x: 57.0, z: 27.2 },
       { x: 57.0, z: 34.8 },
       { x: 49.0, z: 34.8 }
+    ]
+  },
+  {
+    id: "industrial_refinery_foot_patrol",
+    districtId: "industrial_yards",
+    zoneId: "industrial_refinery_watch",
+    color: "#fed7aa",
+    speed: 0.3,
+    phase: 3.2,
+    path: [
+      { x: -101.0, z: 45.2 },
+      { x: -89.0, z: 45.2 },
+      { x: -89.0, z: 58.8 },
+      { x: -101.0, z: 58.8 }
+    ]
+  },
+  {
+    id: "downtown_financial_foot_patrol",
+    districtId: "downtown_loop",
+    zoneId: "downtown_financial_watch",
+    color: "#93c5fd",
+    speed: 0.34,
+    phase: 6.8,
+    path: [
+      { x: 88.8, z: 10.5 },
+      { x: 99.2, z: 10.5 },
+      { x: 99.2, z: 25.5 },
+      { x: 88.8, z: 25.5 }
+    ]
+  },
+  {
+    id: "neon_underpass_foot_patrol",
+    districtId: "neon_quarter",
+    zoneId: "neon_underpass_heat",
+    color: "#f0abfc",
+    speed: 0.36,
+    phase: 4.8,
+    path: [
+      { x: 80.2, z: -66.0 },
+      { x: 91.8, z: -66.0 },
+      { x: 91.8, z: -50.2 },
+      { x: 80.2, z: -50.2 }
+    ]
+  },
+  {
+    id: "campus_stadium_foot_patrol",
+    districtId: "campus_strip",
+    zoneId: "campus_stadium_security",
+    color: "#a7f3d0",
+    speed: 0.32,
+    phase: 1.6,
+    path: [
+      { x: -93.0, z: -75.0 },
+      { x: -79.0, z: -75.0 },
+      { x: -79.0, z: -61.0 },
+      { x: -93.0, z: -61.0 }
+    ]
+  },
+  {
+    id: "oldtown_canal_foot_patrol",
+    districtId: "old_town",
+    zoneId: "oldtown_canal_watch",
+    color: "#fca5a5",
+    speed: 0.31,
+    phase: 7.4,
+    path: [
+      { x: 80.0, z: 61.5 },
+      { x: 94.0, z: 61.5 },
+      { x: 94.0, z: 74.5 },
+      { x: 80.0, z: 74.5 }
     ]
   }
 ];
@@ -1005,6 +1409,62 @@ export const trafficLoops: TrafficLoop[] = [
       { x: 71.2, z: 48 },
       { x: 68.8, z: 48 },
       { x: 68.8, z: -50 }
+    ]
+  },
+  {
+    id: "industrial_refinery_truck_loop",
+    districtId: "industrial_yards",
+    kind: "delivery",
+    color: "#f59e0b",
+    speed: 5.6,
+    phase: 66,
+    path: [
+      { x: -112, z: 40 },
+      { x: -92, z: 40 },
+      { x: -92, z: 64 },
+      { x: -112, z: 64 }
+    ]
+  },
+  {
+    id: "campus_stadium_shuttle_loop",
+    districtId: "campus_strip",
+    kind: "civilian",
+    color: "#22c55e",
+    speed: 5.8,
+    phase: 74,
+    path: [
+      { x: -112, z: -82 },
+      { x: -84, z: -82 },
+      { x: -84, z: -72 },
+      { x: -112, z: -72 }
+    ]
+  },
+  {
+    id: "downtown_financial_patrol_loop",
+    districtId: "downtown_loop",
+    kind: "police",
+    color: "#60a5fa",
+    speed: 6.0,
+    phase: 82,
+    path: [
+      { x: 94, z: 0 },
+      { x: 112, z: 0 },
+      { x: 112, z: 28 },
+      { x: 94, z: 28 }
+    ]
+  },
+  {
+    id: "neon_south_taxi_loop",
+    districtId: "neon_quarter",
+    kind: "civilian",
+    color: "#e879f9",
+    speed: 7.4,
+    phase: 93,
+    path: [
+      { x: 88, z: -82 },
+      { x: 112, z: -82 },
+      { x: 112, z: -70 },
+      { x: 88, z: -70 }
     ]
   }
 ];

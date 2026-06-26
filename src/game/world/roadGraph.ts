@@ -10,6 +10,63 @@ export function roadBounds(road: WorldRoad): Bounds2 {
   };
 }
 
+export function roadBoundsTouch(a: WorldRoad, b: WorldRoad, margin = 0.04): boolean {
+  const first = roadBounds(a);
+  const second = roadBounds(b);
+  return first.minX <= second.maxX + margin
+    && first.maxX >= second.minX - margin
+    && first.minZ <= second.maxZ + margin
+    && first.maxZ >= second.minZ - margin;
+}
+
+export function connectedRoadComponents(roads: WorldRoad[] = worldRoads): WorldRoad[][] {
+  const remaining = new Set(roads.map((road) => road.id));
+  const byId = new Map(roads.map((road) => [road.id, road]));
+  const components: WorldRoad[][] = [];
+
+  for (const road of roads) {
+    if (!remaining.has(road.id)) {
+      continue;
+    }
+
+    const queue = [road];
+    const component: WorldRoad[] = [];
+    remaining.delete(road.id);
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (!current) {
+        continue;
+      }
+
+      component.push(current);
+
+      for (const candidateId of Array.from(remaining)) {
+        const candidate = byId.get(candidateId);
+        if (candidate && roadBoundsTouch(current, candidate)) {
+          remaining.delete(candidateId);
+          queue.push(candidate);
+        }
+      }
+    }
+
+    components.push(component);
+  }
+
+  return components;
+}
+
+export function disconnectedRoadIds(roads: WorldRoad[] = worldRoads): string[] {
+  const components = connectedRoadComponents(roads);
+  if (components.length <= 1) {
+    return [];
+  }
+
+  const largestComponent = [...components].sort((a, b) => b.length - a.length)[0] ?? [];
+  const connectedIds = new Set(largestComponent.map((road) => road.id));
+  return roads.filter((road) => !connectedIds.has(road.id)).map((road) => road.id);
+}
+
 export function pointOnRoad(point: Vec2, roads: WorldRoad[] = worldRoads, margin = 0.02): boolean {
   return roads.some((road) => {
     const bounds = roadBounds(road);
