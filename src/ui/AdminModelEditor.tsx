@@ -1,6 +1,8 @@
-import { Box, MousePointer2, RotateCcw, Save, Scaling, SlidersHorizontal } from "lucide-react";
+import { Box, Focus, MousePointer2, Move3d, Rotate3d, RotateCcw, Save, Scale3d, Scaling, SlidersHorizontal } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { TransformControls, type TransformControlsMode } from "three/examples/jsm/controls/TransformControls.js";
 import {
   createDefaultModelConfig,
   defaultModelTransform,
@@ -26,9 +28,12 @@ type ModelCategoryFilter = "all" | ModelCategory;
 type ModelTransformPatch = Partial<ModelTransform>;
 
 interface PreviewRuntime {
-  ring: THREE.Mesh;
+  bounds: THREE.BoxHelper;
+  modelId: string;
   transformNode: THREE.Group;
 }
+
+type PreviewTransformMode = TransformControlsMode;
 
 const categoryLabels: Record<ModelCategoryFilter, string> = {
   all: "All",
@@ -47,6 +52,10 @@ function cloneConfig(config: ModelConfig): ModelConfig {
 
 function formatNumber(value: number, digits = 2): string {
   return Number(value.toFixed(digits)).toString();
+}
+
+function roundNumber(value: number, digits = 3): number {
+  return Number(value.toFixed(digits));
 }
 
 function radToDeg(value: number): number {
@@ -300,43 +309,147 @@ function applyPreviewTransform(runtime: PreviewRuntime, transform: ModelTransfor
   runtime.transformNode.position.set(transform.offsetX, transform.offsetY, transform.offsetZ);
   runtime.transformNode.rotation.set(transform.rotationX, transform.rotationY, transform.rotationZ);
   runtime.transformNode.scale.set(transform.scaleX, transform.scaleY, transform.scaleZ);
+  runtime.transformNode.updateMatrixWorld(true);
+  runtime.bounds.update();
+}
+
+function transformFromPreviewObject(object: THREE.Object3D): ModelTransform {
+  return normalizeModelTransform({
+    offsetX: roundNumber(object.position.x),
+    offsetY: roundNumber(object.position.y),
+    offsetZ: roundNumber(object.position.z),
+    rotationX: roundNumber(object.rotation.x, 4),
+    rotationY: roundNumber(object.rotation.y, 4),
+    rotationZ: roundNumber(object.rotation.z, 4),
+    scaleX: roundNumber(object.scale.x),
+    scaleY: roundNumber(object.scale.y),
+    scaleZ: roundNumber(object.scale.z)
+  });
 }
 
 function AdminModelPreview({
-  category,
   config,
   onChange,
-  onSelect,
-  selectedId
+  selectedId,
+  transformMode,
+  viewResetKey
 }: {
-  category: ModelCategoryFilter;
   config: ModelConfig;
   onChange: (modelId: string, patch: ModelTransformPatch) => void;
-  onSelect: (modelId: string) => void;
   selectedId: string;
+  transformMode: PreviewTransformMode;
+  viewResetKey: number;
 }) {
   const mountRef = useRef<HTMLDivElement | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const configRef = useRef(config);
+  const orbitControlsRef = useRef<OrbitControls | null>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const runtimeRef = useRef<PreviewRuntime | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
   const selectedIdRef = useRef(selectedId);
-  const runtimesRef = useRef<Map<string, PreviewRuntime>>(new Map());
+  const transformControlsRef = useRef<TransformControls | null>(null);
+  const transformModeRef = useRef<PreviewTransformMode>(transformMode);
+  const applyingTransformRef = useRef(false);
+  const onChangeRef = useRef(onChange);
 
-  const visibleModels = useMemo(
-    () => modelCatalog.filter((model) => category === "all" || model.category === category),
-    [category]
-  );
-
-  const updateRuntimes = useCallback(() => {
-    for (const [modelId, runtime] of runtimesRef.current) {
-      applyPreviewTransform(runtime, modelTransformFor(configRef.current, modelId));
-      runtime.ring.visible = modelId === selectedIdRef.current;
+  const updateTransformMode = useCallback((mode: PreviewTransformMode) => {
+    const controls = transformControlsRef.current;
+    transformModeRef.current = mode;
+    if (!controls) {
+      return;
     }
+
+    controls.setMode(mode);
+    controls.setSpace(mode === "translate" ? "world" : "local");
+    controls.showX = true;
+    controls.showY = true;
+    controls.showZ = true;
   }, []);
 
-  useEffect(() => {
-    configRef.current = config;
-    selectedIdRef.current = selectedId;
-    updateRuntimes();
-  }, [config, selectedId, updateRuntimes]);
+  const applySelectedTransform = useCallback(() => {
+    const runtime = runtimeRef.current;
+    if (!runtime || transformControlsRef.current?.dragging) {
+      return;
+    }
+
+    applyingTransformRef.current = true;
+    applyPreviewTransform(runtime, modelTransformFor(configRef.current, runtime.modelId));
+    applyingTransformRef.current = false;
+  }, []);
+
+  const frameSelectedModel = useCallback(() => {
+    const camera = cameraRef.current;
+    const controls = orbitControlsRef.current;
+    const runtime = runtimeRef.current;
+    const renderer = rendererRef.current;
+    if (!camera || !controls || !runtime || !renderer) {
+      return;
+    }
+
+    runtime.transformNode.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(runtime.transformNode);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const maxDimension = Math.max(size.x, size.y, size.z, 1);
+    const distance = THREE.MathUtils.clamp(maxDimension * 2.45, 4.8, 28);
+    const direction = new THREE.Vector3(0.9, 0.58, 1).normalize();
+
+    camera.position.set(
+      center.x + direction.x * distance,
+      center.y + Math.max(maxDimension * 0.72, direction.y * distance),
+      center.z + direction.z * distance
+    );
+    camera.near = Math.max(0.02, distance / 120);
+    camera.far = Math.max(80, distance * 8);
+    camera.updateProjectionMatrix();
+    controls.target.set(center.x, Math.max(0.35, center.y), center.z);
+    controls.update();
+    renderer.render(sceneRef.current as THREE.Scene, camera);
+  }, []);
+
+  const replaceSelectedModel = useCallback((modelId: string) => {
+    const scene = sceneRef.current;
+    const transformControls = transformControlsRef.current;
+    if (!scene || !transformControls) {
+      return;
+    }
+
+    const definition = modelCatalog.find((model) => model.id === modelId) ?? modelCatalog[0];
+    if (!definition) {
+      return;
+    }
+
+    if (runtimeRef.current) {
+      transformControls.detach();
+      scene.remove(runtimeRef.current.transformNode);
+      scene.remove(runtimeRef.current.bounds);
+      disposeObject(runtimeRef.current.transformNode);
+      disposeObject(runtimeRef.current.bounds);
+      runtimeRef.current = null;
+    }
+
+    const transformNode = new THREE.Group();
+    transformNode.name = `admin-model-preview:${definition.id}`;
+    transformNode.userData.modelId = definition.id;
+    const modelObject = createPreviewModel(definition);
+    modelObject.traverse((object) => {
+      object.userData.modelId = definition.id;
+    });
+    transformNode.add(modelObject);
+    scene.add(transformNode);
+
+    const bounds = new THREE.BoxHelper(transformNode, "#2dd4bf");
+    bounds.name = `admin-model-bounds:${definition.id}`;
+    scene.add(bounds);
+
+    const runtime: PreviewRuntime = { bounds, modelId: definition.id, transformNode };
+    runtimeRef.current = runtime;
+    applyPreviewTransform(runtime, modelTransformFor(configRef.current, definition.id));
+    transformControls.attach(transformNode);
+    updateTransformMode(transformModeRef.current);
+    frameSelectedModel();
+  }, [frameSelectedModel, updateTransformMode]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -346,10 +459,15 @@ function AdminModelPreview({
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color("#020617");
-    const camera = new THREE.PerspectiveCamera(54, mount.clientWidth / mount.clientHeight, 0.1, 80);
+    sceneRef.current = scene;
+
+    const camera = new THREE.PerspectiveCamera(54, mount.clientWidth / mount.clientHeight, 0.1, 120);
+    cameraRef.current = camera;
+
     const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(mount.clientWidth, mount.clientHeight);
+    rendererRef.current = renderer;
     mount.appendChild(renderer.domElement);
 
     const hemi = new THREE.HemisphereLight("#e0f2fe", "#0f172a", 1.7);
@@ -358,218 +476,146 @@ function AdminModelPreview({
     key.position.set(-5, 9, 6);
     scene.add(key);
 
-    const grid = new THREE.GridHelper(26, 26, "#334155", "#1e293b");
+    const grid = new THREE.GridHelper(44, 44, "#334155", "#1e293b");
     grid.position.y = -0.01;
     scene.add(grid);
     const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(30, 24),
+      new THREE.PlaneGeometry(48, 48),
       new THREE.MeshBasicMaterial({ color: "#0f172a", transparent: true, opacity: 0.55 })
     );
     ground.rotation.x = -Math.PI / 2;
     scene.add(ground);
 
-    const pickables: THREE.Object3D[] = [];
-    const runtimes = new Map<string, PreviewRuntime>();
-    const columns = Math.max(3, Math.ceil(Math.sqrt(visibleModels.length)));
-    const rowCount = Math.ceil(visibleModels.length / columns);
-    const spacingX = 4.8;
-    const spacingZ = 4.2;
+    const axes = new THREE.AxesHelper(2.2);
+    axes.position.y = 0.04;
+    scene.add(axes);
 
-    visibleModels.forEach((model, index) => {
-      const row = Math.floor(index / columns);
-      const column = index % columns;
-      const root = new THREE.Group();
-      root.position.set((column - (columns - 1) / 2) * spacingX, 0, (row - (rowCount - 1) / 2) * spacingZ);
-      root.userData.modelId = model.id;
+    const origin = new THREE.Mesh(
+      new THREE.RingGeometry(0.32, 0.36, 32),
+      new THREE.MeshBasicMaterial({ color: "#f8fafc", transparent: true, opacity: 0.72, side: THREE.DoubleSide })
+    );
+    origin.rotation.x = -Math.PI / 2;
+    origin.position.y = 0.03;
+    scene.add(origin);
 
-      const transformNode = new THREE.Group();
-      const modelObject = createPreviewModel(model);
-      modelObject.traverse((object) => {
-        object.userData.modelId = model.id;
-        if ((object as THREE.Mesh).isMesh) {
-          pickables.push(object);
-        }
-      });
-      transformNode.add(modelObject);
-      root.add(transformNode);
+    const orbitControls = new OrbitControls(camera, renderer.domElement);
+    orbitControls.enableDamping = true;
+    orbitControls.dampingFactor = 0.08;
+    orbitControls.minDistance = 2.6;
+    orbitControls.maxDistance = 44;
+    orbitControls.screenSpacePanning = false;
+    orbitControlsRef.current = orbitControls;
 
-      const ring = new THREE.Mesh(
-        new THREE.TorusGeometry(1.35, 0.035, 8, 64),
-        new THREE.MeshBasicMaterial({ color: "#2dd4bf", transparent: true, opacity: 0.9 })
-      );
-      ring.rotation.x = Math.PI / 2;
-      ring.position.y = 0.08;
-      ring.visible = false;
-      root.add(ring);
+    const transformControls = new TransformControls(camera, renderer.domElement);
+    transformControls.setTranslationSnap(0.05);
+    transformControls.setRotationSnap(degToRad(1));
+    transformControls.setScaleSnap(0.025);
+    transformControls.setSize(0.9);
+    transformControlsRef.current = transformControls;
+    const transformHelper = transformControls.getHelper();
+    scene.add(transformHelper);
 
-      scene.add(root);
-      runtimes.set(model.id, { ring, transformNode });
-    });
+    const syncTransformFromControls = () => {
+      const runtime = runtimeRef.current;
+      if (!runtime || applyingTransformRef.current) {
+        return;
+      }
 
-    runtimesRef.current = runtimes;
-    updateRuntimes();
+      const nextTransform = transformFromPreviewObject(runtime.transformNode);
+      applyingTransformRef.current = true;
+      applyPreviewTransform(runtime, nextTransform);
+      applyingTransformRef.current = false;
+      configRef.current = updateConfigTransform(configRef.current, runtime.modelId, nextTransform);
+      onChangeRef.current(runtime.modelId, nextTransform);
+    };
 
-    const raycaster = new THREE.Raycaster();
-    const pointer = new THREE.Vector2();
-    const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-    const planePoint = new THREE.Vector3();
-    const viewState = { distance: 18, draggingCamera: false, lastX: 0, lastY: 0, pitch: -0.48, yaw: -0.62 };
-    let activeDrag: {
-      modelId: string;
-      startPoint: THREE.Vector3;
-      startTransform: ModelTransform;
-    } | null = null;
+    const updateOrbitDragState = (event: { value: unknown }) => {
+      orbitControls.enabled = !Boolean(event.value);
+    };
+
+    transformControls.addEventListener("objectChange", syncTransformFromControls);
+    transformControls.addEventListener("dragging-changed", updateOrbitDragState);
     let disposed = false;
-
-    const updateCamera = () => {
-      const target = new THREE.Vector3(0, 1.1, 0);
-      camera.position.set(
-        Math.sin(viewState.yaw) * Math.cos(viewState.pitch) * viewState.distance,
-        Math.max(4.5, Math.sin(-viewState.pitch) * viewState.distance + 2),
-        Math.cos(viewState.yaw) * Math.cos(viewState.pitch) * viewState.distance
-      );
-      camera.lookAt(target);
-    };
-
-    const setPointerFromEvent = (event: PointerEvent) => {
-      const bounds = renderer.domElement.getBoundingClientRect();
-      pointer.x = ((event.clientX - bounds.left) / Math.max(1, bounds.width)) * 2 - 1;
-      pointer.y = -(((event.clientY - bounds.top) / Math.max(1, bounds.height)) * 2 - 1);
-      raycaster.setFromCamera(pointer, camera);
-    };
-
-    const pickModel = (event: PointerEvent): string | null => {
-      setPointerFromEvent(event);
-      const intersections = raycaster.intersectObjects(pickables, false);
-      for (const intersection of intersections) {
-        const modelId = intersection.object.userData.modelId;
-        if (typeof modelId === "string") {
-          return modelId;
-        }
-      }
-      return null;
-    };
-
-    const intersectGround = (event: PointerEvent): THREE.Vector3 | null => {
-      setPointerFromEvent(event);
-      return raycaster.ray.intersectPlane(groundPlane, planePoint) ? planePoint.clone() : null;
-    };
-
-    const onPointerDown = (event: PointerEvent) => {
-      renderer.domElement.setPointerCapture(event.pointerId);
-      const modelId = pickModel(event);
-      viewState.lastX = event.clientX;
-      viewState.lastY = event.clientY;
-
-      if (modelId && event.button === 0) {
-        selectedIdRef.current = modelId;
-        onSelect(modelId);
-        updateRuntimes();
-        const startPoint = intersectGround(event);
-        if (startPoint) {
-          activeDrag = {
-            modelId,
-            startPoint,
-            startTransform: modelTransformFor(configRef.current, modelId)
-          };
-        }
-        return;
-      }
-
-      viewState.draggingCamera = true;
-    };
-
-    const onPointerMove = (event: PointerEvent) => {
-      if (activeDrag) {
-        const nextPoint = intersectGround(event);
-        if (!nextPoint) {
-          return;
-        }
-        const patch = {
-          offsetX: Number((activeDrag.startTransform.offsetX + nextPoint.x - activeDrag.startPoint.x).toFixed(2)),
-          offsetZ: Number((activeDrag.startTransform.offsetZ + nextPoint.z - activeDrag.startPoint.z).toFixed(2))
-        };
-        configRef.current = updateConfigTransform(configRef.current, activeDrag.modelId, patch);
-        onChange(activeDrag.modelId, patch);
-        updateRuntimes();
-        return;
-      }
-
-      if (!viewState.draggingCamera) {
-        return;
-      }
-
-      viewState.yaw -= (event.clientX - viewState.lastX) * 0.008;
-      viewState.pitch = THREE.MathUtils.clamp(viewState.pitch - (event.clientY - viewState.lastY) * 0.006, -0.95, -0.18);
-      viewState.lastX = event.clientX;
-      viewState.lastY = event.clientY;
-      updateCamera();
-    };
-
-    const onPointerUp = (event: PointerEvent) => {
-      activeDrag = null;
-      viewState.draggingCamera = false;
-      if (renderer.domElement.hasPointerCapture(event.pointerId)) {
-        renderer.domElement.releasePointerCapture(event.pointerId);
-      }
-    };
-
-    const onWheel = (event: WheelEvent) => {
-      event.preventDefault();
-      viewState.distance = THREE.MathUtils.clamp(viewState.distance + event.deltaY * 0.012, 9, 34);
-      updateCamera();
-    };
 
     const onResize = () => {
       if (!mountRef.current) {
         return;
       }
-      camera.aspect = mountRef.current.clientWidth / mountRef.current.clientHeight;
+      const width = Math.max(1, mountRef.current.clientWidth);
+      const height = Math.max(1, mountRef.current.clientHeight);
+      camera.aspect = width / height;
       camera.updateProjectionMatrix();
-      renderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight);
+      renderer.setSize(width, height, false);
     };
+
+    const resizeObserver = new ResizeObserver(onResize);
+    resizeObserver.observe(mount);
+    onResize();
+    updateTransformMode(transformModeRef.current);
+    replaceSelectedModel(selectedIdRef.current);
 
     const animate = () => {
       if (disposed) {
         return;
       }
-      for (const runtime of runtimes.values()) {
-        runtime.ring.rotation.z += 0.01;
+      orbitControls.update();
+      if (runtimeRef.current) {
+        runtimeRef.current.bounds.update();
       }
       renderer.render(scene, camera);
       requestAnimationFrame(animate);
     };
 
-    updateCamera();
-    renderer.domElement.addEventListener("pointerdown", onPointerDown);
-    renderer.domElement.addEventListener("pointermove", onPointerMove);
-    renderer.domElement.addEventListener("pointerup", onPointerUp);
-    renderer.domElement.addEventListener("pointercancel", onPointerUp);
-    renderer.domElement.addEventListener("wheel", onWheel, { passive: false });
-    window.addEventListener("resize", onResize);
     const animationId = requestAnimationFrame(animate);
 
     return () => {
       disposed = true;
       cancelAnimationFrame(animationId);
-      renderer.domElement.removeEventListener("pointerdown", onPointerDown);
-      renderer.domElement.removeEventListener("pointermove", onPointerMove);
-      renderer.domElement.removeEventListener("pointerup", onPointerUp);
-      renderer.domElement.removeEventListener("pointercancel", onPointerUp);
-      renderer.domElement.removeEventListener("wheel", onWheel);
-      window.removeEventListener("resize", onResize);
+      resizeObserver.disconnect();
+      transformControls.removeEventListener("objectChange", syncTransformFromControls);
+      transformControls.removeEventListener("dragging-changed", updateOrbitDragState);
+      transformControls.detach();
+      transformControls.dispose();
+      transformHelper.dispose();
+      orbitControls.dispose();
       disposeObject(scene);
       renderer.dispose();
       mount.removeChild(renderer.domElement);
-      runtimesRef.current = new Map();
+      sceneRef.current = null;
+      cameraRef.current = null;
+      rendererRef.current = null;
+      orbitControlsRef.current = null;
+      transformControlsRef.current = null;
+      runtimeRef.current = null;
     };
-  }, [onChange, onSelect, updateRuntimes, visibleModels]);
+  }, [replaceSelectedModel, updateTransformMode]);
+
+  useEffect(() => {
+    configRef.current = config;
+    onChangeRef.current = onChange;
+    applySelectedTransform();
+  }, [applySelectedTransform, config, onChange]);
+
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+    replaceSelectedModel(selectedId);
+  }, [replaceSelectedModel, selectedId]);
+
+  useEffect(() => {
+    updateTransformMode(transformMode);
+  }, [transformMode, updateTransformMode]);
+
+  useEffect(() => {
+    if (viewResetKey > 0) {
+      frameSelectedModel();
+    }
+  }, [frameSelectedModel, viewResetKey]);
 
   return (
     <div className="admin-model-preview" ref={mountRef}>
       <div className="admin-model-preview-badge">
         <MousePointer2 size={14} aria-hidden="true" />
-        <span>Direct 3D</span>
+        <span>Solo 3D</span>
       </div>
     </div>
   );
@@ -579,7 +625,9 @@ export function AdminModelEditor({ config, onReset, onSave }: AdminModelEditorPr
   const [draft, setDraft] = useState<ModelConfig>(() => cloneConfig(config));
   const [selectedId, setSelectedId] = useState(modelCatalog[0]?.id ?? "unit.player");
   const [activeCategory, setActiveCategory] = useState<ModelCategoryFilter>("all");
+  const [transformMode, setTransformMode] = useState<PreviewTransformMode>("translate");
   const [status, setStatus] = useState("");
+  const [viewResetKey, setViewResetKey] = useState(0);
 
   useEffect(() => {
     setDraft(cloneConfig(config));
@@ -598,6 +646,14 @@ export function AdminModelEditor({ config, onReset, onSave }: AdminModelEditorPr
   const updateSelectedTransform = useCallback((patch: ModelTransformPatch) => {
     updateTransform(selectedId, patch);
   }, [selectedId, updateTransform]);
+
+  const selectCategory = (category: ModelCategoryFilter) => {
+    setActiveCategory(category);
+    const nextModels = modelCatalog.filter((model) => category === "all" || model.category === category);
+    if (!nextModels.some((model) => model.id === selectedId) && nextModels[0]) {
+      setSelectedId(nextModels[0].id);
+    }
+  };
 
   const handleNumberChange = (key: keyof ModelTransform, value: string, isRotation = false) => {
     const parsed = Number(value);
@@ -651,7 +707,7 @@ export function AdminModelEditor({ config, onReset, onSave }: AdminModelEditorPr
       <aside className="admin-model-sidebar">
         <div className="admin-model-tabs">
           {categoryOrder.map((category) => (
-            <button className={activeCategory === category ? "active" : ""} key={category} onClick={() => setActiveCategory(category)} type="button">
+            <button className={activeCategory === category ? "active" : ""} key={category} onClick={() => selectCategory(category)} type="button">
               {categoryLabels[category]}
             </button>
           ))}
@@ -672,14 +728,44 @@ export function AdminModelEditor({ config, onReset, onSave }: AdminModelEditorPr
             <Box size={17} aria-hidden="true" />
             <strong>{selectedModel.label}</strong>
           </div>
+          <div className="admin-model-tool-group" role="group" aria-label="3D transform mode">
+            <button className={transformMode === "translate" ? "active" : ""} onClick={() => setTransformMode("translate")} title="Move with 3D handles" type="button">
+              <Move3d size={15} aria-hidden="true" />
+              Move
+            </button>
+            <button className={transformMode === "rotate" ? "active" : ""} onClick={() => setTransformMode("rotate")} title="Rotate with 3D handles" type="button">
+              <Rotate3d size={15} aria-hidden="true" />
+              Rotate
+            </button>
+            <button className={transformMode === "scale" ? "active" : ""} onClick={() => setTransformMode("scale")} title="Scale with 3D handles" type="button">
+              <Scale3d size={15} aria-hidden="true" />
+              Scale
+            </button>
+          </div>
           <div>
-            <button onClick={() => quickRotate(-15)} type="button">Turn -15</button>
-            <button onClick={() => quickRotate(15)} type="button">Turn +15</button>
-            <button onClick={() => quickScale(0.9)} type="button">Scale -</button>
-            <button onClick={() => quickScale(1.1)} type="button">Scale +</button>
+            <button onClick={() => quickRotate(-15)} type="button">
+              <Rotate3d size={15} aria-hidden="true" />
+              -15
+            </button>
+            <button onClick={() => quickRotate(15)} type="button">
+              <Rotate3d size={15} aria-hidden="true" />
+              +15
+            </button>
+            <button onClick={() => quickScale(0.9)} type="button">
+              <Scale3d size={15} aria-hidden="true" />
+              -
+            </button>
+            <button onClick={() => quickScale(1.1)} type="button">
+              <Scale3d size={15} aria-hidden="true" />
+              +
+            </button>
+            <button onClick={() => setViewResetKey((current) => current + 1)} title="Frame selected model" type="button">
+              <Focus size={15} aria-hidden="true" />
+              Fit
+            </button>
           </div>
         </div>
-        <AdminModelPreview category={activeCategory} config={draft} onChange={updateTransform} onSelect={setSelectedId} selectedId={selectedId} />
+        <AdminModelPreview config={draft} onChange={updateTransform} selectedId={selectedId} transformMode={transformMode} viewResetKey={viewResetKey} />
       </div>
 
       <aside className="admin-model-inspector">
