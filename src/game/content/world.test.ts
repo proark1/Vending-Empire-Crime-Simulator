@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { defaultWorldMapLayout, locations, machinePlacementAnchors, patrolZones, policePatrolPaths, trafficLoops, worldBuildings, worldDecorations, worldInteriors, worldRoads } from "./world";
 import { createInitialState } from "./initialState";
 import { pathOnRoads, pointOnRoad } from "../world/roadGraph";
-import { validateWorldMapLayout } from "../world/mapLayoutStorage";
+import { rectsIntersect, validateWorldMapLayout } from "../world/mapLayoutStorage";
+import { WORLD_SCALE } from "../world/scale";
+import { roadFootprintBounds, sidewalkFootprintBounds, sidewalkFootprintsForRoads } from "../world/sidewalks";
 
 function boxFromBuilding(building: { depth: number; width: number; x: number; z: number }) {
   return {
@@ -71,6 +73,37 @@ describe("world content", () => {
     const blockingIssues = validateWorldMapLayout(defaultWorldMapLayout).filter((issue) => issue.severity === "error");
 
     expect(blockingIssues).toEqual([]);
+  });
+
+  it("keeps world proportions anchored to human scale", () => {
+    expect(WORLD_SCALE.building.door.height / WORLD_SCALE.human.height).toBeGreaterThanOrEqual(1.18);
+    expect(WORLD_SCALE.building.door.width).toBeGreaterThanOrEqual(WORLD_SCALE.human.radius * 2);
+    expect(WORLD_SCALE.vehicle.length / WORLD_SCALE.human.height).toBeGreaterThanOrEqual(2.4);
+    expect(WORLD_SCALE.vehicle.width / WORLD_SCALE.human.height).toBeGreaterThanOrEqual(1);
+
+    for (const building of worldBuildings) {
+      expect(building.height, `${building.signText} is too short for human-scale storefronts`).toBeGreaterThanOrEqual(WORLD_SCALE.building.minimumStorefrontHeight);
+    }
+
+    for (const road of worldRoads) {
+      const crossSection = Math.min(road.width, road.depth);
+      expect(crossSection, `${road.id} is too narrow for human-scale streets`).toBeGreaterThanOrEqual(WORLD_SCALE.road.minimumStreetWidth);
+      expect(crossSection, `${road.id} cannot fit a car with clearance`).toBeGreaterThanOrEqual(WORLD_SCALE.vehicle.width + WORLD_SCALE.vehicle.clearance * 2);
+    }
+  });
+
+  it("clips generated sidewalks away from roads and buildings", () => {
+    const sidewalks = sidewalkFootprintsForRoads(worldRoads, worldBuildings);
+    expect(sidewalks.length).toBeGreaterThan(worldRoads.length);
+
+    const buildingBoxes = worldBuildings.map(boxFromBuilding);
+    for (const sidewalk of sidewalks) {
+      const sidewalkBounds = sidewalkFootprintBounds(sidewalk);
+      for (const road of worldRoads) {
+        expect(rectsIntersect(sidewalkBounds, roadFootprintBounds(road)), `${sidewalk.sourceRoadId} sidewalk crosses ${road.id}`).toBe(false);
+      }
+      expect(buildingBoxes.some((box) => rectsIntersect(sidewalkBounds, box)), `${sidewalk.sourceRoadId} sidewalk overlaps a building`).toBe(false);
+    }
   });
 
   it("keeps police patrol cars and foot patrols inside police spaces", () => {

@@ -2157,16 +2157,18 @@ function createBackdropBuilding(definition: CityBackdropBuilding, quality: Graph
     group.add(band);
   }
 
-  const rows = Math.max(2, Math.min(quality === "high" ? 18 : 13, Math.floor(definition.height / (quality === "low" ? 1.55 : quality === "high" ? 0.85 : 1.05))));
-  const cols = Math.max(2, Math.min(quality === "high" ? 12 : 9, Math.floor(definition.width / (quality === "low" ? 1.05 : quality === "high" ? 0.58 : 0.72))));
+  const rows = Math.max(1, Math.min(quality === "high" ? 9 : 6, Math.floor((definition.height - 1.1) / WORLD_SCALE.building.floorHeight)));
+  const cols = Math.max(1, Math.min(quality === "high" ? 6 : 4, Math.floor((definition.width - 0.7) / (quality === "low" ? 1.65 : 1.35))));
+  const windowWidth = quality === "low" ? 0.46 : 0.58;
+  const windowHeight = quality === "low" ? 0.58 : 0.78;
   const frontZ = -definition.depth / 2 - 0.012;
   for (let row = 0; row < rows; row += 1) {
     for (let col = 0; col < cols; col += 1) {
       const lit = ((row * 5 + col * 3 + Math.round(definition.x + definition.z)) % 10) / 10 < definition.lit;
-      const window = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.2, 0.018), lit ? litMaterial : darkWindowMaterial);
+      const window = new THREE.Mesh(new THREE.BoxGeometry(windowWidth, windowHeight, 0.018), lit ? litMaterial : darkWindowMaterial);
       window.position.set(
-        -definition.width / 2 + 0.42 + col * ((definition.width - 0.84) / Math.max(1, cols - 1)),
-        0.78 + row * ((definition.height - 1.4) / Math.max(1, rows - 1)),
+        cols === 1 ? 0 : -definition.width / 2 + 0.72 + col * ((definition.width - 1.44) / Math.max(1, cols - 1)),
+        1.45 + row * WORLD_SCALE.building.floorHeight,
         frontZ
       );
       group.add(window);
@@ -2178,15 +2180,15 @@ function createBackdropBuilding(definition: CityBackdropBuilding, quality: Graph
     return group;
   }
 
-  const sideRows = Math.max(2, Math.min(10, Math.floor(definition.height / 1.25)));
-  const sideCols = Math.max(1, Math.min(5, Math.floor(definition.depth / 0.86)));
+  const sideRows = Math.max(1, Math.min(6, Math.floor((definition.height - 1.1) / WORLD_SCALE.building.floorHeight)));
+  const sideCols = Math.max(1, Math.min(4, Math.floor(definition.depth / 1.35)));
   for (let row = 0; row < sideRows; row += 1) {
     for (let col = 0; col < sideCols; col += 1) {
       const z = -definition.depth / 2 + 0.45 + col * ((definition.depth - 0.9) / Math.max(1, sideCols - 1));
-      const y = 0.82 + row * ((definition.height - 1.5) / Math.max(1, sideRows - 1));
+      const y = 1.45 + row * WORLD_SCALE.building.floorHeight;
       for (const side of [-1, 1] as const) {
         const lit = ((row * 2 + col * 5 + side + Math.round(definition.x)) % 10) / 10 < definition.lit * 0.8;
-        const window = new THREE.Mesh(new THREE.BoxGeometry(0.21, 0.18, 0.016), lit ? litMaterial : darkWindowMaterial);
+        const window = new THREE.Mesh(new THREE.BoxGeometry(windowWidth * 0.82, windowHeight * 0.86, 0.016), lit ? litMaterial : darkWindowMaterial);
         window.position.set(side * (definition.width / 2 + 0.012), y, z);
         window.rotation.y = side > 0 ? Math.PI / 2 : -Math.PI / 2;
         group.add(window);
@@ -2195,14 +2197,14 @@ function createBackdropBuilding(definition: CityBackdropBuilding, quality: Graph
   }
 
   const lobbyGlow = new THREE.Mesh(
-    new THREE.BoxGeometry(Math.min(definition.width * 0.55, 2.1), 0.42, 0.024),
+    new THREE.BoxGeometry(Math.min(definition.width * 0.62, 2.45), WORLD_SCALE.building.door.frameHeight, 0.024),
     new THREE.MeshBasicMaterial({ color: litMaterial.color, transparent: true, opacity: 0.28 + definition.lit * 0.18 })
   );
-  lobbyGlow.position.set(0, 0.54, frontZ - 0.005);
+  lobbyGlow.position.set(0, WORLD_SCALE.building.door.frameHeight / 2 + 0.08, frontZ - 0.005);
   group.add(lobbyGlow);
 
-  const lobbyDoor = new THREE.Mesh(new THREE.BoxGeometry(Math.min(definition.width * 0.22, 0.72), 0.78, 0.028), darkWindowMaterial);
-  lobbyDoor.position.set(0, 0.43, frontZ - 0.018);
+  const lobbyDoor = new THREE.Mesh(new THREE.BoxGeometry(Math.min(definition.width * 0.22, WORLD_SCALE.building.door.width), WORLD_SCALE.building.door.height, 0.028), darkWindowMaterial);
+  lobbyDoor.position.set(0, WORLD_SCALE.building.door.height / 2 + 0.08, frontZ - 0.018);
   group.add(lobbyDoor);
 
   if (definition.height > 10) {
@@ -2319,47 +2321,48 @@ function createTrafficVehicleMesh(loop: TrafficLoop, enableShadows: boolean, qua
   const bodyMaterial = new THREE.MeshStandardMaterial({ color: bodyColor, roughness: 0.48, metalness: 0.08 });
   const trimMaterial = new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.52, metalness: 0.18 });
   const glassMaterial = new THREE.MeshBasicMaterial({ color: "#bae6fd", transparent: true, opacity: 0.58 });
-  const length = loop.kind === "delivery" ? 2.65 : loop.kind === "police" ? 2.28 : 2.05;
-  const width = loop.kind === "delivery" ? 1.08 : loop.kind === "police" ? 1.02 : 0.92;
-  const bodyHeight = loop.kind === "delivery" ? 0.68 : 0.52;
-  const cabHeight = loop.kind === "delivery" ? 0.62 : 0.5;
-  const cabDepth = loop.kind === "delivery" ? 0.92 : 0.72;
+  const length = loop.kind === "delivery" ? WORLD_SCALE.vehicle.deliveryLength : loop.kind === "police" ? WORLD_SCALE.vehicle.policeLength : WORLD_SCALE.vehicle.length;
+  const width = loop.kind === "delivery" ? WORLD_SCALE.vehicle.deliveryWidth : loop.kind === "police" ? WORLD_SCALE.vehicle.policeWidth : WORLD_SCALE.vehicle.width;
+  const bodyHeight = loop.kind === "delivery" ? 1.02 : 0.72;
+  const cabHeight = loop.kind === "delivery" ? 0.82 : 0.68;
+  const cabDepth = loop.kind === "delivery" ? 1.2 : 1.05;
+  const wheelRadius = loop.kind === "delivery" ? 0.38 : 0.34;
 
   const body = new THREE.Mesh(new THREE.BoxGeometry(width, bodyHeight, length), bodyMaterial);
-  body.position.y = 0.3 + bodyHeight / 2;
+  body.position.y = wheelRadius + 0.12 + bodyHeight / 2;
   body.castShadow = enableShadows;
   body.receiveShadow = enableShadows;
   group.add(body);
 
   const cab = new THREE.Mesh(new THREE.BoxGeometry(width * 0.72, cabHeight, cabDepth), glassMaterial);
-  cab.position.set(0, body.position.y + bodyHeight / 2 + cabHeight / 2 - 0.08, -length * 0.16);
+  cab.position.set(0, body.position.y + bodyHeight / 2 + cabHeight / 2 - 0.12, -length * 0.18);
   group.add(cab);
 
   if (quality !== "low") {
     const bumperMaterial = new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.42, metalness: 0.2 });
     for (const z of [-length / 2 - 0.04, length / 2 + 0.04]) {
-      const bumper = new THREE.Mesh(new THREE.BoxGeometry(width * 0.82, 0.08, 0.06), bumperMaterial);
-      bumper.position.set(0, 0.48, z);
+      const bumper = new THREE.Mesh(new THREE.BoxGeometry(width * 0.86, 0.1, 0.08), bumperMaterial);
+      bumper.position.set(0, wheelRadius + 0.26, z);
       group.add(bumper);
     }
   }
 
   if (loop.kind === "police") {
-    const stripe = new THREE.Mesh(new THREE.BoxGeometry(width + 0.04, 0.1, length + 0.045), new THREE.MeshBasicMaterial({ color: "#1d4ed8" }));
-    stripe.position.set(0, body.position.y + 0.02, 0);
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(width + 0.04, 0.1, length * 0.9), new THREE.MeshBasicMaterial({ color: "#1d4ed8" }));
+    stripe.position.set(0, body.position.y + 0.05, 0);
     group.add(stripe);
-    const lightbar = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.09, 0.16), new THREE.MeshBasicMaterial({ color: "#ef4444" }));
+    const lightbar = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.1, 0.2), new THREE.MeshBasicMaterial({ color: "#ef4444" }));
     lightbar.position.set(0, cab.position.y + cabHeight / 2 + 0.07, -0.08);
     group.add(lightbar);
     group.userData.emergencyLight = lightbar;
   }
 
   if (loop.kind === "delivery") {
-    const cargoLine = new THREE.Mesh(new THREE.BoxGeometry(width + 0.04, 0.09, 1.18), new THREE.MeshBasicMaterial({ color: "#451a03" }));
-    cargoLine.position.set(0, body.position.y + 0.08, 0.25);
+    const cargoLine = new THREE.Mesh(new THREE.BoxGeometry(width + 0.04, 0.1, length * 0.42), new THREE.MeshBasicMaterial({ color: "#451a03" }));
+    cargoLine.position.set(0, body.position.y + 0.12, length * 0.16);
     group.add(cargoLine);
     if (quality === "high") {
-      const cargoDoor = new THREE.Mesh(new THREE.BoxGeometry(width * 0.78, 0.42, 0.035), new THREE.MeshStandardMaterial({ color: "#78350f", roughness: 0.55, metalness: 0.08 }));
+      const cargoDoor = new THREE.Mesh(new THREE.BoxGeometry(width * 0.78, 0.68, 0.035), new THREE.MeshStandardMaterial({ color: "#78350f", roughness: 0.55, metalness: 0.08 }));
       cargoDoor.position.set(0, body.position.y + 0.08, length / 2 + 0.02);
       group.add(cargoDoor);
     }
@@ -2367,8 +2370,8 @@ function createTrafficVehicleMesh(loop: TrafficLoop, enableShadows: boolean, qua
 
   for (const x of [-width / 2 - 0.05, width / 2 + 0.05]) {
     for (const z of [-length * 0.32, length * 0.34]) {
-      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.1, quality === "low" ? 10 : 16), trimMaterial);
-      wheel.position.set(x, 0.22, z);
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(wheelRadius, wheelRadius, 0.16, quality === "low" ? 10 : 16), trimMaterial);
+      wheel.position.set(x, wheelRadius, z);
       wheel.rotation.z = Math.PI / 2;
       wheel.castShadow = enableShadows;
       group.add(wheel);
@@ -2377,7 +2380,7 @@ function createTrafficVehicleMesh(loop: TrafficLoop, enableShadows: boolean, qua
 
   const headlightMaterial = new THREE.MeshBasicMaterial({ color: "#fde68a", transparent: true, opacity: 0.76 });
   for (const x of [-width * 0.24, width * 0.24]) {
-    const light = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.06, 0.022), headlightMaterial);
+    const light = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.08, 0.024), headlightMaterial);
     light.position.set(x, body.position.y + 0.02, -length / 2 - 0.015);
     group.add(light);
   }
@@ -2385,7 +2388,7 @@ function createTrafficVehicleMesh(loop: TrafficLoop, enableShadows: boolean, qua
   if (quality === "high") {
     const tailLightMaterial = new THREE.MeshBasicMaterial({ color: "#ef4444", transparent: true, opacity: 0.78 });
     for (const x of [-width * 0.26, width * 0.26]) {
-      const tail = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.055, 0.022), tailLightMaterial);
+      const tail = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.07, 0.024), tailLightMaterial);
       tail.position.set(x, body.position.y + 0.01, length / 2 + 0.015);
       group.add(tail);
     }
@@ -2574,23 +2577,6 @@ function createWorldDecoration(decoration: WorldDecoration, enableLocalLights: b
   group.rotation.y = decoration.rotationY;
   group.scale.setScalar(decoration.scale);
   return group;
-}
-
-function sidewalkStripsForRoad(road: WorldRoad): Array<{ depth: number; width: number; x: number; z: number }> {
-  const sidewalkWidth = 1.9;
-  if (road.width >= road.depth) {
-    const offset = road.depth / 2 + sidewalkWidth / 2;
-    return [
-      { x: road.x, z: road.z - offset, width: road.width, depth: sidewalkWidth },
-      { x: road.x, z: road.z + offset, width: road.width, depth: sidewalkWidth }
-    ];
-  }
-
-  const offset = road.width / 2 + sidewalkWidth / 2;
-  return [
-    { x: road.x - offset, z: road.z, width: sidewalkWidth, depth: road.depth },
-    { x: road.x + offset, z: road.z, width: sidewalkWidth, depth: road.depth }
-  ];
 }
 
 function createDebugBox(box: CollisionBox): THREE.Mesh {
@@ -2998,7 +2984,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     };
     const roadMaterial = createRoadMaterial(renderProfile.detail);
     const sidewalkMaterial = createSidewalkMaterial(renderProfile.detail);
-    const sidewalks = mapLayout.roads.flatMap(sidewalkStripsForRoad);
+    const sidewalks = sidewalkFootprintsForRoads(mapLayout.roads, mapLayout.buildings);
 
     for (const road of mapLayout.roads) {
       addRectMeshesToWorldChunks(staticChunks, scene, roadBounds(road), 0.025, 0.035, roadMaterial, (mesh) => {

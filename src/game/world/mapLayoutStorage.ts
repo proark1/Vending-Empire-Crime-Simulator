@@ -15,9 +15,11 @@ import {
   type WorldRoad
 } from "../content/world";
 import { pathOnRoads } from "./roadGraph";
+import { WORLD_SCALE } from "./scale";
+import { sidewalkFootprintBounds, sidewalkFootprintsForRoads } from "./sidewalks";
 
 const MAP_LAYOUT_KEY = "vendetta-vending.map-layout.v1";
-const MAP_LAYOUT_VERSION = 1;
+const MAP_LAYOUT_VERSION = 2;
 
 interface StoredWorldMapLayout {
   layout: WorldMapLayout;
@@ -255,6 +257,10 @@ export function validateWorldMapLayout(layout: WorldMapLayout): MapValidationIss
       pushIssue(issues, "error", "roads", `${label} has an invalid size.`);
     }
 
+    if (Math.min(road.width, road.depth) < WORLD_SCALE.road.minimumStreetWidth) {
+      pushIssue(issues, "warning", "roads", `${label} is narrower than the human-scale street minimum.`);
+    }
+
     validateRect(issues, "roads", roadFootprint(road), label);
   });
 
@@ -264,6 +270,10 @@ export function validateWorldMapLayout(layout: WorldMapLayout): MapValidationIss
 
     if (building.width <= 0 || building.depth <= 0 || building.height <= 0) {
       pushIssue(issues, "error", "buildings", `${label} has an invalid size.`);
+    }
+
+    if (building.height < WORLD_SCALE.building.minimumStorefrontHeight) {
+      pushIssue(issues, "error", "buildings", `${label} is too short for human-scale doors and storefront windows.`);
     }
 
     const buildingBounds = buildingFootprint(building);
@@ -276,6 +286,21 @@ export function validateWorldMapLayout(layout: WorldMapLayout): MapValidationIss
       if (rectsIntersect(buildingBounds, roadFootprint(road))) {
         pushIssue(issues, "error", "buildings", `${label} overlaps ${road.id}. Move either object so streets stay clear of building footprints.`);
       }
+    }
+  });
+
+  sidewalkFootprintsForRoads(layout.roads, layout.buildings).forEach((sidewalk, sidewalkIndex) => {
+    const sidewalkBounds = sidewalkFootprintBounds(sidewalk);
+    validateRect(issues, "roads", sidewalkBounds, `${sidewalk.sourceRoadId} sidewalk ${sidewalkIndex + 1}`);
+
+    for (const road of layout.roads) {
+      if (rectsIntersect(sidewalkBounds, roadFootprint(road))) {
+        pushIssue(issues, "error", "roads", `${sidewalk.sourceRoadId} sidewalk crosses ${road.id}.`);
+      }
+    }
+
+    if (buildingBounds.some((bounds) => rectsIntersect(sidewalkBounds, bounds))) {
+      pushIssue(issues, "error", "roads", `${sidewalk.sourceRoadId} sidewalk overlaps a building footprint.`);
     }
   });
 
