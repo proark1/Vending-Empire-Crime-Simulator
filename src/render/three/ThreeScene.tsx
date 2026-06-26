@@ -150,7 +150,7 @@ function applyModelTransform(object: THREE.Object3D, transform: ModelTransform):
   object.userData.modelRotationZ = (typeof object.userData.modelRotationZ === "number" ? object.userData.modelRotationZ : 0) + transform.rotationZ;
 }
 
-function applyModelTransformById(object: THREE.Object3D, modelConfig: ModelConfig, modelId: string): void {
+export function applyModelTransformById(object: THREE.Object3D, modelConfig: ModelConfig, modelId: string): void {
   applyModelTransform(object, modelTransformFor(modelConfig, modelId));
 }
 
@@ -737,7 +737,7 @@ function createLowMachineMesh(color: string, damage: number, installedUpgrades: 
   return group;
 }
 
-function createMachineMesh(color: string, damage: number, installedUpgrades: MachineUpgradeId[] = [], quality: GraphicsQuality = "medium", stockRatio = 1, productIds: ProductId[] = []): THREE.Group {
+export function createMachineMesh(color: string, damage: number, installedUpgrades: MachineUpgradeId[] = [], quality: GraphicsQuality = "medium", stockRatio = 1, productIds: ProductId[] = []): THREE.Group {
   if (quality === "low") {
     return createLowMachineMesh(color, damage, installedUpgrades, stockRatio, productIds);
   }
@@ -1188,7 +1188,7 @@ function createMachinePlacementDressing(placement: { position: THREE.Vector3; ro
   return group;
 }
 
-function createStockCrateMesh(productId: ProductId, quantity: number, compact = false, modelConfig?: ModelConfig): THREE.Group {
+export function createStockCrateMesh(productId: ProductId, quantity: number, compact = false, modelConfig?: ModelConfig): THREE.Group {
   const color = productCrateColors[productId] ?? "#94a3b8";
   const group = new THREE.Group();
   const crate = new THREE.Mesh(
@@ -1283,7 +1283,7 @@ function createRoutePressureRing(tone: "good" | "warning" | "danger"): THREE.Gro
   return group;
 }
 
-function createVehicleMesh(quality: GraphicsQuality = "medium"): THREE.Group {
+export function createVehicleMesh(quality: GraphicsQuality = "medium"): THREE.Group {
   const group = new THREE.Group();
   const paintMaterial = new THREE.MeshStandardMaterial({ color: "#d9f99d", roughness: 0.42, metalness: 0.12 });
   const panelMaterial = new THREE.MeshStandardMaterial({ color: "#bef264", roughness: 0.5, metalness: 0.08 });

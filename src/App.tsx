@@ -5,6 +5,7 @@ import type { SceneFeedbackEvent, SceneTarget } from "./render/three/SceneTarget
 import { Dashboard } from "./ui/Dashboard";
 import { Hud } from "./ui/Hud";
 import { InteractionPanel } from "./ui/InteractionPanel";
+import { LandingCinematicScene } from "./ui/LandingCinematicScene";
 import { Minimap } from "./ui/Minimap";
 import { MissionTracker } from "./ui/MissionTracker";
 import { GuidanceArrow } from "./ui/GuidanceArrow";
@@ -252,37 +253,6 @@ function LandingQuickFacts({ state }: { state?: GameState }) {
         <strong>{endgamePaths.length}</strong>
         <span>messy endings</span>
       </div>
-    </div>
-  );
-}
-
-function LandingHeroPoster() {
-  return (
-    <div className="landing-hero-poster" role="img" aria-label="Neon vending machine hero art with delivery van, city blocks, and rival alarm callouts">
-      <div className="poster-skyline" aria-hidden="true">
-        <span />
-        <span />
-        <span />
-        <span />
-        <span />
-      </div>
-      <div className="poster-machine" aria-hidden="true">
-        <span className="poster-machine-sign">VV</span>
-        <span className="poster-machine-screen">SNACKS</span>
-        <span className="poster-machine-slot a" />
-        <span className="poster-machine-slot b" />
-        <span className="poster-machine-slot c" />
-        <span className="poster-machine-glow" />
-      </div>
-      <div className="poster-van" aria-hidden="true">
-        <span className="poster-van-window" />
-        <span className="poster-van-stripe" />
-        <span className="poster-wheel left" />
-        <span className="poster-wheel right" />
-      </div>
-      <div className="poster-road" aria-hidden="true" />
-      <div className="poster-callout poster-callout-top">ALARM: Redline touching the chips</div>
-      <div className="poster-callout poster-callout-bottom">Profit forecast: loud</div>
     </div>
   );
 }
@@ -1028,12 +998,12 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
                   Maximum snack beef
                 </span>
               </div>
-              <LandingQuickFacts state={state} />
               <button className="entry-button landing-primary" onClick={handleEnterDistrict} type="button">
                 <Play size={18} aria-hidden="true" />
                 Enter District
               </button>
-              <LandingHeroPoster />
+              <LandingCinematicScene modelConfig={modelConfig} />
+              <LandingQuickFacts state={state} />
               <LandingFeatureGrid />
               <LandingGameLoop />
               <LandingCampaignBoard limit={3} state={state} />
@@ -1196,27 +1166,27 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
     <main className="access-shell">
       <section className="access-landing" aria-label="Vendetta Vending access">
         <div className="access-hero">
-          <span className="landing-kicker">Petty crime. Serious route optimization.</span>
+          <span className="landing-kicker">First-person vending crime sim</span>
           <h1>Vendetta Vending</h1>
           <p className="access-story">
-            The city thinks vending machines are passive income. The city is wrong. Start with one dented cabinet, a garage full of bad decisions, and a route plan that turns soda money into turf wars.
+            Hit the street with a clattering route van, a busted snack machine, and a terrible idea: turn pocket change into territory. Stock weird products, answer alarms, outrun rivals, and make every corner of the city smell like profit and bad decisions.
           </p>
           <div className="landing-quip-row" aria-label="Game highlights">
             <span>
               <Truck size={15} aria-hidden="true" />
-              Haul crates
+              Drive the route
             </span>
             <span>
               <ShieldAlert size={15} aria-hidden="true" />
-              Eat fines
+              Defend machines
             </span>
             <span>
               <Sparkles size={15} aria-hidden="true" />
-              Sell weird gum
+              Sell suspicious gum
             </span>
           </div>
+          <LandingCinematicScene modelConfig={modelConfig} />
           <LandingQuickFacts />
-          <LandingHeroPoster />
         </div>
         <form className="access-panel" onSubmit={handleLogin}>
           <div>
