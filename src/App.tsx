@@ -159,6 +159,18 @@ function createSceneFeedback(command: GameCommand, target: SceneTarget | null, s
     }
     case "debug_grant_cash":
       return { kind: "cash", locationId: state.player.currentLocationId ?? "garage", amount: command.amount, tone: "good" };
+    case "dispatch_vehicle":
+      return { kind: "vehicle", locationId: command.locationId, tone: "good" };
+    case "drive_vehicle":
+      return { kind: "vehicle", locationId: state.vehicles[command.vehicleId]?.locationId, tone: "neutral" };
+    case "select_route_task": {
+      const task = selectedRouteTask({ ...state, routePlan: { ...state.routePlan, selectedTaskId: command.taskId } });
+      return { kind: "scout", locationId: task?.locationId ?? state.player.currentLocationId ?? "garage", tone: "neutral" };
+    }
+    case "service_vehicle":
+      return { kind: "repair", locationId: state.vehicles[command.vehicleId]?.locationId ?? "garage", tone: "good" };
+    case "install_vehicle_upgrade":
+      return { kind: "upgrade", locationId: state.vehicles[command.vehicleId]?.locationId ?? "garage", tone: "good" };
     case "debug_complete_requirements":
       return { kind: "upgrade", locationId: "garage", tone: "good" };
     case "debug_set_rival_pressure":

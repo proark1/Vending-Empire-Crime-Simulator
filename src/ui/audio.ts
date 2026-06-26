@@ -249,10 +249,51 @@ function playSynthAsset(cue: AudioCue, asset: AudioAsset): boolean {
     return true;
   }
 
+  if (preset.includes("vehicle")) {
+    synthTone(120, now, 0.08, 0.032, "square", category, asset.volume);
+    synthTone(180, now + 0.07, 0.11, 0.026, "triangle", category, asset.volume);
+    synthTone(95, now + 0.16, 0.08, 0.018, "sine", category, asset.volume);
+    return true;
+  }
+
+  if (preset.includes("route")) {
+    synthTone(620, now, 0.05, 0.022, "triangle", category, asset.volume);
+    synthTone(880, now + 0.055, 0.06, 0.02, "triangle", category, asset.volume);
+    synthTone(1240, now + 0.12, 0.08, 0.016, "sine", category, asset.volume);
+    return true;
+  }
+
+  if (preset.includes("service")) {
+    synthTone(260, now, 0.04, 0.03, "sawtooth", category, asset.volume);
+    synthTone(340, now + 0.045, 0.05, 0.026, "sawtooth", category, asset.volume);
+    synthTone(720, now + 0.11, 0.07, 0.018, "triangle", category, asset.volume);
+    return true;
+  }
+
   if (preset.includes("tools")) {
     synthTone(420, now, 0.05, 0.03, "sawtooth", category, asset.volume);
     synthTone(640, now + 0.05, 0.06, 0.026, "sawtooth", category, asset.volume);
     synthTone(920, now + 0.11, 0.07, 0.02, "triangle", category, asset.volume);
+    return true;
+  }
+
+  if (preset.includes("crowd")) {
+    synthTone(180, now, 0.16, 0.018, "sine", category, asset.volume);
+    synthTone(260, now + 0.03, 0.18, 0.014, "triangle", category, asset.volume);
+    synthTone(520, now + 0.12, 0.09, 0.012, "sine", category, asset.volume);
+    return true;
+  }
+
+  if (preset.includes("weather")) {
+    synthTone(210, now, 0.2, 0.018, "sine", category, asset.volume);
+    synthTone(330, now + 0.08, 0.16, 0.014, "triangle", category, asset.volume);
+    return true;
+  }
+
+  if (preset.includes("shortage")) {
+    synthTone(420, now, 0.04, 0.026, "square", category, asset.volume);
+    synthTone(420, now + 0.09, 0.04, 0.022, "square", category, asset.volume);
+    synthTone(300, now + 0.18, 0.08, 0.016, "triangle", category, asset.volume);
     return true;
   }
 

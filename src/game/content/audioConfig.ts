@@ -54,6 +54,8 @@ export const audioTriggerOptions: Array<{ category: AudioCategory; label: string
   { category: "sound", trigger: "feedback.store", label: "Stored crate" },
   { category: "sound", trigger: "feedback.stock", label: "Stocked machine" },
   { category: "sound", trigger: "feedback.vehicle", label: "Vehicle cargo" },
+  { category: "sound", trigger: "feedback.route", label: "Route guidance" },
+  { category: "sound", trigger: "feedback.fleet", label: "Fleet service" },
   { category: "sound", trigger: "feedback.repair", label: "Machine repaired" },
   { category: "sound", trigger: "feedback.upgrade", label: "Upgrade installed" },
   { category: "sound", trigger: "feedback.install", label: "Machine placed" },
@@ -68,6 +70,10 @@ export const audioTriggerOptions: Array<{ category: AudioCategory; label: string
   { category: "sound", trigger: "event.warning", label: "Warning event" },
   { category: "sound", trigger: "event.danger", label: "Danger event" },
   { category: "sound", trigger: "event.neutral", label: "Neutral event" },
+  { category: "sound", trigger: "event.festival", label: "Festival event" },
+  { category: "sound", trigger: "event.weather", label: "Weather shift" },
+  { category: "sound", trigger: "event.shortage", label: "Supply shortage" },
+  { category: "sound", trigger: "event.trend", label: "Demand trend" },
   { category: "voice", trigger: "voice.district_entry", label: "District entry voice" },
   { category: "voice", trigger: "voice.heat_warning", label: "Heat warning voice" },
   { category: "voice", trigger: "voice.rival_attack", label: "Rival attack voice" },
@@ -100,6 +106,12 @@ const defaultAudioAssets: AudioAsset[] = [
   { id: "synth_sound_cash", category: "sound", label: "Register chime", loop: false, sizeBytes: 0, url: "synth://sound/cash", volume: 0.85 },
   { id: "synth_sound_crate", category: "sound", label: "Crate handling", loop: false, sizeBytes: 0, url: "synth://sound/crate", volume: 0.8 },
   { id: "synth_sound_tools", category: "sound", label: "Tool burst", loop: false, sizeBytes: 0, url: "synth://sound/tools", volume: 0.78 },
+  { id: "synth_sound_route_ping", category: "sound", label: "Route planner ping", loop: false, sizeBytes: 0, url: "synth://sound/route_ping", volume: 0.78 },
+  { id: "synth_sound_vehicle_roll", category: "sound", label: "Vehicle cargo roll", loop: false, sizeBytes: 0, url: "synth://sound/vehicle_roll", volume: 0.8 },
+  { id: "synth_sound_service_rattle", category: "sound", label: "Service rattle", loop: false, sizeBytes: 0, url: "synth://sound/service_rattle", volume: 0.78 },
+  { id: "synth_sound_event_crowd", category: "sound", label: "District crowd swell", loop: false, sizeBytes: 0, url: "synth://sound/event_crowd", volume: 0.72 },
+  { id: "synth_sound_weather_shift", category: "sound", label: "Weather shift", loop: false, sizeBytes: 0, url: "synth://sound/weather_shift", volume: 0.72 },
+  { id: "synth_sound_shortage_tick", category: "sound", label: "Shortage tick", loop: false, sizeBytes: 0, url: "synth://sound/shortage_tick", volume: 0.75 },
   { id: "synth_sound_conflict", category: "sound", label: "Conflict hit", loop: false, sizeBytes: 0, url: "synth://sound/conflict", volume: 0.86 },
   { id: "synth_sound_alert", category: "sound", label: "System alert", loop: false, sizeBytes: 0, url: "synth://sound/alert", volume: 0.82 },
   { id: "synth_voice_radio", category: "voice", label: "Radio voice pulse", loop: false, sizeBytes: 0, url: "synth://voice/radio", volume: 0.72 }
@@ -113,8 +125,10 @@ const defaultCueAssetByTrigger: Record<string, string> = {
   "feedback.pickup": "synth_sound_crate",
   "feedback.store": "synth_sound_crate",
   "feedback.stock": "synth_sound_crate",
-  "feedback.vehicle": "synth_sound_crate",
-  "feedback.repair": "synth_sound_tools",
+  "feedback.vehicle": "synth_sound_vehicle_roll",
+  "feedback.route": "synth_sound_route_ping",
+  "feedback.fleet": "synth_sound_service_rattle",
+  "feedback.repair": "synth_sound_service_rattle",
   "feedback.upgrade": "synth_sound_tools",
   "feedback.install": "synth_sound_tools",
   "feedback.sabotage": "synth_sound_conflict",
@@ -122,12 +136,16 @@ const defaultCueAssetByTrigger: Record<string, string> = {
   "feedback.melee": "synth_sound_conflict",
   "feedback.escape": "synth_sound_tools",
   "feedback.lockdown": "synth_sound_alert",
-  "feedback.scout": "synth_sound_alert",
+  "feedback.scout": "synth_sound_route_ping",
   "feedback.district": "synth_sound_alert",
   "event.good": "synth_sound_cash",
   "event.warning": "synth_sound_alert",
   "event.danger": "synth_sound_conflict",
-  "event.neutral": "synth_sound_tools"
+  "event.neutral": "synth_sound_route_ping",
+  "event.festival": "synth_sound_event_crowd",
+  "event.weather": "synth_sound_weather_shift",
+  "event.shortage": "synth_sound_shortage_tick",
+  "event.trend": "synth_sound_cash"
 };
 
 function defaultAudioCues(): AudioCue[] {
@@ -212,6 +230,13 @@ export function normalizeAudioConfig(candidate: unknown): AudioConfig {
       volume: clamp(asset.volume, 0.8)
     };
   });
+  const assetIds = new Set(assets.map((asset) => asset.id));
+  for (const defaultAsset of defaultAudioAssets) {
+    if (!assetIds.has(defaultAsset.id)) {
+      assets.push({ ...defaultAsset, sizeBytes: defaultAsset.sizeBytes ?? null });
+      assetIds.add(defaultAsset.id);
+    }
+  }
 
   const cues = cuesInput.map((cueInput, index) => {
     const cue = typeof cueInput === "object" && cueInput !== null ? cueInput as Partial<AudioCue> : {};
@@ -233,6 +258,13 @@ export function normalizeAudioConfig(candidate: unknown): AudioConfig {
       trigger
     };
   });
+  const cueTriggers = new Set(cues.map((cue) => cue.trigger));
+  for (const defaultCue of defaultAudioCues()) {
+    if (!cueTriggers.has(defaultCue.trigger)) {
+      cues.push({ ...defaultCue });
+      cueTriggers.add(defaultCue.trigger);
+    }
+  }
 
   return {
     assets,
