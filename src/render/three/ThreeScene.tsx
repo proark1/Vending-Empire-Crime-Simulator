@@ -1222,65 +1222,67 @@ function createVehicleMesh(quality: GraphicsQuality = "medium"): THREE.Group {
   const bodyMaterial = new THREE.MeshStandardMaterial({ color: "#d9f99d", roughness: 0.48, metalness: 0.08 });
   const trimMaterial = new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.42, metalness: 0.12 });
   const glassMaterial = new THREE.MeshPhysicalMaterial({ color: "#bae6fd", roughness: 0.08, transparent: true, opacity: 0.72 });
+  const { bodyHeight, length, width } = WORLD_SCALE.vehicle;
+  const wheelRadius = 0.36;
 
-  const body = new THREE.Mesh(new THREE.BoxGeometry(2.05, 0.72, 1.04), bodyMaterial);
-  body.position.y = 0.58;
+  const body = new THREE.Mesh(new THREE.BoxGeometry(length, bodyHeight, width), bodyMaterial);
+  body.position.y = 0.56 + bodyHeight / 2;
   body.castShadow = true;
   body.receiveShadow = true;
   group.add(body);
 
-  const cab = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.62, 0.92), bodyMaterial);
-  cab.position.set(-0.66, 1.17, 0);
+  const cab = new THREE.Mesh(new THREE.BoxGeometry(1.45, 0.78, width * 0.82), bodyMaterial);
+  cab.position.set(-length * 0.23, 1.42, 0);
   cab.castShadow = true;
   cab.receiveShadow = true;
   group.add(cab);
 
-  const windshield = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.36, 0.66), glassMaterial);
-  windshield.position.set(-1.09, 1.2, 0);
+  const windshield = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.48, width * 0.58), glassMaterial);
+  windshield.position.set(-length * 0.41, 1.43, 0);
   group.add(windshield);
 
-  const stripe = new THREE.Mesh(new THREE.BoxGeometry(1.78, 0.1, 0.035), new THREE.MeshBasicMaterial({ color: "#2dd4bf" }));
-  stripe.position.set(0.08, 0.66, -0.54);
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(length * 0.82, 0.12, 0.04), new THREE.MeshBasicMaterial({ color: "#2dd4bf" }));
+  stripe.position.set(0.08, 0.82, -width / 2 - 0.02);
   group.add(stripe);
 
   if (quality !== "low") {
-    const sideDoor = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.36, 0.032), new THREE.MeshStandardMaterial({ color: "#bef264", roughness: 0.5, metalness: 0.08 }));
-    sideDoor.position.set(-0.2, 0.79, -0.54);
+    const sideDoor = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.62, 0.032), new THREE.MeshStandardMaterial({ color: "#bef264", roughness: 0.5, metalness: 0.08 }));
+    sideDoor.position.set(-length * 0.09, 0.98, -width / 2 - 0.025);
     group.add(sideDoor);
 
     const mirrorMaterial = new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.4, metalness: 0.16 });
     for (const z of [-0.56, 0.56]) {
-      const mirror = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.09, 0.035), mirrorMaterial);
-      mirror.position.set(-1.06, 1.12, z * 0.86);
+      const mirror = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.12, 0.045), mirrorMaterial);
+      mirror.position.set(-length * 0.4, 1.38, z * width * 0.48);
       group.add(mirror);
     }
   }
 
   if (quality === "high") {
     const roofRack = new THREE.Group();
-    roofRack.position.set(0.24, 1.0, 0);
-    for (const z of [-0.36, 0.36]) {
-      const rail = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.035, 0.035), trimMaterial);
+    roofRack.position.set(0.32, 1.2, 0);
+    for (const z of [-width * 0.28, width * 0.28]) {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(length * 0.46, 0.04, 0.04), trimMaterial);
       rail.position.set(0, 0.62, z);
       roofRack.add(rail);
     }
-    for (const x of [-0.38, 0.38]) {
-      const crossbar = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.035, 0.76), trimMaterial);
+    for (const x of [-length * 0.18, length * 0.18]) {
+      const crossbar = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.04, width * 0.62), trimMaterial);
       crossbar.position.set(x, 0.62, 0);
       roofRack.add(crossbar);
     }
     group.add(roofRack);
 
-    const rearHandle = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.035, 0.034), new THREE.MeshBasicMaterial({ color: "#f8fafc" }));
-    rearHandle.position.set(1.08, 0.78, 0);
+    const rearHandle = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.04, 0.035), new THREE.MeshBasicMaterial({ color: "#f8fafc" }));
+    rearHandle.position.set(length / 2 + 0.02, 0.92, 0);
     rearHandle.rotation.y = Math.PI / 2;
     group.add(rearHandle);
   }
 
-  for (const x of [-0.68, 0.74]) {
-    for (const z of [-0.56, 0.56]) {
-      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.23, 0.12, 20), trimMaterial);
-      wheel.position.set(x, 0.24, z);
+  for (const x of [-length * 0.31, length * 0.31]) {
+    for (const z of [-width / 2 - 0.04, width / 2 + 0.04]) {
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(wheelRadius, wheelRadius, 0.18, 20), trimMaterial);
+      wheel.position.set(x, wheelRadius, z);
       wheel.rotation.x = Math.PI / 2;
       wheel.castShadow = true;
       group.add(wheel);
@@ -1288,9 +1290,9 @@ function createVehicleMesh(quality: GraphicsQuality = "medium"): THREE.Group {
   }
 
   const headlightMaterial = new THREE.MeshBasicMaterial({ color: "#fde68a" });
-  for (const z of [-0.34, 0.34]) {
-    const light = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.1, 0.16), headlightMaterial);
-    light.position.set(-1.2, 0.66, z);
+  for (const z of [-width * 0.26, width * 0.26]) {
+    const light = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.11, 0.22), headlightMaterial);
+    light.position.set(-length / 2 - 0.025, 0.84, z);
     group.add(light);
   }
 
