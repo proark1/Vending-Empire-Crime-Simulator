@@ -69,6 +69,13 @@ export interface GeneratedAudioResponse {
   prompt: ElevenLabsGenerationPrompt;
 }
 
+export interface PlayerDataResetResponse {
+  deletedSaves: number;
+  deletedSessions: number;
+  ok: true;
+  playerCount: number;
+}
+
 export interface RemoteMapRevision {
   action: string;
   createdAt: string;
@@ -349,6 +356,13 @@ export async function restoreRemoteAudioConfigRevision(session: AdminSession, re
 export async function loadAdminMonitoring(session: AdminSession): Promise<AdminMonitoringSnapshot> {
   return requestJson<AdminMonitoringSnapshot>("/api/admin/monitoring", {
     method: "GET",
+    headers: authHeaders(session.token)
+  });
+}
+
+export async function resetRemotePlayerData(session: AdminSession): Promise<PlayerDataResetResponse> {
+  return requestJson<PlayerDataResetResponse>("/api/admin/player-data", {
+    method: "DELETE",
     headers: authHeaders(session.token)
   });
 }

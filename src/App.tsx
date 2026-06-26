@@ -23,7 +23,6 @@ import { endgamePaths, storyMissionArcs } from "./game/content/story";
 import { products } from "./game/content/products";
 import { clearWorldMapLayout, loadWorldMapLayout, saveWorldMapLayout } from "./game/world/mapLayoutStorage";
 import { clearStoredGameSession, loadRemoteAudioConfig, loadRemoteGame, loadRemoteMapLayout, loadStoredGameSession, loginGame, registerGame, type GameSession } from "./game/save/api";
-import { loadGame } from "./game/save/storage";
 import { createInitialState } from "./game/content/initialState";
 import { configureGameAudio, playEventCue, playFeedbackCue, startGameAmbience, unlockGameAudio, updateGameAmbience } from "./ui/audio";
 import { MultiplayerClient } from "./game/network/multiplayerClient";
@@ -1137,7 +1136,7 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
         setAuthState({
           status: "ready",
           session: { ...session, saveRevision: remote.save?.revision ?? null, saveUpdatedAt: remote.save?.updatedAt ?? null },
-          initialState: remote.save?.state ?? loadGame()
+          initialState: remote.save?.state ?? createInitialState()
         });
       })
       .catch(() => {
@@ -1165,7 +1164,7 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
           setAuthState({
             status: "ready",
             session: { profile: response.profile, saveRevision: response.save?.revision ?? null, saveUpdatedAt: response.save?.updatedAt ?? null, token: response.token },
-            initialState: response.save?.state ?? (submitMode === "register" ? createInitialState() : loadGame())
+            initialState: response.save?.state ?? createInitialState()
           });
         })
         .catch((error) => {

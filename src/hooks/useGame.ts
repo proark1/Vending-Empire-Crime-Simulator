@@ -63,7 +63,7 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
       .then((remote) => {
         remoteSaveRevisionRef.current = remote.save?.revision ?? null;
         updateStoredGameSessionSaveRevision(remote.save?.revision ?? null, remote.save?.updatedAt ?? null);
-        const nextState = remote.save?.state ?? loadGame();
+        const nextState = remote.save?.state ?? createInitialState();
         saveGame(nextState);
         setState(nextState);
       })

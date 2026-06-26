@@ -14,6 +14,7 @@ import {
   loginAdmin,
   restoreRemoteMapRevision,
   resetRemoteMapLayout,
+  resetRemotePlayerData,
   saveRemoteMapLayout,
   type AdminMonitoringSnapshot,
   type AdminSession,
@@ -1096,6 +1097,28 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, modelConfig,
       });
   }, [adminSession]);
 
+  const handleResetPlayerData = useCallback(() => {
+    if (!adminSession) {
+      setStatus("Admin session expired. Sign in again.");
+      return;
+    }
+
+    if (!window.confirm("Reset all player saves and active sessions? Player accounts stay registered, but everyone starts from day zero on next login.")) {
+      return;
+    }
+
+    setSaving(true);
+    resetRemotePlayerData(adminSession)
+      .then((result) => {
+        setStatus(`Player data reset: ${result.deletedSaves} save${result.deletedSaves === 1 ? "" : "s"} cleared, ${result.deletedSessions} session${result.deletedSessions === 1 ? "" : "s"} expired.`);
+        refreshMonitoring(adminSession);
+      })
+      .catch((error) => {
+        setStatus(error instanceof Error ? error.message : "Player data reset failed.");
+      })
+      .finally(() => setSaving(false));
+  }, [adminSession, refreshMonitoring]);
+
   useEffect(() => {
     if (!adminSession) {
       return;
@@ -1675,6 +1698,7 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, modelConfig,
               <Gauge size={16} aria-hidden="true" />
               Operations
               <button onClick={() => refreshMonitoring()} type="button">Refresh</button>
+              <button className="danger" disabled={saving} onClick={handleResetPlayerData} type="button">Reset players</button>
             </h3>
             {monitoring ? (
               <>
@@ -1684,6 +1708,7 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, modelConfig,
                   <span>Saves {monitoring.metrics.gameSaves ?? 0}</span>
                   <span>Conflicts {monitoring.metrics.gameSaveConflicts ?? 0}</span>
                   <span>Map saves {monitoring.metrics.mapSaves ?? 0}</span>
+                  <span>Player resets {monitoring.metrics.playerDataResets ?? 0}</span>
                   <span>Errors {monitoring.metrics.serverErrors ?? 0}</span>
                 </div>
                 {monitoring.recentEvents.slice(0, 4).map((event) => (

@@ -4332,6 +4332,11 @@ kbd {
   padding: 0 8px;
 }
 
+.admin-monitoring h3 button.danger {
+  border-color: rgba(248, 113, 113, 0.34);
+  color: #fecdd3;
+}
+
 .admin-validation p,
 .admin-revisions p,
 .admin-monitoring p,

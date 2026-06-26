@@ -43,6 +43,7 @@ const metrics = {
   multiplayerDisconnects: 0,
   multiplayerMessages: 0,
   multiplayerRoomsCreated: 0,
+  playerDataResets: 0,
   serverErrors: 0
 };
 
@@ -1266,6 +1267,43 @@ async function handleAdminMonitoring(request, response) {
   });
 }
 
+async function handlePlayerDataReset(request, response) {
+  const admin = await requireAdmin(request);
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const players = await client.query("SELECT count(*)::integer AS count FROM player_profiles");
+    const saves = await client.query("DELETE FROM game_saves RETURNING profile_id");
+    const sessions = await client.query("DELETE FROM player_sessions RETURNING token_hash");
+    await client.query("COMMIT");
+
+    for (const peer of multiplayerPeers.values()) {
+      peer.socket.close(4001, "Player data reset");
+    }
+
+    metrics.playerDataResets += 1;
+    recordEvent("warning", "player_data_reset", "All player saves were reset.", {
+      by: admin.name,
+      deletedSaves: saves.rowCount,
+      deletedSessions: sessions.rowCount,
+      playerCount: players.rows[0]?.count ?? 0
+    });
+    jsonResponse(response, 200, {
+      ok: true,
+      deletedSaves: saves.rowCount,
+      deletedSessions: sessions.rowCount,
+      playerCount: players.rows[0]?.count ?? 0
+    });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    metrics.failedWrites += 1;
+    recordEvent("error", "player_data_reset_failed", "Player data reset failed.", { error: error.message });
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 function generateMultiplayerRoomCode() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -1711,6 +1749,11 @@ async function routeApi(request, response, url) {
 
     if (url.pathname === "/api/admin/monitoring" && request.method === "GET") {
       await handleAdminMonitoring(request, response);
+      return true;
+    }
+
+    if (url.pathname === "/api/admin/player-data" && request.method === "DELETE") {
+      await handlePlayerDataReset(request, response);
       return true;
     }
 
