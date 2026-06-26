@@ -18,7 +18,7 @@ import { ToastStack, type ToastMessage } from "./ui/ToastStack";
 import type { GameCommand, GameState, LocationId, ProductId, Vec2 } from "./game/core/types";
 import { createDefaultAudioConfig, normalizeAudioConfig, type AudioConfig } from "./game/content/audioConfig";
 import { worldBounds, type WorldMapLayout } from "./game/content/world";
-import { storyMissionArcs } from "./game/content/story";
+import { endgamePaths, storyMissionArcs } from "./game/content/story";
 import { products } from "./game/content/products";
 import { clearWorldMapLayout, loadWorldMapLayout, saveWorldMapLayout } from "./game/world/mapLayoutStorage";
 import { clearStoredGameSession, loadRemoteAudioConfig, loadRemoteGame, loadRemoteMapLayout, loadStoredGameSession, loginGame, registerGame, type GameSession } from "./game/save/api";
@@ -181,6 +181,111 @@ const landingRivals = [
   }
 ];
 
+const landingLoopSteps = [
+  {
+    title: "Buy suspiciously cheap stock",
+    text: "Start clean with soda and chips, then decide how spicy the product list should get when the night crowd starts asking questions."
+  },
+  {
+    title: "Claim a corner",
+    text: "Every placement is rent, risk, traffic, visibility, and a tiny public insult to the rival who thought that laundromat was theirs."
+  },
+  {
+    title: "Run the route yourself",
+    text: "Load crates, drive the van, restock cabinets, collect cash, and pretend the rattling sound is absolutely normal."
+  },
+  {
+    title: "Answer alarms before things get expensive",
+    text: "Sabotage, inspections, missed repairs, and rival stunts all turn passive income into active panic."
+  },
+  {
+    title: "Choose your ending",
+    text: "Go legit, become the snack syndicate, ally with a faction, cash out, or let the route collapse into a beautiful accounting disaster."
+  }
+];
+
+const landingScreens = [
+  {
+    id: "street",
+    title: "Street-view route runs",
+    text: "Walk the block, spot machines, service locations, and sprint toward alarms with the confidence of someone carrying too many cans."
+  },
+  {
+    id: "ops",
+    title: "Operations chaos board",
+    text: "Track stock, route tasks, cash, upgrades, rivals, contracts, crew, and which cabinet is currently being dramatic."
+  },
+  {
+    id: "alarm",
+    title: "Alarm night mode",
+    text: "When Redline pokes a machine, the city stops being a spreadsheet and becomes a vending-flavored emergency."
+  }
+];
+
+const landingFunNotes = [
+  "Your first machine is called Rusty Starter because Legal Liability Box tested poorly.",
+  "The van is not fast. It is emotionally committed.",
+  "Grey-market gum: fictional, profitable, and definitely not helping your heat score.",
+  "Corporate rivals weaponize paperwork. Street rivals weaponize crowbars. You weaponize snacks."
+];
+
+function LandingQuickFacts({ state }: { state?: GameState }) {
+  const productCount = Object.keys(state?.products ?? products).length;
+  const machineCount = state ? Object.values(state.machines).filter((machine) => machine.placementStatus === "installed").length : "Citywide";
+
+  return (
+    <div className="landing-fact-strip" aria-label="Game scale">
+      <div>
+        <strong>{storyMissionArcs.length}</strong>
+        <span>story districts</span>
+      </div>
+      <div>
+        <strong>{productCount}</strong>
+        <span>stock items</span>
+      </div>
+      <div>
+        <strong>{machineCount}</strong>
+        <span>machine claims</span>
+      </div>
+      <div>
+        <strong>{endgamePaths.length}</strong>
+        <span>messy endings</span>
+      </div>
+    </div>
+  );
+}
+
+function LandingHeroPoster() {
+  return (
+    <div className="landing-hero-poster" role="img" aria-label="Neon vending machine hero art with delivery van, city blocks, and rival alarm callouts">
+      <div className="poster-skyline" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+        <span />
+        <span />
+      </div>
+      <div className="poster-machine" aria-hidden="true">
+        <span className="poster-machine-sign">VV</span>
+        <span className="poster-machine-screen">SNACKS</span>
+        <span className="poster-machine-slot a" />
+        <span className="poster-machine-slot b" />
+        <span className="poster-machine-slot c" />
+        <span className="poster-machine-glow" />
+      </div>
+      <div className="poster-van" aria-hidden="true">
+        <span className="poster-van-window" />
+        <span className="poster-van-stripe" />
+        <span className="poster-wheel left" />
+        <span className="poster-wheel right" />
+      </div>
+      <div className="poster-road" aria-hidden="true" />
+      <div className="poster-callout poster-callout-top">ALARM: Redline touching the chips</div>
+      <div className="poster-callout poster-callout-bottom">Profit forecast: loud</div>
+    </div>
+  );
+}
+
 function LandingFeatureGrid() {
   return (
     <div className="landing-feature-grid" aria-label="Game systems">
@@ -199,6 +304,65 @@ function LandingFeatureGrid() {
   );
 }
 
+function LandingGameLoop() {
+  return (
+    <section className="landing-loop" aria-label="Game loop">
+      <div className="landing-section-title">
+        <Zap size={16} aria-hidden="true" />
+        <span>How a snack empire actually spirals</span>
+      </div>
+      <ol className="landing-loop-list">
+        {landingLoopSteps.map((step, index) => (
+          <li key={step.title}>
+            <span>{index + 1}</span>
+            <div>
+              <strong>{step.title}</strong>
+              <p>{step.text}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+function LandingScreenshotGallery() {
+  return (
+    <section className="landing-screenshot-gallery" aria-label="Gameplay image gallery">
+      <div className="landing-section-title">
+        <Sparkles size={16} aria-hidden="true" />
+        <span>Postcards from the route</span>
+      </div>
+      <div className="landing-shot-grid">
+        {landingScreens.map((screen) => (
+          <article className="landing-shot" key={screen.id}>
+            <div className={`landing-shot-art ${screen.id}`} role="img" aria-label={`${screen.title} game scene`}>
+              <span className="shot-road" />
+              <span className="shot-machine" />
+              <span className="shot-van" />
+              <span className="shot-panel one" />
+              <span className="shot-panel two" />
+              <span className="shot-alert" />
+            </div>
+            <h2>{screen.title}</h2>
+            <p>{screen.text}</p>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function LandingProductArt({ productId }: { productId: ProductId }) {
+  return (
+    <span className={`landing-product-art ${productId}`} aria-hidden="true">
+      <span />
+      <span />
+      <span />
+    </span>
+  );
+}
+
 function LandingProductShelf({ state }: { state?: GameState }) {
   const sourceProducts = state?.products ?? products;
 
@@ -213,12 +377,85 @@ function LandingProductShelf({ state }: { state?: GameState }) {
           const product = sourceProducts[productId];
           return (
             <article className={`landing-product ${product.legality > 0 ? "risky" : ""}`} key={product.id}>
-              <strong>{product.name}</strong>
-              <span>${product.basePrice} street price</span>
-              <p>{product.description}</p>
+              <LandingProductArt productId={product.id} />
+              <div className="landing-product-copy">
+                <strong>{product.name}</strong>
+                <span>${product.basePrice} street price</span>
+                <p>{product.description}</p>
+              </div>
             </article>
           );
         })}
+      </div>
+    </section>
+  );
+}
+
+function LandingCampaignBoard({ limit, state }: { limit?: number; state?: GameState }) {
+  const arcs = typeof limit === "number" ? storyMissionArcs.slice(0, limit) : storyMissionArcs;
+
+  return (
+    <section className="landing-campaign-board" aria-label="Campaign districts">
+      <div className="landing-section-title">
+        <Map size={16} aria-hidden="true" />
+        <span>Campaign route</span>
+      </div>
+      <div className="landing-campaign-grid">
+        {arcs.map((arc, index) => (
+          <article className="landing-campaign-card" key={arc.id}>
+            <div className="landing-campaign-map" aria-hidden="true">
+              <span className="campaign-road main" />
+              <span className="campaign-road cross" />
+              <span className="campaign-block a" />
+              <span className="campaign-block b" />
+              <span className="campaign-machine" />
+            </div>
+            <span>{state?.districts[arc.districtId]?.name ?? `District ${index + 1}`}</span>
+            <h2>{arc.title}</h2>
+            <ul>
+              {arc.beats.slice(0, 3).map((beat) => (
+                <li key={beat}>{beat}</li>
+              ))}
+            </ul>
+            <p>{arc.reward}</p>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function LandingEndgamePaths() {
+  return (
+    <section className="landing-endgame-board" aria-label="Endgame paths">
+      <div className="landing-section-title">
+        <Flame size={16} aria-hidden="true" />
+        <span>Ways the empire can go wrong</span>
+      </div>
+      <div className="landing-endgame-grid">
+        {endgamePaths.map((path) => (
+          <article className="landing-endgame" key={path.id}>
+            <h2>{path.title}</h2>
+            <strong>{path.condition}</strong>
+            <p>{path.consequence}</p>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function LandingFunBoard() {
+  return (
+    <section className="landing-fun-board" aria-label="Game flavor notes">
+      <div className="landing-section-title">
+        <ClipboardList size={16} aria-hidden="true" />
+        <span>Totally official vending doctrine</span>
+      </div>
+      <div className="landing-fun-list">
+        {landingFunNotes.map((note) => (
+          <p key={note}>{note}</p>
+        ))}
       </div>
     </section>
   );
@@ -789,11 +1026,15 @@ function GameApp({ initialState, mapLayout, onLogout, session }: GameAppProps) {
                   Maximum snack beef
                 </span>
               </div>
+              <LandingQuickFacts state={state} />
               <button className="entry-button landing-primary" onClick={handleEnterDistrict} type="button">
                 <Play size={18} aria-hidden="true" />
                 Enter District
               </button>
+              <LandingHeroPoster />
               <LandingFeatureGrid />
+              <LandingGameLoop />
+              <LandingCampaignBoard limit={3} state={state} />
               <div className="landing-story-beats" aria-label="Opening story beats">
                 {starterArc.beats.slice(0, 5).map((beat, index) => (
                   <div className="landing-beat" key={beat}>
@@ -805,6 +1046,7 @@ function GameApp({ initialState, mapLayout, onLogout, session }: GameAppProps) {
             </div>
             <div className="landing-side">
               <LandingWorldPreview mapLayout={mapLayout} state={state} />
+              <LandingScreenshotGallery />
               <div className="landing-intel-grid" aria-label="Current route status">
                 <div>
                   <span>Bankroll</span>
@@ -821,6 +1063,8 @@ function GameApp({ initialState, mapLayout, onLogout, session }: GameAppProps) {
               </div>
               <LandingProductShelf state={state} />
               <LandingRivalBoard />
+              <LandingEndgamePaths />
+              <LandingFunBoard />
               <div className="landing-arc-list" aria-label="Story districts">
                 {storyMissionArcs.slice(1, 4).map((arc) => (
                   <article className="landing-arc" key={arc.id}>
@@ -969,18 +1213,8 @@ function GameAccessGate({ mapLayout }: { mapLayout: WorldMapLayout }) {
               Sell weird gum
             </span>
           </div>
-          <LandingFeatureGrid />
-          <LandingWorldPreview mapLayout={mapLayout} />
-          <LandingProductShelf />
-          <LandingRivalBoard />
-          <div className="access-story-grid" aria-label="Campaign story arcs">
-            {storyMissionArcs.slice(0, 3).map((arc) => (
-              <article key={arc.id}>
-                <span>{arc.title}</span>
-                <p>{arc.beats.slice(0, 2).join(" / ")}</p>
-              </article>
-            ))}
-          </div>
+          <LandingQuickFacts />
+          <LandingHeroPoster />
         </div>
         <form className="access-panel" onSubmit={handleLogin}>
           <div>
@@ -1032,6 +1266,17 @@ function GameAccessGate({ mapLayout }: { mapLayout: WorldMapLayout }) {
             {submitting ? `${actionLabel}...` : actionLabel}
           </button>
         </form>
+        <div className="access-longform">
+          <LandingFeatureGrid />
+          <LandingGameLoop />
+          <LandingWorldPreview mapLayout={mapLayout} />
+          <LandingScreenshotGallery />
+          <LandingProductShelf />
+          <LandingCampaignBoard />
+          <LandingEndgamePaths />
+          <LandingRivalBoard />
+          <LandingFunBoard />
+        </div>
       </section>
     </main>
   );
