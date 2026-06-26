@@ -8,17 +8,18 @@ import { InteractionPanel } from "./ui/InteractionPanel";
 import { Minimap } from "./ui/Minimap";
 import { MissionTracker } from "./ui/MissionTracker";
 import { GuidanceArrow } from "./ui/GuidanceArrow";
-import { ClipboardList, Copy, LogOut, Menu, Network, Play, RotateCcw, Save, Users, X } from "lucide-react";
+import { ClipboardList, Copy, DollarSign, Flame, LogOut, Map, Menu, Network, Package, Play, RotateCcw, Save, ShieldAlert, Sparkles, Truck, Users, Wrench, X, Zap, type LucideIcon } from "lucide-react";
 import { AdminMapEditor } from "./ui/AdminMapEditor";
 import { getStarterMissionStep } from "./game/core/mission";
 import { activeConflictEvents, activeMachineAlarms, latestDayReport, selectedRouteTask } from "./game/core/selectors";
 import { executePrimaryInteraction, getPrimaryInteraction } from "./ui/interactionActions";
 import { useGame } from "./hooks/useGame";
 import { ToastStack, type ToastMessage } from "./ui/ToastStack";
-import type { GameCommand, GameState, LocationId, Vec2 } from "./game/core/types";
+import type { GameCommand, GameState, LocationId, ProductId, Vec2 } from "./game/core/types";
 import { createDefaultAudioConfig, normalizeAudioConfig, type AudioConfig } from "./game/content/audioConfig";
 import { worldBounds, type WorldMapLayout } from "./game/content/world";
 import { storyMissionArcs } from "./game/content/story";
+import { products } from "./game/content/products";
 import { clearWorldMapLayout, loadWorldMapLayout, saveWorldMapLayout } from "./game/world/mapLayoutStorage";
 import { clearStoredGameSession, loadRemoteAudioConfig, loadRemoteGame, loadRemoteMapLayout, loadStoredGameSession, loginGame, registerGame, type GameSession } from "./game/save/api";
 import { loadGame } from "./game/save/storage";
@@ -124,6 +125,123 @@ interface GameAppProps {
   mapLayout: WorldMapLayout;
   onLogout: () => void;
   session: GameSession;
+}
+
+interface LandingFeature {
+  icon: LucideIcon;
+  tag: string;
+  title: string;
+  text: string;
+}
+
+const landingFeatures: LandingFeature[] = [
+  {
+    icon: Truck,
+    tag: "Route work",
+    title: "Drive crates, dodge problems",
+    text: "Buy stock from the backdoor supplier, load the van, and keep your route fed before the city learns your machines are unattended piggy banks."
+  },
+  {
+    icon: Wrench,
+    tag: "Cabinet drama",
+    title: "Repair, upgrade, repeat",
+    text: "Rusty Starter is not a machine. It is a cry for help with coin slots. Patch it up, bolt on locks, cameras, cashless terminals, and neon."
+  },
+  {
+    icon: ShieldAlert,
+    tag: "Street pressure",
+    title: "Every soda has consequences",
+    text: "Rivals tag machines, inspections stack heat, and grey goods make cash faster than your lawyer can say no comment."
+  },
+  {
+    icon: DollarSign,
+    tag: "Tiny empire",
+    title: "Turn pocket change into turf",
+    text: "Each machine is a store, a billboard, and a territorial insult with a snack tray. Expand district by district until the city blinks first."
+  }
+];
+
+const landingProductIds: ProductId[] = ["energy", "luxury_snack", "mystery_capsules", "glitch_gum"];
+
+const landingRivals = [
+  {
+    name: "Redline Snacks",
+    title: "Street crew vending",
+    text: "Undercuts prices, tags cabinets, and treats your route like a free public punching bag."
+  },
+  {
+    name: "Glassline VendCo",
+    title: "Corporate menace",
+    text: "Buys contracts, smiles in meetings, and sends inspections with the energy of a printer jam."
+  },
+  {
+    name: "Night Market Supply",
+    title: "After-hours chaos",
+    text: "Copies hot products, feeds grey demand, and makes neon districts profitable in the worst possible way."
+  }
+];
+
+function LandingFeatureGrid() {
+  return (
+    <div className="landing-feature-grid" aria-label="Game systems">
+      {landingFeatures.map((feature) => {
+        const FeatureIcon = feature.icon;
+        return (
+          <article className="landing-feature" key={feature.title}>
+            <FeatureIcon size={20} aria-hidden="true" />
+            <span>{feature.tag}</span>
+            <h2>{feature.title}</h2>
+            <p>{feature.text}</p>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+function LandingProductShelf({ state }: { state?: GameState }) {
+  const sourceProducts = state?.products ?? products;
+
+  return (
+    <section className="landing-product-shelf" aria-label="Featured vending stock">
+      <div className="landing-section-title">
+        <Package size={16} aria-hidden="true" />
+        <span>Stock the nonsense</span>
+      </div>
+      <div className="landing-product-grid">
+        {landingProductIds.map((productId) => {
+          const product = sourceProducts[productId];
+          return (
+            <article className={`landing-product ${product.legality > 0 ? "risky" : ""}`} key={product.id}>
+              <strong>{product.name}</strong>
+              <span>${product.basePrice} street price</span>
+              <p>{product.description}</p>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function LandingRivalBoard() {
+  return (
+    <section className="landing-rival-board" aria-label="Rival vendors">
+      <div className="landing-section-title">
+        <Flame size={16} aria-hidden="true" />
+        <span>People taking snacks too seriously</span>
+      </div>
+      <div className="landing-rival-list">
+        {landingRivals.map((rival) => (
+          <article className="landing-rival" key={rival.name}>
+            <span>{rival.title}</span>
+            <h2>{rival.name}</h2>
+            <p>{rival.text}</p>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function previewCoordinate(value: number, min: number, max: number): number {
@@ -652,15 +770,30 @@ function GameApp({ initialState, mapLayout, onLogout, session }: GameAppProps) {
         <section className="entry-overlay landing-overlay" aria-label="Vendetta Vending landing page">
           <div className="landing-panel">
             <div className="landing-copy">
-              <span className="landing-kicker">Cinderblock Row is open</span>
+              <span className="landing-kicker">Cinderblock Row is open and suspiciously fizzy</span>
               <h1>Vendetta Vending</h1>
               <p>
-                A busted starter machine, a storage garage, and a city full of claimed corners. Build the legal route, lean into the grey market, or turn every glowing machine into a street-level flag before the rival vendors close in.
+                Build a snack empire so dramatic it probably needs a city council hearing. Fix busted machines, stock questionable beverages, bribe your way into premium corners, and defend every cabinet like it owes you rent.
               </p>
+              <div className="landing-quip-row" aria-label="Game highlights">
+                <span>
+                  <Map size={15} aria-hidden="true" />
+                  6 weird districts
+                </span>
+                <span>
+                  <Zap size={15} aria-hidden="true" />
+                  Legal-ish choices
+                </span>
+                <span>
+                  <Sparkles size={15} aria-hidden="true" />
+                  Maximum snack beef
+                </span>
+              </div>
               <button className="entry-button landing-primary" onClick={handleEnterDistrict} type="button">
                 <Play size={18} aria-hidden="true" />
                 Enter District
               </button>
+              <LandingFeatureGrid />
               <div className="landing-story-beats" aria-label="Opening story beats">
                 {starterArc.beats.slice(0, 5).map((beat, index) => (
                   <div className="landing-beat" key={beat}>
@@ -686,6 +819,8 @@ function GameApp({ initialState, mapLayout, onLogout, session }: GameAppProps) {
                   <strong>{rivalMachines}</strong>
                 </div>
               </div>
+              <LandingProductShelf state={state} />
+              <LandingRivalBoard />
               <div className="landing-arc-list" aria-label="Story districts">
                 {storyMissionArcs.slice(1, 4).map((arc) => (
                   <article className="landing-arc" key={arc.id}>
@@ -815,12 +950,29 @@ function GameAccessGate({ mapLayout }: { mapLayout: WorldMapLayout }) {
     <main className="access-shell">
       <section className="access-landing" aria-label="Vendetta Vending access">
         <div className="access-hero">
-          <span className="landing-kicker">Professional route crime sim</span>
+          <span className="landing-kicker">Petty crime. Serious route optimization.</span>
           <h1>Vendetta Vending</h1>
           <p className="access-story">
-            Start with a dented snack machine in Cinderblock Row and scale into a citywide vending empire where every placement creates cash flow, heat, and rival attention.
+            The city thinks vending machines are passive income. The city is wrong. Start with one dented cabinet, a garage full of bad decisions, and a route plan that turns soda money into turf wars.
           </p>
+          <div className="landing-quip-row" aria-label="Game highlights">
+            <span>
+              <Truck size={15} aria-hidden="true" />
+              Haul crates
+            </span>
+            <span>
+              <ShieldAlert size={15} aria-hidden="true" />
+              Eat fines
+            </span>
+            <span>
+              <Sparkles size={15} aria-hidden="true" />
+              Sell weird gum
+            </span>
+          </div>
+          <LandingFeatureGrid />
           <LandingWorldPreview mapLayout={mapLayout} />
+          <LandingProductShelf />
+          <LandingRivalBoard />
           <div className="access-story-grid" aria-label="Campaign story arcs">
             {storyMissionArcs.slice(0, 3).map((arc) => (
               <article key={arc.id}>
