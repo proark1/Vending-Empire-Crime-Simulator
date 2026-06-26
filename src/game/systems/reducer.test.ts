@@ -6,11 +6,14 @@ import {
   currentProductCost,
   districtUnlockInfo,
   endgamePathScores,
+  empireAssetLevel,
   machineAtLocation,
   machineStockUnits,
+  narrativeQuestProgress,
   productLabSlots,
   routeTasks,
   selectedRouteTask,
+  supplierRelationshipList,
   storyArcProgress
 } from "../core/selectors";
 import type { GameCommand, LocationId } from "../core/types";
@@ -930,6 +933,81 @@ describe("game reducer", () => {
     expect(yard?.completedObjectives.map((objective) => objective.id)).toContain("yard_scout");
     expect(yard?.activeObjective?.id).toBe("yard_open");
     expect(result.mission.campaign.yard_leverage.completedStepIds).toContain("yard_scout");
+  });
+
+  it("upgrades long-term empire assets and expands operating capacity", () => {
+    const initial = createInitialState();
+    initial.factions.player.money = 1000;
+    const beforeStorage = baseStorageCapacity(initial);
+
+    const result = reduceGameState(initial, {
+      type: "upgrade_empire_asset",
+      actorId: "player",
+      assetId: "warehouse_network"
+    }).state;
+
+    expect(empireAssetLevel(result, "warehouse_network")).toBe(1);
+    expect(baseStorageCapacity(result)).toBeGreaterThan(beforeStorage);
+    expect(result.economy.finance.ledger.some((entry) => entry.category === "empire")).toBe(true);
+  });
+
+  it("negotiates supplier deals that improve loyalty and product cost", () => {
+    const initial = createInitialState();
+    initial.factions.player.money = 500;
+    const beforeCost = currentProductCost(initial, "soda");
+
+    const result = reduceCommands(initial, [
+      visit("supplier"),
+      { type: "negotiate_supplier_deal", actorId: "player", supplierId: "backdoor_wholesale", dealKind: "bulk_discount" }
+    ]).state;
+    const supplier = supplierRelationshipList(result).find((relationship) => relationship.id === "backdoor_wholesale");
+
+    expect(supplier?.loyalty).toBeGreaterThan(12);
+    expect(supplier?.negotiatedDiscount).toBeGreaterThan(0);
+    expect(currentProductCost(result, "soda")).toBeLessThanOrEqual(beforeCost);
+    expect(Object.values(result.economy.supply.activeDeals).some((deal) => deal.supplierId === "backdoor_wholesale")).toBe(true);
+  });
+
+  it("starts NPC quest dialogue and advances a branching quest step", () => {
+    const initial = createInitialState();
+    initial.mission.completed = true;
+
+    const result = reduceCommands(initial, [
+      { type: "start_quest", actorId: "player", questId: "supplier_blackbook" },
+      { type: "choose_quest_dialogue", actorId: "player", questId: "supplier_blackbook", choiceId: "supplier_clean_terms" }
+    ]).state;
+    const quest = narrativeQuestProgress(result).find((progress) => progress.definition.id === "supplier_blackbook");
+
+    expect(quest?.state.status).toBe("active");
+    expect(quest?.state.choiceHistory).toContain("supplier_clean_terms");
+    expect(quest?.state.completedStepIds).toContain("supplier_pitch");
+    expect(quest?.activeStep?.id).toBe("supplier_volume");
+  });
+
+  it("resolves major raids through empire responses", () => {
+    const initial = createInitialState();
+    initial.factions.player.money = 500;
+    initial.empire.politicalPressure = 35;
+    initial.empire.activeRaids.raid_test = {
+      id: "raid_test",
+      deadlineHour: initial.worldTimeHours + 4,
+      message: "Test raid",
+      severity: 4,
+      startedHour: initial.worldTimeHours,
+      status: "active",
+      targetAssetId: "front_business"
+    };
+
+    const result = reduceGameState(initial, {
+      type: "resolve_major_raid",
+      actorId: "player",
+      raidId: "raid_test",
+      resolution: "legal_team"
+    }).state;
+
+    expect(result.empire.activeRaids.raid_test.status).toBe("resolved");
+    expect(result.empire.politicalPressure).toBeLessThan(35);
+    expect(result.economy.finance.ledger.some((entry) => entry.category === "fines")).toBe(true);
   });
 
   it("ships validated default procedural audio content", () => {

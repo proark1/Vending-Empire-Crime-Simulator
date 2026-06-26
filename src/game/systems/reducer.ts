@@ -7,6 +7,9 @@ import type {
   Employee,
   EmployeeRoutePhase,
   EmployeeRole,
+  EmpireAssetId,
+  EmpireRaid,
+  EmpireRaidResolution,
   Faction,
   FactionId,
   FinanceLedgerCategory,
@@ -28,6 +31,8 @@ import type {
   ServiceContract,
   StreetActivity,
   StreetActivityKind,
+  SupplierDealKind,
+  SupplierRelationshipState,
   VendingMachine
 } from "../core/types";
 import {
@@ -35,6 +40,7 @@ import {
   activeAlarmForMachine,
   activeMachineAlarms,
   activeLawInspections,
+  activeMajorRaids,
   baseFacilityLevel,
   baseFacilityUpgradeCost,
   baseSecurityScore,
@@ -46,6 +52,10 @@ import {
   districtProgress,
   districtUnlockInfo,
   employeeCapacity,
+  empireAssetEffects,
+  empireAssetLevel,
+  empireAssetUpgradeCost,
+  endgamePathScores,
   garageStorageSpaceRemaining,
   inventoryUnits,
   installedMachines,
@@ -62,6 +72,7 @@ import {
   regionalManagerCapacity,
   routeDangerScore,
   routeRiskReduction,
+  supplierAvailable,
   storedPlayerMachines,
   vehicleSpaceRemaining
 } from "../core/selectors";
@@ -69,7 +80,10 @@ import { machineUpgrades } from "../content/machineUpgrades";
 import { machineModels } from "../content/machineModels";
 import { baseFacilities } from "../content/baseFacilities";
 import { employeeRoles } from "../content/employees";
+import { empireAssetList, empireAssets } from "../content/empire";
+import { narrativeQuestDefinitions, type NarrativeQuestDefinition, type NarrativeQuestStepDefinition } from "../content/quests";
 import { crimeContacts } from "../content/world";
+import { supplierDeals, supplierDefinitions, type SupplierDefinition } from "../content/suppliers";
 import { storyMissionArcs, type StoryMissionArc, type StoryMissionObjective } from "../content/story";
 import { machineHasUpgrade, sabotageDamage } from "../core/machineStats";
 import { runMachineSales } from "./economy";
@@ -221,7 +235,9 @@ function ensureEconomyState(state: GameState): void {
       nextVolatilityHour: state.worldTimeHours + 4,
       volatility: 0.08,
       priceMultipliers: {},
-      supplierMood: "stable"
+      supplierMood: "stable",
+      suppliers: {},
+      activeDeals: {}
     },
     traffic: {
       nextTrafficHour: state.worldTimeHours + 2,
@@ -254,12 +270,25 @@ function ensureEconomyState(state: GameState): void {
     nextVolatilityHour: state.worldTimeHours + 4,
     volatility: 0.08,
     priceMultipliers: {},
-    supplierMood: "stable"
+    supplierMood: "stable",
+    suppliers: {},
+    activeDeals: {}
   };
   state.economy.supply.priceMultipliers ??= {};
   state.economy.supply.nextVolatilityHour ??= state.worldTimeHours + 4;
   state.economy.supply.volatility ??= 0.08;
   state.economy.supply.supplierMood ??= "stable";
+  state.economy.supply.suppliers ??= {};
+  state.economy.supply.activeDeals ??= {};
+  for (const supplier of supplierDefinitions) {
+    state.economy.supply.suppliers[supplier.id] ??= createSupplierRelationship(supplier);
+    const relationship = state.economy.supply.suppliers[supplier.id];
+    relationship.unlockedProductIds ??= supplier.baseProducts;
+    relationship.dealCooldownUntil ??= 0;
+    relationship.negotiatedDiscount ??= 0;
+    relationship.scamRisk ??= supplier.scamRisk;
+    relationship.blackMarketTier ??= supplier.id === "night_market_broker" ? 1 : 0;
+  }
   state.economy.traffic ??= {
     nextTrafficHour: state.worldTimeHours + 2,
     congestionByLocation: {},
@@ -284,14 +313,54 @@ function ensureEconomyState(state: GameState): void {
   state.economy.productCustomizations ??= {};
 }
 
+function createSupplierRelationship(supplier: SupplierDefinition): SupplierRelationshipState {
+  return {
+    blackMarketTier: supplier.id === "night_market_broker" ? 1 : 0,
+    dealCooldownUntil: 0,
+    id: supplier.id,
+    loyalty: supplier.id === "backdoor_wholesale" ? 12 : 0,
+    negotiatedDiscount: 0,
+    scamRisk: supplier.scamRisk,
+    trust: supplier.id === "backdoor_wholesale" ? 18 : 0,
+    unlocked: supplier.unlockRequirement.kind === "always",
+    unlockedProductIds: supplier.baseProducts
+  };
+}
+
+function ensureEmpireState(state: GameState): void {
+  state.empire ??= {
+    activeRaids: {},
+    assets: {} as GameState["empire"]["assets"],
+    endingExecutions: {},
+    legitimacy: 0,
+    nextRaidHour: state.worldTimeHours + 32,
+    politicalPressure: 0,
+    raidSequence: 1,
+    shellCover: 0
+  };
+  state.empire.activeRaids ??= {};
+  state.empire.assets ??= {} as GameState["empire"]["assets"];
+  for (const asset of empireAssetList) {
+    state.empire.assets[asset.id] ??= { id: asset.id, level: 0 };
+  }
+  state.empire.endingExecutions ??= {};
+  state.empire.legitimacy ??= 0;
+  state.empire.nextRaidHour ??= state.worldTimeHours + 32;
+  state.empire.politicalPressure ??= 0;
+  state.empire.raidSequence ??= 1;
+  state.empire.shellCover ??= 0;
+}
+
 function ensureCampaignMissionState(state: GameState): void {
   state.mission ??= {
     id: "starter_takeover",
     title: "Launch Foam & Fold and survive Redline retaliation",
     completed: false,
-    campaign: {}
+    campaign: {},
+    quests: {}
   };
   state.mission.campaign ??= {};
+  state.mission.quests ??= {};
   state.progression.productDesignsCompleted ??= Object.keys(state.economy?.productCustomizations ?? {}).length;
 
   for (const arc of storyMissionArcs) {
@@ -309,6 +378,20 @@ function ensureCampaignMissionState(state: GameState): void {
       completedStepIds: Array.isArray(current?.completedStepIds) ? current.completedStepIds : [],
       unlockedHour: current?.unlockedHour ?? (arc.id === "starter_takeover" ? 0 : state.worldTimeHours)
     };
+  }
+
+  for (const quest of narrativeQuestDefinitions) {
+    state.mission.quests[quest.id] ??= {
+      activeStepId: quest.steps[0]?.id ?? "",
+      choiceHistory: [],
+      completedStepIds: [],
+      dialogueLog: [],
+      id: quest.id,
+      status: "available"
+    };
+    state.mission.quests[quest.id].choiceHistory ??= [];
+    state.mission.quests[quest.id].completedStepIds ??= [];
+    state.mission.quests[quest.id].dialogueLog ??= [];
   }
 }
 
@@ -1411,16 +1494,22 @@ function applyRouteCheckpoint(state: GameState, events: GameEvent[], vehicleId: 
 
 function applyDailyOperatingEconomy(state: GameState, events: GameEvent[]): void {
   ensureEconomyState(state);
+  ensureEmpireState(state);
   const player = state.factions[state.playerFactionId];
+  const empireEffects = empireAssetEffects(state);
   const officeIncome = (baseFacilities.office.effectsPerLevel.frontBusinessIncome ?? 0) * baseFacilityLevel(state, "office");
   const legalMachineIncome = installedMachines(state, state.playerFactionId).filter((machine) => machine.placementMethod === "legal_contract").length * 4;
-  const hiddenLaunderingCost = installedMachines(state, state.playerFactionId).filter((machine) => machine.placementMethod === "hidden" || machine.placementMethod === "bribe").length * 2;
-  const frontIncome = Math.max(0, Math.round(officeIncome + legalMachineIncome - hiddenLaunderingCost));
+  const shellCover = Math.max(state.empire.shellCover, empireEffects.shellCover ?? 0);
+  const hiddenLaunderingCost = installedMachines(state, state.playerFactionId).filter((machine) => machine.placementMethod === "hidden" || machine.placementMethod === "bribe").length * Math.max(0.55, 2 - shellCover * 2.4);
+  const empireFrontIncome = empireEffects.frontBusinessIncome ?? 0;
+  const frontIncome = Math.max(0, Math.round(officeIncome + legalMachineIncome + empireFrontIncome - hiddenLaunderingCost));
   if (frontIncome > 0) {
     creditPlayer(state, "front_business", frontIncome, "Front-business daily receipts");
     state.economy.finance.frontBusinessRevenueToday += frontIncome;
     log(state, events, `Front-business receipts added $${frontIncome}.`, "good");
   }
+
+  decayAndEscalatePoliticalPressure(state);
 
   const rent = Math.ceil(6 + baseStorageCapacity(state) * 0.012 + garageStorageSpaceRemaining(state) * 0.002);
   const rentPaid = Math.min(player.money, rent);
@@ -1479,12 +1568,13 @@ function inspectionRiskScore(state: GameState, machine: VendingMachine): number 
   const visibilityRisk = Math.max(0.2, machine.visibility) * 0.55;
   const player = state.factions[state.playerFactionId];
   const paperworkShield = machine.placementMethod === "legal_contract" ? Math.min(0.8, player.publicReputation * 0.035) : 0;
+  const shellShield = Math.min(0.95, Math.max(state.empire?.shellCover ?? 0, empireAssetEffects(state).shellCover ?? 0));
   const securityShield =
     machine.security * 0.22 +
     (machineHasUpgrade(machine, "security_camera") ? 0.22 : 0) +
     (machineHasUpgrade(machine, "remote_monitor") ? 0.1 : 0);
 
-  return Math.max(0, stockRisk + heatRisk + policingRisk + visibilityRisk + placementRiskScore(machine.placementMethod ?? "legal_contract") - paperworkShield - securityShield);
+  return Math.max(0, stockRisk + heatRisk + policingRisk + visibilityRisk + placementRiskScore(machine.placementMethod ?? "legal_contract") - paperworkShield - securityShield - shellShield);
 }
 
 function inspectionReason(machine: VendingMachine): string {
@@ -2644,6 +2734,224 @@ function advanceCampaignMissions(state: GameState, events: GameEvent[]): void {
   }
 }
 
+function supplierForProduct(state: GameState, productId: ProductId): SupplierRelationshipState | undefined {
+  ensureEconomyState(state);
+  return supplierDefinitions
+    .map((definition) => state.economy.supply.suppliers[definition.id])
+    .filter((supplier): supplier is SupplierRelationshipState => Boolean(supplier?.unlocked && supplier.unlockedProductIds.includes(productId)))
+    .sort((a, b) => b.loyalty + b.trust - (a.loyalty + a.trust))[0];
+}
+
+function activeSupplierDeal(state: GameState, supplierId: string): boolean {
+  ensureEconomyState(state);
+  return Object.values(state.economy.supply.activeDeals).some((deal) => deal.supplierId === supplierId && deal.expiresHour > state.worldTimeHours);
+}
+
+function questRequirementMet(state: GameState, quest: NarrativeQuestDefinition, step: NarrativeQuestStepDefinition): boolean {
+  const questState = state.mission.quests[quest.id];
+  const requirement = step.requirement;
+
+  if (requirement.kind === "choice_made") {
+    return questState.choiceHistory.length > 0;
+  }
+
+  if (requirement.kind === "supplier_loyalty") {
+    return (state.economy.supply.suppliers[requirement.supplierId]?.loyalty ?? 0) >= requirement.value;
+  }
+
+  if (requirement.kind === "supplier_deal") {
+    return activeSupplierDeal(state, requirement.supplierId);
+  }
+
+  if (requirement.kind === "empire_asset") {
+    return empireAssetLevel(state, requirement.assetId as EmpireAssetId) >= requirement.level;
+  }
+
+  if (requirement.kind === "rival_operation_resolved") {
+    return Object.values(state.rivalOrganizations ?? {}).some((organization) => organization.operations.some((operation) => Boolean(operation.resolvedHour)));
+  }
+
+  if (requirement.kind === "major_raid_resolved") {
+    return Object.values(state.empire?.activeRaids ?? {}).some((raid) => raid.status === "resolved");
+  }
+
+  if (requirement.kind === "ending_executed") {
+    return Object.values(state.empire?.endingExecutions ?? {}).some((ending) => ending.status === "executed");
+  }
+
+  if (requirement.kind === "all_campaign_chains_complete") {
+    return storyMissionArcs.every((arc) => state.mission.campaign[arc.id]?.completed);
+  }
+
+  return false;
+}
+
+function advanceNarrativeQuests(state: GameState, events: GameEvent[]): void {
+  ensureCampaignMissionState(state);
+
+  for (const quest of narrativeQuestDefinitions) {
+    const questState = state.mission.quests[quest.id];
+    if (!questState || questState.status !== "active") {
+      continue;
+    }
+
+    let advanced = true;
+    while (advanced && questState.status === "active") {
+      advanced = false;
+      const completedSteps = new Set(questState.completedStepIds);
+      const step = quest.steps.find((candidate) => candidate.id === questState.activeStepId) ?? quest.steps.find((candidate) => !completedSteps.has(candidate.id));
+      if (!step || !questRequirementMet(state, quest, step)) {
+        break;
+      }
+
+      if (!completedSteps.has(step.id)) {
+        questState.completedStepIds.push(step.id);
+        if (step.rewardMoney > 0) {
+          creditPlayer(state, "contracts", step.rewardMoney, `${quest.title}: ${step.title}`);
+        }
+        log(state, events, `${quest.title}: ${step.title} complete${step.rewardMoney > 0 ? ` (+$${step.rewardMoney})` : ""}.`, "good");
+      }
+
+      const nextStep = quest.steps.find((candidate) => !questState.completedStepIds.includes(candidate.id));
+      if (nextStep) {
+        questState.activeStepId = nextStep.id;
+      } else {
+        questState.status = "completed";
+        questState.completedHour = state.worldTimeHours;
+        log(state, events, `${quest.title} complete.`, "good");
+      }
+      advanced = true;
+    }
+  }
+}
+
+function questAvailable(state: GameState, quest: NarrativeQuestDefinition): boolean {
+  const requirement = quest.unlockRequirement;
+  if (requirement.kind === "always") {
+    return true;
+  }
+
+  if (requirement.kind === "starter_complete") {
+    return state.mission.completed;
+  }
+
+  if (requirement.kind === "supplier_unlocked") {
+    return Boolean(state.economy.supply.suppliers[requirement.supplierId]?.unlocked);
+  }
+
+  if (requirement.kind === "empire_asset") {
+    return empireAssetLevel(state, requirement.assetId as EmpireAssetId) >= requirement.level;
+  }
+
+  return false;
+}
+
+function applyQuestChoiceEffect(state: GameState, quest: NarrativeQuestDefinition, choiceId: string): string | null {
+  const choice = quest.choices.find((candidate) => candidate.id === choiceId);
+  if (!choice) {
+    return null;
+  }
+
+  const player = state.factions[state.playerFactionId];
+  if (choice.effect === "public_reputation") {
+    player.publicReputation += 1.1;
+  }
+  if (choice.effect === "street_reputation") {
+    player.streetReputation += 1.1;
+    player.heat += 0.4;
+  }
+  if (choice.effect === "supplier_loyalty") {
+    const supplier = state.economy.supply.suppliers.backdoor_wholesale;
+    if (supplier) {
+      supplier.loyalty = Math.min(100, supplier.loyalty + 10);
+      supplier.trust = Math.min(100, supplier.trust + 5);
+    }
+  }
+  if (choice.effect === "shell_cover") {
+    state.empire.shellCover = Math.min(0.65, state.empire.shellCover + 0.05);
+    state.empire.politicalPressure = Math.max(0, state.empire.politicalPressure - 1);
+  }
+  if (choice.effect === "rival_truce") {
+    const redline = state.rivalOrganizations.rival_redline;
+    if (redline) {
+      redline.relationship = "truce";
+      redline.truceUntilHour = state.worldTimeHours + 18;
+    }
+    player.publicReputation += 0.4;
+  }
+
+  return choice.response;
+}
+
+function decayAndEscalatePoliticalPressure(state: GameState): void {
+  ensureEmpireState(state);
+  const effects = empireAssetEffects(state);
+  const player = state.factions[state.playerFactionId];
+  const scalePressure = Math.max(0, installedMachines(state, state.playerFactionId).length - 5) * 0.18;
+  const heatPressure = Math.max(0, player.heat - 10) * 0.08;
+  const reduction = (effects.politicalPressureReduction ?? 0) * 4 + (effects.legitimacy ?? 0) * 0.015;
+  state.empire.politicalPressure = Math.max(0, Math.min(100, state.empire.politicalPressure + scalePressure + heatPressure - reduction));
+  state.empire.shellCover = Math.max(state.empire.shellCover, Math.min(0.65, effects.shellCover ?? 0));
+  state.empire.legitimacy = Math.max(state.empire.legitimacy, effects.legitimacy ?? 0);
+}
+
+function createMajorRaid(state: GameState, events: GameEvent[]): void {
+  ensureEmpireState(state);
+  const target = Object.values(state.empire.assets)
+    .filter((asset) => asset.level > 0)
+    .sort((a, b) => b.level - a.level)[0];
+  const severity = Math.max(2, Math.min(8, Math.ceil(state.empire.politicalPressure / 12 + state.factions[state.playerFactionId].heat / 8)));
+  const raid: EmpireRaid = {
+    id: `raid_${state.empire.raidSequence++}`,
+    startedHour: state.worldTimeHours,
+    deadlineHour: state.worldTimeHours + 5,
+    severity,
+    status: "active",
+    targetAssetId: target?.id,
+    message: `Major pressure raid forming${target ? ` around ${empireAssets[target.id].name}` : ""}.`
+  };
+  state.empire.activeRaids[raid.id] = raid;
+  log(state, events, `MAJOR RAID: ${raid.message}`, "danger");
+}
+
+function resolveExpiredMajorRaids(state: GameState, events: GameEvent[]): void {
+  ensureEmpireState(state);
+  const player = state.factions[state.playerFactionId];
+  for (const raid of activeMajorRaids(state)) {
+    if (raid.deadlineHour > state.worldTimeHours) {
+      continue;
+    }
+
+    raid.status = "missed";
+    raid.resolvedHour = state.worldTimeHours;
+    const cashLoss = Math.min(player.money, Math.round(45 + raid.severity * 18));
+    player.money -= cashLoss;
+    recordFinance(state, "fines", -cashLoss, "Missed major raid penalties");
+    player.heat += raid.severity * 1.4;
+    state.empire.politicalPressure = Math.min(100, state.empire.politicalPressure + raid.severity * 3);
+    if (raid.targetAssetId) {
+      const asset = state.empire.assets[raid.targetAssetId];
+      asset.level = Math.max(0, asset.level - 1);
+    }
+    log(state, events, `Major raid missed: $${cashLoss} lost${raid.targetAssetId ? ` and ${empireAssets[raid.targetAssetId].name} lost a level` : ""}.`, "danger");
+  }
+}
+
+function maybeSpawnMajorRaid(state: GameState, events: GameEvent[]): void {
+  ensureEmpireState(state);
+  if (state.empire.nextRaidHour > state.worldTimeHours || activeMajorRaids(state).length > 0) {
+    return;
+  }
+
+  decayAndEscalatePoliticalPressure(state);
+  const empireScale = Object.values(state.empire.assets).reduce((sum, asset) => sum + asset.level, 0);
+  const pressureScore = state.empire.politicalPressure + state.factions[state.playerFactionId].heat + empireScale * 2.5;
+  if (pressureScore >= 24 && empireScale > 0) {
+    createMajorRaid(state, events);
+  }
+  state.empire.nextRaidHour = state.worldTimeHours + Math.max(16, 34 - Math.min(14, pressureScore * 0.25));
+}
+
 function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number): void {
   const previousHour = state.worldTimeHours;
   ensureStreetLifeState(state);
@@ -2651,6 +2959,7 @@ function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number):
   ensureRivalOrganizationState(state);
   ensureBaseState(state);
   ensureEconomyState(state);
+  ensureEmpireState(state);
   state.worldTimeHours += hours;
   shiftSupplierMarket(state, events);
   updateTrafficAndCheckpoints(state, events);
@@ -2688,6 +2997,8 @@ function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number):
   applyLawInspections(state, events);
   advanceRivalOperations(state, events, hours);
   maybeSpawnAmbientConflict(state, events);
+  resolveExpiredMajorRaids(state, events);
+  maybeSpawnMajorRaid(state, events);
 
   applyEmployeeAutomation(state, events);
   for (const employee of Object.values(state.employees)) {
@@ -2719,6 +3030,7 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
   ensureRivalOrganizationState(state);
   ensureBaseState(state);
   ensureEconomyState(state);
+  ensureEmpireState(state);
   ensureCampaignMissionState(state);
   const actor = getFactionOrThrow(state, command.actorId);
 
@@ -2747,6 +3059,12 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       }
 
       const product = state.products[command.productId];
+      const supplier = supplierForProduct(state, product.id);
+      if (!supplier) {
+        log(state, events, `${product.name} needs a supplier relationship or unlock-gated pipeline first.`, "warning");
+        break;
+      }
+
       const unitCost = currentProductCost(state, product.id);
       if (state.player.carriedCrate || inventoryUnits(state.player.cargo, state) > 0) {
         log(state, events, "Hands are full. Drop the current crate at the garage or load a machine first.", "warning");
@@ -2769,7 +3087,9 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
         capacity: Math.floor(state.player.cargoCapacity / product.size),
         source: "supplier"
       };
-      log(state, events, `Picked up a ${quantity}x ${product.name} crate for $${quantity * unitCost}.`, "good");
+      supplier.loyalty = Math.min(100, supplier.loyalty + Math.max(0.4, quantity * 0.12));
+      supplier.trust = Math.min(100, supplier.trust + 0.18);
+      log(state, events, `Picked up a ${quantity}x ${product.name} crate from ${supplierDefinitions.find((definition) => definition.id === supplier.id)?.label ?? "supplier"} for $${quantity * unitCost}.`, "good");
       break;
     }
 
@@ -3243,6 +3563,264 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
         state.progression.productDesignsCompleted = (state.progression.productDesignsCompleted ?? 0) + 1;
       }
       log(state, events, `${product.name} launched as ${mode.brandName}: ${mode.tagline}`, "good");
+      break;
+    }
+
+    case "upgrade_empire_asset": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      const definition = empireAssets[command.assetId];
+      const asset = state.empire.assets[command.assetId];
+      if (!definition || !asset) {
+        break;
+      }
+
+      if (asset.level >= definition.maxLevel) {
+        log(state, events, `${definition.name} is already maxed.`, "neutral");
+        break;
+      }
+
+      const cost = empireAssetUpgradeCost(state, command.assetId);
+      if (actor.money < cost) {
+        log(state, events, `${definition.name} needs $${cost}.`, "warning");
+        break;
+      }
+
+      chargePlayer(state, "empire", cost, `${definition.name} level ${asset.level + 1}`);
+      asset.level += 1;
+      asset.lastUpgradedHour = state.worldTimeHours;
+      const effects = empireAssetEffects(state);
+      state.empire.shellCover = Math.max(state.empire.shellCover, effects.shellCover ?? 0);
+      state.empire.legitimacy = Math.max(state.empire.legitimacy, effects.legitimacy ?? 0);
+      state.empire.politicalPressure = Math.max(0, state.empire.politicalPressure - (effects.politicalPressureReduction ?? 0) * 10);
+      log(state, events, `${definition.name} upgraded to level ${asset.level}.`, "good");
+      break;
+    }
+
+    case "resolve_major_raid": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      const raid = state.empire.activeRaids[command.raidId];
+      if (!raid || raid.status !== "active") {
+        break;
+      }
+
+      if (raid.deadlineHour <= state.worldTimeHours) {
+        resolveExpiredMajorRaids(state, events);
+        break;
+      }
+
+      const politicalLevel = empireAssetLevel(state, "political_contacts");
+      const securityScore = baseSecurityScore(state) + empireAssetLevel(state, "warehouse_network") * 0.04;
+      const cost = command.resolution === "legal_team"
+        ? Math.ceil(24 + raid.severity * 12)
+        : command.resolution === "security_response"
+          ? Math.ceil(14 + raid.severity * 8)
+          : Math.ceil(18 + raid.severity * 10 - politicalLevel * 6);
+
+      if (command.resolution === "political_favor" && politicalLevel <= 0) {
+        log(state, events, "Political favors need a Political Pressure Desk.", "warning");
+        break;
+      }
+
+      if (actor.money < cost) {
+        log(state, events, `Resolving the raid needs $${cost}.`, "warning");
+        break;
+      }
+
+      chargePlayer(state, command.resolution === "security_response" ? "sabotage" : "fines", cost, `Major raid ${command.resolution.replace("_", " ")}`);
+      raid.status = "resolved";
+      raid.resolution = command.resolution;
+      raid.resolvedHour = state.worldTimeHours;
+      if (command.resolution === "legal_team") {
+        actor.publicReputation += 0.8;
+        state.empire.politicalPressure = Math.max(0, state.empire.politicalPressure - raid.severity * 1.8);
+      } else if (command.resolution === "security_response") {
+        actor.streetReputation += 0.7;
+        actor.heat += Math.max(0.2, 1.2 - securityScore * 0.5);
+        state.empire.politicalPressure = Math.max(0, state.empire.politicalPressure - raid.severity);
+      } else {
+        actor.publicReputation = Math.max(0, actor.publicReputation - 0.2);
+        state.empire.politicalPressure = Math.max(0, state.empire.politicalPressure - raid.severity * 2.4);
+      }
+      log(state, events, `Major raid resolved with ${command.resolution.replace("_", " ")} for $${cost}.`, "good");
+      break;
+    }
+
+    case "execute_ending": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      const ending = endgamePathScores(state).find((candidate) => candidate.path.id === command.pathId);
+      if (!ending) {
+        break;
+      }
+
+      if (activeMajorRaids(state).length > 0) {
+        log(state, events, "Resolve active major raids before locking an ending.", "warning");
+        break;
+      }
+
+      if (ending.score < 65) {
+        log(state, events, `${ending.path.title} needs a stronger score before execution.`, "warning");
+        break;
+      }
+
+      state.empire.endingExecutions[ending.path.id] = {
+        executedHour: state.worldTimeHours,
+        pathId: ending.path.id,
+        status: "executed",
+        summary: ending.path.consequence
+      };
+      log(state, events, `ENDING EXECUTED: ${ending.path.title}. ${ending.path.consequence}`, "good");
+      break;
+    }
+
+    case "negotiate_supplier_deal": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      if (!requirePlayerAtLocation(state, events, "supplier", "negotiate supplier terms")) {
+        break;
+      }
+
+      const definition = supplierDefinitions.find((candidate) => candidate.id === command.supplierId);
+      const deal = supplierDeals[command.dealKind];
+      if (!definition || !deal) {
+        break;
+      }
+
+      const relationship = state.economy.supply.suppliers[definition.id] ?? createSupplierRelationship(definition);
+      state.economy.supply.suppliers[definition.id] = relationship;
+      if (!relationship.unlocked && !supplierAvailable(state, definition.id)) {
+        log(state, events, `${definition.label} is not available yet.`, "warning");
+        break;
+      }
+
+      if (relationship.dealCooldownUntil > state.worldTimeHours) {
+        log(state, events, `${definition.label} wants time before another deal.`, "warning");
+        break;
+      }
+
+      if (actor.money < deal.cost) {
+        log(state, events, `${deal.label} with ${definition.label} needs $${deal.cost}.`, "warning");
+        break;
+      }
+
+      chargePlayer(state, "stock", deal.cost, `${definition.label} ${deal.label}`);
+      const scamRoll = ((Math.floor(state.worldTimeHours * 10) + definition.id.length * 7 + deal.kind.length * 3 + state.eventSequence) % 100) / 100;
+      if (relationship.trust < 28 && scamRoll < relationship.scamRisk) {
+        relationship.trust = Math.max(0, relationship.trust - 8);
+        relationship.loyalty = Math.max(0, relationship.loyalty - 5);
+        actor.heat += 0.6;
+        log(state, events, `${definition.label} deal went bad. Money is gone and the manifest was smoke.`, "danger");
+        break;
+      }
+
+      relationship.unlocked = true;
+      relationship.loyalty = Math.min(100, relationship.loyalty + deal.loyaltyGain);
+      relationship.trust = Math.min(100, relationship.trust + deal.trustGain);
+      relationship.dealCooldownUntil = state.worldTimeHours + 8;
+      actor.heat = Math.max(0, actor.heat + deal.heatDelta);
+      const activeDealId = `supplier_deal_${definition.id}_${deal.kind}`;
+      state.economy.supply.activeDeals[activeDealId] = {
+        id: activeDealId,
+        supplierId: definition.id,
+        kind: deal.kind,
+        value: deal.value,
+        expiresHour: state.worldTimeHours + 24
+      };
+
+      if (deal.kind === "bulk_discount") {
+        relationship.negotiatedDiscount = Math.min(0.18, relationship.negotiatedDiscount + deal.value);
+      }
+      if (deal.kind === "exclusive_pipeline") {
+        relationship.unlockedProductIds = [...new Set([...relationship.unlockedProductIds, ...definition.uniqueProducts])];
+        relationship.blackMarketTier += definition.id === "night_market_broker" ? 1 : 0;
+      }
+      if (deal.kind === "quiet_manifest") {
+        relationship.scamRisk = Math.max(0.02, relationship.scamRisk - deal.value);
+      }
+      if (deal.kind === "rush_delivery") {
+        const productId = relationship.unlockedProductIds[0];
+        if (productId) {
+          addInventory(state.player.garageStorage, productId, Math.round(deal.value));
+        }
+      }
+
+      log(state, events, `${definition.label} accepted ${deal.label}. Loyalty ${Math.round(relationship.loyalty)} / trust ${Math.round(relationship.trust)}.`, "good");
+      break;
+    }
+
+    case "start_quest": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      const quest = narrativeQuestDefinitions.find((candidate) => candidate.id === command.questId);
+      const questState = quest ? state.mission.quests[quest.id] : undefined;
+      if (!quest || !questState) {
+        break;
+      }
+
+      if (questState.status === "completed") {
+        log(state, events, `${quest.title} is already complete.`, "neutral");
+        break;
+      }
+
+      if (!questAvailable(state, quest)) {
+        log(state, events, `${quest.title} is not available yet.`, "warning");
+        break;
+      }
+
+      questState.status = "active";
+      questState.startedHour ??= state.worldTimeHours;
+      questState.activeStepId ||= quest.steps[0]?.id ?? "";
+      questState.dialogueLog.push({
+        hour: state.worldTimeHours,
+        speaker: quest.giverName,
+        text: quest.openingLine
+      });
+      log(state, events, `${quest.giverName}: ${quest.openingLine}`, "neutral");
+      break;
+    }
+
+    case "choose_quest_dialogue": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      const quest = narrativeQuestDefinitions.find((candidate) => candidate.id === command.questId);
+      const questState = quest ? state.mission.quests[quest.id] : undefined;
+      if (!quest || !questState || questState.status !== "active") {
+        break;
+      }
+
+      if (questState.choiceHistory.includes(command.choiceId)) {
+        log(state, events, "That dialogue choice is already set.", "neutral");
+        break;
+      }
+
+      const response = applyQuestChoiceEffect(state, quest, command.choiceId);
+      const choice = quest.choices.find((candidate) => candidate.id === command.choiceId);
+      if (!response || !choice) {
+        break;
+      }
+
+      questState.choiceHistory.push(command.choiceId);
+      questState.dialogueLog.push({
+        choiceId: command.choiceId,
+        hour: state.worldTimeHours,
+        speaker: quest.giverName,
+        text: response
+      });
+      log(state, events, `${quest.giverName}: ${response}`, "neutral");
       break;
     }
 
@@ -4169,6 +4747,7 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
 
   maybeCompleteMission(state, events);
   advanceCampaignMissions(state, events);
+  advanceNarrativeQuests(state, events);
 
   return { state, events };
 }

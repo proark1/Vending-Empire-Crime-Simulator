@@ -8,6 +8,9 @@ import type {
   DistrictProgress,
   DistrictStatus,
   Employee,
+  EmpireAssetId,
+  EmpireAssetState,
+  EmpireRaid,
   FactionId,
   GameState,
   Inventory,
@@ -21,9 +24,13 @@ import type {
   ProductId,
   RouteVehicle,
   ServiceContract,
+  SupplierRelationshipState,
   VendingMachine
 } from "./types";
 import { baseFacilities } from "../content/baseFacilities";
+import { empireAssets, type EmpireAssetEffects } from "../content/empire";
+import { narrativeQuestDefinitions, type NarrativeQuestDefinition } from "../content/quests";
+import { supplierDefinitions } from "../content/suppliers";
 import { endgamePaths, storyMissionArcs, type EndgamePath, type StoryMissionArc, type StoryMissionObjective } from "../content/story";
 
 export type RouteTaskType = "supplier" | "garage" | "placement" | "stock" | "collect" | "repair" | "pressure" | "contract" | "alarm" | "inspection" | "conflict";
@@ -68,6 +75,14 @@ export interface EndgamePathScore {
   path: EndgamePath;
   score: number;
   signals: string[];
+  tone: "good" | "warning" | "danger";
+}
+
+export interface NarrativeQuestProgress {
+  activeStep?: NarrativeQuestDefinition["steps"][number];
+  definition: NarrativeQuestDefinition;
+  progressRatio: number;
+  state: GameState["mission"]["quests"][string];
   tone: "good" | "warning" | "danger";
 }
 
@@ -133,8 +148,48 @@ export function baseFacilityEffects(state: GameState): BaseFacilityEffects {
   }, {});
 }
 
+export function empireAssetLevel(state: GameState, assetId: EmpireAssetId): number {
+  return Math.max(0, state.empire?.assets?.[assetId]?.level ?? 0);
+}
+
+export function empireAssetUpgradeCost(state: GameState, assetId: EmpireAssetId): number {
+  const definition = empireAssets[assetId];
+  const level = empireAssetLevel(state, assetId);
+  if (!definition || level >= definition.maxLevel) {
+    return 0;
+  }
+
+  return Math.round(definition.baseCost * Math.pow(definition.costGrowth, level));
+}
+
+export function empireAssetList(state: GameState): Array<EmpireAssetState & { name: string; description: string; maxLevel: number; nextCost: number }> {
+  return Object.values(empireAssets).map((definition) => {
+    const current = state.empire?.assets?.[definition.id] ?? { id: definition.id, level: 0 };
+    return {
+      ...current,
+      description: definition.description,
+      maxLevel: definition.maxLevel,
+      name: definition.name,
+      nextCost: empireAssetUpgradeCost(state, definition.id)
+    };
+  });
+}
+
+export function empireAssetEffects(state: GameState): EmpireAssetEffects {
+  return Object.values(empireAssets).reduce<EmpireAssetEffects>((effects, asset) => {
+    const level = empireAssetLevel(state, asset.id);
+    for (const [key, value] of Object.entries(asset.effectsPerLevel) as Array<[keyof EmpireAssetEffects, number | undefined]>) {
+      if (!value) {
+        continue;
+      }
+      effects[key] = (effects[key] ?? 0) + value * level;
+    }
+    return effects;
+  }, {});
+}
+
 export function baseStorageCapacity(state: GameState): number {
-  return state.player.garageCapacity + (baseFacilityEffects(state).storageCapacity ?? 0);
+  return state.player.garageCapacity + (baseFacilityEffects(state).storageCapacity ?? 0) + (empireAssetEffects(state).storageCapacity ?? 0);
 }
 
 export function employeeCapacity(state: GameState): number {
@@ -146,7 +201,7 @@ export function productLabSlots(state: GameState): number {
 }
 
 export function regionalManagerCapacity(state: GameState): number {
-  return baseFacilityEffects(state).managerSlots ?? 0;
+  return (baseFacilityEffects(state).managerSlots ?? 0) + (empireAssetEffects(state).regionalManagerSlots ?? 0);
 }
 
 export function baseSecurityScore(state: GameState): number {
@@ -158,11 +213,22 @@ export function coldStorageProtection(state: GameState): number {
 }
 
 export function supplierDiscount(state: GameState): number {
-  return Math.min(0.22, baseFacilityEffects(state).supplierDiscount ?? 0);
+  const relationshipDiscount = Object.values(state.economy?.supply?.suppliers ?? {}).reduce((highest, supplier) => {
+    if (!supplier.unlocked) {
+      return highest;
+    }
+    return Math.max(highest, supplier.negotiatedDiscount + Math.min(0.08, supplier.loyalty * 0.001));
+  }, 0);
+  return Math.min(0.34, (baseFacilityEffects(state).supplierDiscount ?? 0) + relationshipDiscount);
 }
 
 export function routeRiskReduction(state: GameState): number {
-  return Math.min(0.42, (baseFacilityEffects(state).routeRiskReduction ?? 0) + (baseFacilityEffects(state).planningIntel ?? 0) * 0.35);
+  return Math.min(
+    0.62,
+    (baseFacilityEffects(state).routeRiskReduction ?? 0) +
+      (baseFacilityEffects(state).planningIntel ?? 0) * 0.35 +
+      (empireAssetEffects(state).routeRiskReduction ?? 0)
+  );
 }
 
 export function currentProductCost(state: GameState, productId: ProductId): number {
@@ -174,6 +240,93 @@ export function currentProductCost(state: GameState, productId: ProductId): numb
   const marketMultiplier = state.economy?.supply?.priceMultipliers?.[productId] ?? 1;
   const customizationCost = state.economy?.productCustomizations?.[productId]?.costDelta ?? 0;
   return Math.max(1, Math.round((product.cost + customizationCost) * marketMultiplier * (1 - supplierDiscount(state))));
+}
+
+export function supplierRelationshipList(state: GameState): Array<SupplierRelationshipState & { label: string; description: string; available: boolean; productCount: number }> {
+  return supplierDefinitions.map((definition) => {
+    const relationship = state.economy?.supply?.suppliers?.[definition.id] ?? {
+      blackMarketTier: definition.id === "night_market_broker" ? 1 : 0,
+      dealCooldownUntil: 0,
+      id: definition.id,
+      loyalty: 0,
+      negotiatedDiscount: 0,
+      scamRisk: definition.scamRisk,
+      trust: 0,
+      unlocked: definition.unlockRequirement.kind === "always",
+      unlockedProductIds: definition.baseProducts
+    };
+    return {
+      ...relationship,
+      available: supplierAvailable(state, definition.id),
+      description: definition.description,
+      label: definition.label,
+      productCount: relationship.unlockedProductIds.length
+    };
+  });
+}
+
+export function supplierAvailable(state: GameState, supplierId: string): boolean {
+  const definition = supplierDefinitions.find((supplier) => supplier.id === supplierId);
+  if (!definition) {
+    return false;
+  }
+
+  const requirement = definition.unlockRequirement;
+  if (requirement.kind === "always") {
+    return true;
+  }
+
+  if (requirement.kind === "district_scouted") {
+    return districtProgress(state, requirement.districtId).access !== "locked";
+  }
+
+  if (requirement.kind === "district_unlocked") {
+    return districtProgress(state, requirement.districtId).access === "unlocked";
+  }
+
+  if (requirement.kind === "base_facility") {
+    return baseFacilityLevel(state, requirement.facilityId as BaseFacilityId) >= requirement.level;
+  }
+
+  const player = state.factions[state.playerFactionId];
+  if (requirement.kind === "street_reputation") {
+    return player.streetReputation >= requirement.value;
+  }
+
+  if (requirement.kind === "public_reputation") {
+    return player.publicReputation >= requirement.value;
+  }
+
+  return false;
+}
+
+export function activeMajorRaids(state: GameState): EmpireRaid[] {
+  return Object.values(state.empire?.activeRaids ?? {}).filter((raid) => raid.status === "active");
+}
+
+export function narrativeQuestProgress(state: GameState): NarrativeQuestProgress[] {
+  return narrativeQuestDefinitions.map((definition) => {
+    const fallbackState = {
+      activeStepId: definition.steps[0]?.id ?? "",
+      choiceHistory: [],
+      completedStepIds: [],
+      dialogueLog: [],
+      id: definition.id,
+      status: "available" as const
+    };
+    const questState = state.mission?.quests?.[definition.id] ?? fallbackState;
+    const completed = new Set(questState.completedStepIds);
+    const activeStep = definition.steps.find((step) => step.id === questState.activeStepId) ?? definition.steps.find((step) => !completed.has(step.id));
+    const progressRatio = definition.steps.length === 0 ? 1 : completed.size / definition.steps.length;
+
+    return {
+      activeStep,
+      definition,
+      progressRatio: questState.status === "completed" ? 1 : progressRatio,
+      state: questState,
+      tone: questState.status === "completed" ? "good" : questState.status === "active" ? "warning" : "danger"
+    };
+  });
 }
 
 export function financeLedger(state: GameState) {

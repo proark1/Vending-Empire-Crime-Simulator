@@ -7,6 +7,7 @@ import {
   activeContracts,
   activeConflictEvents,
   activeLawInspections,
+  activeMajorRaids,
   activeVehicle,
   assignedEmployeesForMachine,
   baseFacilityUpgradeCost,
@@ -24,6 +25,7 @@ import {
   districtMachineCounts,
   districtUnlockInfo,
   employeeCapacity,
+  empireAssetList,
   endgamePathScores,
   employeeList,
   financeLedger,
@@ -44,8 +46,10 @@ import {
   rivalTerritoryByDistrict,
   routeDangerScore,
   routeTasks,
+  narrativeQuestProgress,
   selectedRouteTask,
   storyArcProgress,
+  supplierRelationshipList,
   vehicleInventoryUnits,
   vehicleSpaceRemaining
 } from "../game/core/selectors";
@@ -53,9 +57,10 @@ import { estimateMachineSalesPerHour } from "../game/systems/economy";
 import { machineModels } from "../game/content/machineModels";
 import { gameDesignPillars, npcRoles } from "../game/content/story";
 import { baseFacilityList } from "../game/content/baseFacilities";
+import { supplierDeals } from "../game/content/suppliers";
 import { graphicsQualityLabels, graphicsQualityModes, type GraphicsQuality } from "../render/three/graphicsQuality";
 
-type DashboardTab = "machines" | "base" | "catalog" | "finance" | "districts" | "jobs" | "route" | "logistics" | "crew" | "law" | "heat" | "conflict" | "rival" | "story" | "debug" | "log";
+type DashboardTab = "machines" | "base" | "empire" | "suppliers" | "catalog" | "finance" | "districts" | "jobs" | "route" | "logistics" | "crew" | "law" | "heat" | "conflict" | "rival" | "story" | "debug" | "log";
 
 interface DashboardProps {
   graphicsQuality: GraphicsQuality;
@@ -191,6 +196,10 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
   const inspections = useMemo(() => activeLawInspections(state), [state]);
   const conflicts = useMemo(() => activeConflictEvents(state), [state]);
   const rivalOrganizations = useMemo(() => Object.values(state.rivalOrganizations ?? {}), [state.rivalOrganizations]);
+  const empireAssets = useMemo(() => empireAssetList(state), [state]);
+  const majorRaids = useMemo(() => activeMajorRaids(state), [state]);
+  const suppliers = useMemo(() => supplierRelationshipList(state), [state]);
+  const quests = useMemo(() => narrativeQuestProgress(state), [state]);
   const finance = financeSummary(state);
   const ledger = financeLedger(state).slice(0, 16);
   const territory = rivalTerritoryByDistrict(state);
@@ -198,7 +207,7 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
   const storyProgress = useMemo(() => storyArcProgress(state), [state]);
   const campaignProgress = useMemo(() => campaignMissionProgress(state), [state]);
   const endingScores = useMemo(() => endgamePathScores(state), [state]);
-  const advancedTabs = useMemo<DashboardTab[]>(() => ["catalog", "finance", "logistics", "heat", "conflict", "rival", "story", ...(showDebug ? (["debug"] as DashboardTab[]) : [])], [showDebug]);
+  const advancedTabs = useMemo<DashboardTab[]>(() => ["empire", "suppliers", "catalog", "finance", "logistics", "heat", "conflict", "rival", "story", ...(showDebug ? (["debug"] as DashboardTab[]) : [])], [showDebug]);
   const visibleTabs = useMemo<Array<{ icon: React.ReactNode; id: DashboardTab; label: string }>>(
     () => [
       { id: "machines", label: "Machines", icon: <Map size={16} aria-hidden="true" /> },
@@ -212,6 +221,8 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
       ...(showAdvanced
         ? [
             { id: "catalog" as DashboardTab, label: "Market", icon: <FlaskConical size={16} aria-hidden="true" /> },
+            { id: "suppliers" as DashboardTab, label: "Suppliers", icon: <Truck size={16} aria-hidden="true" /> },
+            { id: "empire" as DashboardTab, label: "Empire", icon: <Building2 size={16} aria-hidden="true" /> },
             { id: "finance" as DashboardTab, label: "Finance", icon: <Landmark size={16} aria-hidden="true" /> },
             { id: "logistics" as DashboardTab, label: "Stock", icon: <Package size={16} aria-hidden="true" /> },
             { id: "heat" as DashboardTab, label: "Heat", icon: <AlertTriangle size={16} aria-hidden="true" /> },
@@ -362,6 +373,111 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
               </article>
             );
           })}
+        </div>
+      )}
+
+      {tab === "empire" && (
+        <div className="panel-list">
+          <article className="cargo-summary">
+            <Building2 size={18} aria-hidden="true" />
+            <span>
+              pressure {Math.round(state.empire.politicalPressure)} · shell cover {Math.round(state.empire.shellCover * 100)}% · legitimacy {Math.round(state.empire.legitimacy)}
+            </span>
+          </article>
+
+          {majorRaids.length > 0 && majorRaids.map((raid) => (
+            <article className="route-task danger" key={raid.id}>
+              <div>
+                <h3>Major raid severity {raid.severity}</h3>
+                <p>{raid.message}</p>
+                <p>Deadline {formatClock(raid.deadlineHour)}</p>
+              </div>
+              <div className="route-actions">
+                <MiniButton onClick={() => onCommand({ type: "resolve_major_raid", actorId: state.playerFactionId, raidId: raid.id, resolution: "legal_team" })}>Legal</MiniButton>
+                <MiniButton onClick={() => onCommand({ type: "resolve_major_raid", actorId: state.playerFactionId, raidId: raid.id, resolution: "security_response" })}>Security</MiniButton>
+                <MiniButton onClick={() => onCommand({ type: "resolve_major_raid", actorId: state.playerFactionId, raidId: raid.id, resolution: "political_favor" })}>Favor</MiniButton>
+              </div>
+            </article>
+          ))}
+
+          {empireAssets.map((asset) => {
+            const atMax = asset.level >= asset.maxLevel;
+            return (
+              <article className={`route-task ${atMax ? "good" : "warning"}`} key={asset.id}>
+                <div>
+                  <h3>{asset.name}</h3>
+                  <p>{asset.description}</p>
+                  <p>Level {asset.level}/{asset.maxLevel}</p>
+                </div>
+                <div className="route-actions">
+                  <MiniButton disabled={atMax || state.factions[state.playerFactionId].money < asset.nextCost} onClick={() => onCommand({ type: "upgrade_empire_asset", actorId: state.playerFactionId, assetId: asset.id })}>
+                    <Wrench size={13} aria-hidden="true" />
+                    {atMax ? "Max" : `Upgrade $${asset.nextCost}`}
+                  </MiniButton>
+                </div>
+              </article>
+            );
+          })}
+
+          <article className="vehicle-card">
+            <div className="vehicle-heading">
+              <Trophy size={18} aria-hidden="true" />
+              <div>
+                <h3>Ending execution</h3>
+                <p>Endings lock only when their score reaches execution strength and no major raid is active.</p>
+              </div>
+            </div>
+            <div className="storage-list">
+              {endingScores.map((ending) => (
+                <article className={`inventory-row ${ending.tone === "good" ? "contract-needed" : ""}`} key={ending.path.id}>
+                  <div>
+                    <h3>{ending.path.title}</h3>
+                    <p>{ending.signals.join(" · ")}</p>
+                    <p>{state.empire.endingExecutions[ending.path.id]?.status === "executed" ? state.empire.endingExecutions[ending.path.id]?.summary : ending.path.condition}</p>
+                  </div>
+                  <div className="route-actions">
+                    <strong>{ending.score}/100</strong>
+                    <MiniButton disabled={ending.score < 65 || majorRaids.length > 0 || state.empire.endingExecutions[ending.path.id]?.status === "executed"} onClick={() => onCommand({ type: "execute_ending", actorId: state.playerFactionId, pathId: ending.path.id })}>
+                      Execute
+                    </MiniButton>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </article>
+        </div>
+      )}
+
+      {tab === "suppliers" && (
+        <div className="panel-list">
+          <article className="cargo-summary">
+            <Truck size={18} aria-hidden="true" />
+            <span>
+              {suppliers.filter((supplier) => supplier.unlocked).length}/{suppliers.length} suppliers · market {state.economy.supply.supplierMood}
+            </span>
+          </article>
+          {suppliers.map((supplier) => (
+            <article className={`route-task ${supplier.unlocked ? "good" : supplier.available ? "warning" : "danger"}`} key={supplier.id}>
+              <div>
+                <h3>{supplier.label}</h3>
+                <p>{supplier.description}</p>
+                <p>
+                  {supplier.unlocked ? "unlocked" : supplier.available ? "available" : "locked"} · loyalty {Math.round(supplier.loyalty)} · trust {Math.round(supplier.trust)} · discount {Math.round(supplier.negotiatedDiscount * 100)}% · products {supplier.productCount}
+                </p>
+              </div>
+              <div className="route-actions">
+                {Object.values(supplierDeals).map((deal) => (
+                  <MiniButton
+                    disabled={!supplier.available || supplier.dealCooldownUntil > state.worldTimeHours || state.factions[state.playerFactionId].money < deal.cost}
+                    key={deal.kind}
+                    onClick={() => onCommand({ type: "negotiate_supplier_deal", actorId: state.playerFactionId, supplierId: supplier.id, dealKind: deal.kind })}
+                  >
+                    {deal.label} ${deal.cost}
+                  </MiniButton>
+                ))}
+              </div>
+            </article>
+          ))}
         </div>
       )}
 
@@ -1077,6 +1193,42 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
               {campaignProgress.filter((progress) => progress.mission.completed).length}/{campaignProgress.length} chains · {storyProgress.length} arcs · leading ending {endingScores[0]?.path.title ?? "unknown"}
             </span>
           </article>
+
+          {quests.map((quest) => (
+            <article className={`route-task ${quest.tone}`} key={`quest_${quest.definition.id}`}>
+              <div>
+                <h3>{quest.definition.title}</h3>
+                <p>
+                  {quest.definition.giverName} · {quest.definition.type} · {quest.state.status}
+                </p>
+                <p>
+                  {quest.state.status === "completed"
+                    ? "Questline complete"
+                    : quest.activeStep
+                      ? `${quest.activeStep.title}: ${quest.activeStep.description}`
+                      : quest.definition.description}
+                </p>
+                {quest.state.dialogueLog.length > 0 && (
+                  <p>
+                    Last: {quest.state.dialogueLog[quest.state.dialogueLog.length - 1]?.speaker}: {quest.state.dialogueLog[quest.state.dialogueLog.length - 1]?.text}
+                  </p>
+                )}
+              </div>
+              <div className="route-actions">
+                {quest.state.status !== "active" && quest.state.status !== "completed" && (
+                  <MiniButton onClick={() => onCommand({ type: "start_quest", actorId: state.playerFactionId, questId: quest.definition.id })}>
+                    Start
+                  </MiniButton>
+                )}
+                {quest.state.status === "active" && quest.state.choiceHistory.length === 0 && quest.definition.choices.map((choice) => (
+                  <MiniButton key={choice.id} onClick={() => onCommand({ type: "choose_quest_dialogue", actorId: state.playerFactionId, questId: quest.definition.id, choiceId: choice.id })}>
+                    {choice.label}
+                  </MiniButton>
+                ))}
+                <strong>{Math.round(quest.progressRatio * 100)}%</strong>
+              </div>
+            </article>
+          ))}
 
           {campaignProgress.map((progress) => (
             <article className={`route-task ${progress.tone}`} key={`campaign_${progress.arc.id}`}>

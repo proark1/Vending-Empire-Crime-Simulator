@@ -1,6 +1,8 @@
-import type { DistrictProgress, Faction, GameState, RivalOrganizationState, RouteVehicle, VendingMachine } from "../core/types";
+import type { DistrictProgress, EmpireAssetState, Faction, GameState, RivalOrganizationState, RouteVehicle, SupplierRelationshipState, VendingMachine } from "../core/types";
 import { createInitialBaseFacilities } from "./baseFacilities";
+import { empireAssetList } from "./empire";
 import { products } from "./products";
+import { supplierDefinitions } from "./suppliers";
 import { districts, locations } from "./world";
 
 const factions: Record<string, Faction> = {
@@ -287,6 +289,37 @@ function createInitialDistrictProgress(): Record<string, DistrictProgress> {
   );
 }
 
+function createInitialEmpireAssets(): GameState["empire"]["assets"] {
+  return Object.fromEntries(
+    empireAssetList.map((asset) => [
+      asset.id,
+      {
+        id: asset.id,
+        level: 0
+      } satisfies EmpireAssetState
+    ])
+  ) as GameState["empire"]["assets"];
+}
+
+function createInitialSuppliers(): Record<string, SupplierRelationshipState> {
+  return Object.fromEntries(
+    supplierDefinitions.map((supplier) => [
+      supplier.id,
+      {
+        blackMarketTier: supplier.id === "night_market_broker" ? 1 : 0,
+        dealCooldownUntil: 0,
+        id: supplier.id,
+        loyalty: supplier.id === "backdoor_wholesale" ? 12 : 0,
+        negotiatedDiscount: 0,
+        scamRisk: supplier.scamRisk,
+        trust: supplier.id === "backdoor_wholesale" ? 18 : 0,
+        unlocked: supplier.unlockRequirement.kind === "always",
+        unlockedProductIds: supplier.baseProducts
+      } satisfies SupplierRelationshipState
+    ])
+  );
+}
+
 export function createInitialState(): GameState {
   return {
     version: 1,
@@ -337,7 +370,9 @@ export function createInitialState(): GameState {
         nextVolatilityHour: 12,
         volatility: 0.08,
         priceMultipliers: {},
-        supplierMood: "stable"
+        supplierMood: "stable",
+        suppliers: createInitialSuppliers(),
+        activeDeals: {}
       },
       traffic: {
         nextTrafficHour: 10,
@@ -399,6 +434,16 @@ export function createInitialState(): GameState {
       missedToday: 0
     },
     rivalOrganizations: cloneContent(rivalOrganizations),
+    empire: {
+      activeRaids: {},
+      assets: createInitialEmpireAssets(),
+      endingExecutions: {},
+      legitimacy: 0,
+      nextRaidHour: 40,
+      politicalPressure: 0,
+      raidSequence: 1,
+      shellCover: 0
+    },
     eventLog: [
       {
         id: "intro_1",
@@ -416,7 +461,8 @@ export function createInitialState(): GameState {
       id: "starter_takeover",
       title: "Launch Foam & Fold and survive Redline retaliation",
       completed: false,
-      campaign: {}
+      campaign: {},
+      quests: {}
     },
     routePlan: {
       selectedTaskId: null

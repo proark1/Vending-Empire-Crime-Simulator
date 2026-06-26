@@ -163,7 +163,8 @@ export function migrateGameState(parsed: GameState): GameState {
     mission: {
       ...baseline.mission,
       ...(parsed.mission ?? {}),
-      campaign: parsed.mission?.campaign ?? baseline.mission.campaign
+      campaign: parsed.mission?.campaign ?? baseline.mission.campaign,
+      quests: parsed.mission?.quests ?? baseline.mission.quests
     },
     streetLife: {
       ...baseline.streetLife,
@@ -236,7 +237,12 @@ export function migrateGameState(parsed: GameState): GameState {
       supply: {
         ...baseline.economy.supply,
         ...(parsed.economy?.supply ?? {}),
-        priceMultipliers: parsed.economy?.supply?.priceMultipliers ?? baseline.economy.supply.priceMultipliers
+        priceMultipliers: parsed.economy?.supply?.priceMultipliers ?? baseline.economy.supply.priceMultipliers,
+        suppliers: {
+          ...baseline.economy.supply.suppliers,
+          ...(parsed.economy?.supply?.suppliers ?? {})
+        },
+        activeDeals: parsed.economy?.supply?.activeDeals ?? baseline.economy.supply.activeDeals
       },
       traffic: {
         ...baseline.economy.traffic,
@@ -285,6 +291,16 @@ export function migrateGameState(parsed: GameState): GameState {
       )
     },
     rivalOrganizations,
+    empire: {
+      ...baseline.empire,
+      ...(parsed.empire ?? {}),
+      activeRaids: parsed.empire?.activeRaids ?? baseline.empire.activeRaids,
+      assets: {
+        ...baseline.empire.assets,
+        ...(parsed.empire?.assets ?? {})
+      },
+      endingExecutions: parsed.empire?.endingExecutions ?? baseline.empire.endingExecutions
+    },
     dayReports: (parsed.dayReports ?? baseline.dayReports).map((report) => ({
       ...report,
       operatingRevenue: report.operatingRevenue ?? 0,

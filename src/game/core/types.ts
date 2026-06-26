@@ -341,7 +341,8 @@ export type FinanceLedgerCategory =
   | "upgrades"
   | "front_business"
   | "sabotage"
-  | "base";
+  | "base"
+  | "empire";
 
 export interface FinanceLedgerEntry {
   id: string;
@@ -367,6 +368,30 @@ export interface SupplyMarketState {
   volatility: number;
   priceMultipliers: Partial<Record<ProductId, number>>;
   supplierMood: "stable" | "discount" | "scarce" | "blackout";
+  suppliers: Record<string, SupplierRelationshipState>;
+  activeDeals: Record<string, SupplierDealState>;
+}
+
+export type SupplierDealKind = "bulk_discount" | "exclusive_pipeline" | "quiet_manifest" | "rush_delivery";
+
+export interface SupplierRelationshipState {
+  blackMarketTier: number;
+  dealCooldownUntil: number;
+  id: string;
+  loyalty: number;
+  negotiatedDiscount: number;
+  scamRisk: number;
+  trust: number;
+  unlocked: boolean;
+  unlockedProductIds: ProductId[];
+}
+
+export interface SupplierDealState {
+  expiresHour: number;
+  id: string;
+  kind: SupplierDealKind;
+  supplierId: string;
+  value: number;
 }
 
 export interface PoliceCheckpoint {
@@ -617,6 +642,7 @@ export interface MissionState {
   title: string;
   completed: boolean;
   campaign: Record<string, CampaignMissionState>;
+  quests: Record<string, NarrativeQuestState>;
 }
 
 export interface CampaignMissionState {
@@ -626,6 +652,65 @@ export interface CampaignMissionState {
   completedHour?: number;
   completedStepIds: string[];
   unlockedHour: number;
+}
+
+export type EmpireAssetId = "warehouse_network" | "regional_office" | "front_business" | "shell_company" | "political_contacts";
+export type EmpireRaidStatus = "active" | "resolved" | "missed";
+export type EmpireRaidResolution = "legal_team" | "security_response" | "political_favor";
+export type EndingExecutionStatus = "locked" | "available" | "executed";
+
+export interface EmpireAssetState {
+  id: EmpireAssetId;
+  lastUpgradedHour?: number;
+  level: number;
+}
+
+export interface EmpireRaid {
+  deadlineHour: number;
+  id: string;
+  message: string;
+  resolvedHour?: number;
+  resolution?: EmpireRaidResolution;
+  severity: number;
+  startedHour: number;
+  status: EmpireRaidStatus;
+  targetAssetId?: EmpireAssetId;
+}
+
+export interface EndingExecutionState {
+  executedHour?: number;
+  pathId: string;
+  status: EndingExecutionStatus;
+  summary?: string;
+}
+
+export interface EmpireState {
+  activeRaids: Record<string, EmpireRaid>;
+  assets: Record<EmpireAssetId, EmpireAssetState>;
+  endingExecutions: Record<string, EndingExecutionState>;
+  legitimacy: number;
+  nextRaidHour: number;
+  politicalPressure: number;
+  raidSequence: number;
+  shellCover: number;
+}
+
+export type NarrativeQuestStatus = "available" | "active" | "completed" | "failed";
+
+export interface NarrativeQuestState {
+  activeStepId: string;
+  choiceHistory: string[];
+  completedHour?: number;
+  completedStepIds: string[];
+  dialogueLog: Array<{
+    choiceId?: string;
+    hour: number;
+    speaker: string;
+    text: string;
+  }>;
+  id: string;
+  startedHour?: number;
+  status: NarrativeQuestStatus;
 }
 
 export interface GameState {
@@ -652,6 +737,7 @@ export interface GameState {
   law: LawState;
   conflict: ConflictState;
   rivalOrganizations: Record<FactionId, RivalOrganizationState>;
+  empire: EmpireState;
   eventLog: GameEvent[];
   streetLife: StreetLifeState;
   mission: MissionState;
@@ -693,6 +779,12 @@ export type GameCommand =
   | { type: "resolve_inspection"; actorId: FactionId; inspectionId: string; resolution: LawInspectionResolution }
   | { type: "work_crime_contact"; actorId: FactionId; contactId: string; action: CrimeContactAction }
   | { type: "pressure_rival_operation"; actorId: FactionId; operationId: string; approach: RivalOperationApproach }
+  | { type: "upgrade_empire_asset"; actorId: FactionId; assetId: EmpireAssetId }
+  | { type: "resolve_major_raid"; actorId: FactionId; raidId: string; resolution: EmpireRaidResolution }
+  | { type: "execute_ending"; actorId: FactionId; pathId: string }
+  | { type: "negotiate_supplier_deal"; actorId: FactionId; supplierId: string; dealKind: SupplierDealKind }
+  | { type: "start_quest"; actorId: FactionId; questId: string }
+  | { type: "choose_quest_dialogue"; actorId: FactionId; questId: string; choiceId: string }
   | { type: "debug_grant_cash"; actorId: FactionId; amount: number }
   | { type: "debug_complete_requirements"; actorId: FactionId }
   | { type: "debug_set_district_access"; actorId: FactionId; districtId: DistrictId; access: DistrictAccess }
