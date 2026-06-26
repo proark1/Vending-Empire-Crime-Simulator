@@ -5,6 +5,7 @@ import type { DistrictAccess, GameState, GameEventTone, Location, MachineId, Mac
 import { activeConflictEvents, activeMachineAlarms, activeVehicle, carriedCrateUnits, districtProgress, garageStorageUnits, machineAtLocation, machineRoutePressure } from "../../game/core/selectors";
 import { modelTransformFor, type ModelConfig, type ModelTransform } from "../../game/content/modelConfig";
 import {
+  crimeContacts,
   districtLabels,
   districtVisualProfiles,
   machinePlacementAnchors,
@@ -2648,6 +2649,67 @@ function createNeighborhoodHotspotMarker(color: string, kind: string, access: Di
   return group;
 }
 
+function createCrimeContactMarker(color: string, kind: string, access: DistrictAccess): THREE.Group {
+  const group = new THREE.Group();
+  const locked = access === "locked";
+  const opacity = locked ? 0.36 : 0.88;
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(0.62, 0.024, 8, 56),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false })
+  );
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.1;
+  group.add(ring);
+
+  const coat = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 0.82, 12), new THREE.MeshStandardMaterial({ color: locked ? "#334155" : "#111827", roughness: 0.62 }));
+  coat.position.y = 0.47;
+  coat.castShadow = true;
+  group.add(coat);
+
+  const signGeometry = kind === "grey_supplier" ? new THREE.BoxGeometry(0.42, 0.18, 0.08) : kind === "lookout" ? new THREE.ConeGeometry(0.2, 0.3, 3) : new THREE.CylinderGeometry(0.18, 0.18, 0.1, 6);
+  const sign = new THREE.Mesh(signGeometry, new THREE.MeshBasicMaterial({ color, transparent: true, opacity }));
+  sign.position.y = 1.02;
+  sign.rotation.y = kind === "lookout" ? Math.PI : 0;
+  group.add(sign);
+
+  const beam = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.2, 0.46, 1.55, 20, 1, true),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: locked ? 0.035 : 0.075, depthWrite: false })
+  );
+  beam.position.y = 0.84;
+  group.add(beam);
+  group.userData.crimeContact = true;
+  return group;
+}
+
+function createRivalOperationMarker(color: string, progress: number, exposed: boolean): THREE.Group {
+  const group = new THREE.Group();
+  const tone = exposed ? "#fbbf24" : color;
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(0.74, 0.03, 8, 64),
+    new THREE.MeshBasicMaterial({ color: tone, transparent: true, opacity: exposed ? 0.9 : 0.68, depthWrite: false })
+  );
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.13;
+  group.add(ring);
+
+  const mast = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.84, 0.12), new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.52, metalness: 0.12 }));
+  mast.position.y = 0.5;
+  mast.castShadow = true;
+  group.add(mast);
+
+  const bladeCount = Math.max(1, Math.min(4, Math.ceil(progress / 25)));
+  for (let index = 0; index < bladeCount; index += 1) {
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.045, 0.09), new THREE.MeshBasicMaterial({ color: tone, transparent: true, opacity: 0.88 }));
+    blade.position.y = 1.02 + index * 0.09;
+    blade.rotation.y = index * (Math.PI / 2);
+    group.add(blade);
+  }
+
+  group.userData.rivalOperation = true;
+  return group;
+}
+
 function createPolicePatrolOfficer(patrol: PolicePatrolPath, quality: GraphicsQuality, modelConfig: ModelConfig): THREE.Group {
   const officer = createNpcCharacter("scout", quality);
   const start = patrol.path[0];
@@ -3172,6 +3234,40 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       radius: Math.max(1.25, Math.min(2.4, hotspot.radius * 0.28)),
       target: { type: "neighborhood", id: hotspot.id, label: hotspot.label },
       position: new THREE.Vector3(hotspot.x, 0, hotspot.z)
+    });
+  }
+
+  for (const contact of crimeContacts) {
+    const progress = districtProgress(currentState, contact.districtId);
+    const marker = createCrimeContactMarker(contact.color, contact.kind, progress.access);
+    marker.position.set(contact.x, 0.02, contact.z);
+    group.add(marker);
+    addLabel(group, contact.label, contact.color, new THREE.Vector3(contact.x, 0, contact.z), progress.access === "locked" ? 1.42 : 1.62);
+    interactables.push({
+      radius: Math.max(1.2, Math.min(2.2, contact.radius * 0.3)),
+      target: { type: "crime_contact", id: contact.id, label: contact.label },
+      position: new THREE.Vector3(contact.x, 0, contact.z)
+    });
+  }
+
+  const rivalOperations = Object.values(currentState.rivalOrganizations ?? {}).flatMap((organization) => organization.operations.filter((operation) => !operation.resolvedHour));
+  for (const operation of rivalOperations) {
+    const location = currentState.locations[operation.locationId];
+    const faction = currentState.factions[operation.factionId];
+    if (!location || !faction) {
+      continue;
+    }
+
+    const basePosition = new THREE.Vector3(location.position.x + 0.95, 0, location.position.z + 0.95);
+    const marker = createRivalOperationMarker(faction.color, operation.progress, operation.exposed);
+    marker.position.copy(basePosition);
+    marker.position.y = 0.03;
+    group.add(marker);
+    addLabel(group, `${faction.name.split(" ")[0]} OP`, operation.exposed ? "#fbbf24" : faction.color, basePosition, 1.78);
+    interactables.push({
+      radius: 1.55,
+      target: { type: "rival_operation", id: operation.id, label: `${faction.name} operation` },
+      position: basePosition
     });
   }
 

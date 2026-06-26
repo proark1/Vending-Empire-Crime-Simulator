@@ -109,6 +109,29 @@ describe("primary interactions", () => {
     }
   });
 
+  it("offers crime contact work as a primary action", () => {
+    const state = createInitialState();
+    const action = getPrimaryInteraction(state, { type: "crime_contact", id: "laundry_lookout", label: "Coin-Op Lookout" });
+
+    expect(action?.kind).toBe("command");
+    expect(action?.label).toBe("Buy tip");
+    if (action?.kind === "command") {
+      expect(action.command.type).toBe("work_crime_contact");
+    }
+  });
+
+  it("offers exposed rival operation pressure as a primary action", () => {
+    const state = createInitialState();
+    const operation = state.rivalOrganizations.rival_redline.operations[0]!;
+    const action = getPrimaryInteraction(state, { type: "rival_operation", id: operation.id, label: "Redline operation" });
+
+    expect(action?.kind).toBe("command");
+    expect(action?.label).toBe("Expose operation");
+    if (action?.kind === "command") {
+      expect(action.command.type).toBe("pressure_rival_operation");
+    }
+  });
+
   it("offers scouting at locked district placement pads", () => {
     const state = createInitialState();
     state.factions.player.money = 1000;

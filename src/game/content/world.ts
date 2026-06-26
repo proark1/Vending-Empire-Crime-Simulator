@@ -129,6 +129,24 @@ export interface NeighborhoodHotspot {
   z: number;
 }
 
+export type CrimeContactKind = "fixer" | "lookout" | "grey_supplier" | "paperwork";
+
+export interface CrimeContact {
+  action: "buy_tip" | "arrange_bribe" | "source_contraband";
+  color: string;
+  cost: number;
+  description: string;
+  districtId: string;
+  heatRisk: number;
+  id: string;
+  kind: CrimeContactKind;
+  label: string;
+  productId?: "mystery_capsules" | "glitch_gum" | "night_syrup" | "focus_cubes";
+  radius: number;
+  x: number;
+  z: number;
+}
+
 export interface WorldMapLayout {
   backdropBuildings: CityBackdropBuilding[];
   buildings: WorldBuilding[];
@@ -303,6 +321,66 @@ export const neighborhoodHotspots: NeighborhoodHotspot[] = [
     demandTags: ["commuter", "office"],
     description: "Civic traffic wants safe, boring products in a place where everyone watches paperwork.",
     riskNote: "Legal machines thrive; bribes and contraband are punished hard."
+  }
+];
+
+export const crimeContacts: CrimeContact[] = [
+  {
+    id: "laundry_lookout",
+    districtId: "starter_suburb",
+    label: "Coin-Op Lookout",
+    kind: "lookout",
+    action: "buy_tip",
+    x: -16.5,
+    z: -8.6,
+    radius: 2.6,
+    color: "#facc15",
+    cost: 18,
+    heatRisk: 0.8,
+    description: "A local watcher sells inspection timing, rival route gossip, and camera blind spots."
+  },
+  {
+    id: "dock_fixit",
+    districtId: "industrial_yards",
+    label: "Dockside Fixer",
+    kind: "fixer",
+    action: "arrange_bribe",
+    x: -91,
+    z: 51,
+    radius: 3.1,
+    color: "#fb923c",
+    cost: 42,
+    heatRisk: 2.2,
+    description: "A forklift broker can cool one active inspection or smooth a dirty placement for cash."
+  },
+  {
+    id: "neon_grey_supplier",
+    districtId: "neon_quarter",
+    label: "Neon Grey Supplier",
+    kind: "grey_supplier",
+    action: "source_contraband",
+    x: 101,
+    z: -77,
+    radius: 3.4,
+    color: "#e879f9",
+    cost: 54,
+    heatRisk: 4.2,
+    productId: "glitch_gum",
+    description: "After-hours courier selling fictional grey stock that moves fast and pulls serious heat."
+  },
+  {
+    id: "courthouse_runner",
+    districtId: "old_town",
+    label: "Courthouse Runner",
+    kind: "paperwork",
+    action: "arrange_bribe",
+    x: 99,
+    z: 75,
+    radius: 3,
+    color: "#fbbf24",
+    cost: 65,
+    heatRisk: 1.8,
+    description: "A paper runner can bury citations, but repeated favors create a visible law-pressure trail."
   }
 ];
 

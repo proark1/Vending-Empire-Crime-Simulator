@@ -6,7 +6,9 @@ export type SceneTarget =
   | { type: "machine"; id: MachineId; label: string }
   | { type: "placement"; id: LocationId; label: string }
   | { type: "vehicle"; id: VehicleId; label: string }
-  | { type: "neighborhood"; id: string; label: string };
+  | { type: "neighborhood"; id: string; label: string }
+  | { type: "crime_contact"; id: string; label: string }
+  | { type: "rival_operation"; id: string; label: string };
 
 export type SceneFeedbackKind =
   | "pickup"

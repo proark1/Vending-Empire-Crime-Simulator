@@ -1,5 +1,5 @@
 import type { GameCommand, GameState, ProductId } from "../game/core/types";
-import { neighborhoodHotspots } from "../game/content/world";
+import { crimeContacts, neighborhoodHotspots } from "../game/content/world";
 import {
   activeAlarmForMachine,
   activeConflictEvents,
@@ -127,6 +127,16 @@ function supplierDisabledReason(state: GameState): string {
   return player.money < cheapest ? shortageLabel(cheapest, player.money) : "No stock fits";
 }
 
+function rivalOperationLocationId(state: GameState, operationId: string): string | null {
+  for (const organization of Object.values(state.rivalOrganizations ?? {})) {
+    const operation = organization.operations.find((candidate) => candidate.id === operationId);
+    if (operation && !operation.resolvedHour) {
+      return operation.locationId;
+    }
+  }
+  return null;
+}
+
 export function getPrimaryInteraction(state: GameState, target: SceneTarget | null): PrimaryInteraction | null {
   if (!target) {
     return null;
@@ -137,7 +147,9 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
   const targetLocationId =
     target.type === "base" || target.type === "supplier" || target.type === "placement"
       ? target.id
-      : target.type === "vehicle" || target.type === "neighborhood"
+      : target.type === "rival_operation"
+        ? rivalOperationLocationId(state, target.id)
+      : target.type === "vehicle" || target.type === "neighborhood" || target.type === "crime_contact"
         ? null
       : state.machines[target.id]?.locationId;
   const conflictAtTarget = targetLocationId ? activeConflictEvents(state).find((event) => event.locationId === targetLocationId) : undefined;
@@ -145,12 +157,12 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
   if (conflictAtTarget) {
     return {
       kind: "command",
-      label: conflictAtTarget.kind === "base_raid" ? "Trigger lockdown" : conflictAtTarget.kind === "route_ambush" ? "Drive escape" : "Fight through",
+      label: conflictAtTarget.kind === "street_chase" ? "Push escape" : "Strike back",
       command: {
-        type: "resolve_conflict_event",
+        type: "player_conflict_action",
         actorId,
         eventId: conflictAtTarget.id,
-        resolution: conflictAtTarget.kind === "base_raid" ? "remote_lockdown" : conflictAtTarget.kind === "route_ambush" ? "drive_escape" : "melee"
+        action: conflictAtTarget.kind === "street_chase" ? "push_escape" : "strike"
       }
     };
   }
@@ -283,6 +295,57 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
           ? shortageLabel(district.unlockCost, player.money)
           : undefined,
       command: { type: "unlock_district", actorId, districtId: district.id }
+    };
+  }
+
+  if (target.type === "crime_contact") {
+    const contact = crimeContacts.find((candidate) => candidate.id === target.id);
+    if (!contact) {
+      return null;
+    }
+
+    const district = state.districts[contact.districtId];
+    const access = district ? districtUnlockInfo(state, district.id).progress.access : "locked";
+    const handsFull = Boolean(state.player.carriedCrate) || inventoryUnits(state.player.cargo, state) > 0;
+    const label =
+      contact.action === "buy_tip"
+        ? "Buy tip"
+        : contact.action === "arrange_bribe"
+          ? "Arrange bribe"
+          : `Take ${contact.productId ? state.products[contact.productId].name : "grey stock"}`;
+    const disabledReason =
+      access === "locked"
+        ? "District locked"
+        : contact.action === "source_contraband" && handsFull
+          ? "Hands full"
+          : player.money < contact.cost
+            ? shortageLabel(contact.cost, player.money)
+            : undefined;
+
+    return {
+      kind: "command",
+      label,
+      disabled: Boolean(disabledReason),
+      disabledReason,
+      command: { type: "work_crime_contact", actorId, contactId: contact.id, action: contact.action }
+    };
+  }
+
+  if (target.type === "rival_operation") {
+    const operation = Object.values(state.rivalOrganizations ?? {})
+      .flatMap((organization) => organization.operations)
+      .find((candidate) => candidate.id === target.id && !candidate.resolvedHour);
+    if (!operation) {
+      return null;
+    }
+
+    const exposeCost = 12;
+    return {
+      kind: "command",
+      label: "Expose operation",
+      disabled: player.money < exposeCost,
+      disabledReason: player.money < exposeCost ? shortageLabel(exposeCost, player.money) : undefined,
+      command: { type: "pressure_rival_operation", actorId, operationId: operation.id, approach: "expose" }
     };
   }
 

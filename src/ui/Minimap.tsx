@@ -1,6 +1,6 @@
 import type { GameState, Vec2 } from "../game/core/types";
 import { activeVehicle, districtProgress, machineAtLocation } from "../game/core/selectors";
-import { worldBounds, worldRoads } from "../game/content/world";
+import { crimeContacts, worldBounds, worldRoads } from "../game/content/world";
 import type { SceneTarget } from "../render/three/SceneTargets";
 
 interface MinimapProps {
@@ -45,6 +45,11 @@ function toDistrictRect(bounds: { maxX: number; maxZ: number; minX: number; minZ
 }
 
 export function Minimap({ state, playerPosition, guidanceLocationId, target }: MinimapProps) {
+  const targetOperation = target?.type === "rival_operation"
+    ? Object.values(state.rivalOrganizations ?? {})
+        .flatMap((organization) => organization.operations)
+        .find((operation) => operation.id === target.id && !operation.resolvedHour)
+    : undefined;
   const targetLocationId =
     target?.type === "placement"
       ? target.id
@@ -52,11 +57,13 @@ export function Minimap({ state, playerPosition, guidanceLocationId, target }: M
         ? state.machines[target.id]?.locationId
         : target?.type === "base" || target?.type === "supplier"
           ? target.id
-          : undefined;
+          : targetOperation?.locationId;
+  const targetContactId = target?.type === "crime_contact" ? target.id : undefined;
   const player = toMapPoint(playerPosition);
   const vehicle = activeVehicle(state);
   const vehicleLocation = vehicle ? state.locations[vehicle.locationId] : undefined;
   const vehiclePoint = vehicle?.position ? toMapPoint(vehicle.position) : vehicleLocation ? toMapPoint(vehicleLocation.position) : undefined;
+  const activeOperations = Object.values(state.rivalOrganizations ?? {}).flatMap((organization) => organization.operations.filter((operation) => !operation.resolvedHour));
 
   return (
     <aside className="minimap" aria-label="District map">
@@ -82,6 +89,27 @@ export function Minimap({ state, playerPosition, guidanceLocationId, target }: M
           return (
             <g className={`map-location ${ownerClass} ${isTarget ? "target" : ""} ${isGuidance ? "guidance" : ""}`} key={location.id}>
               <circle cx={point.x} cy={point.y} r={isGuidance ? 5.2 : isTarget ? 4.4 : 3.1} />
+            </g>
+          );
+        })}
+        {crimeContacts.map((contact) => {
+          const point = toMapPoint({ x: contact.x, z: contact.z });
+          const access = districtProgress(state, contact.districtId).access;
+          return (
+            <g className={`map-contact ${access} ${targetContactId === contact.id ? "target" : ""}`} key={contact.id}>
+              <rect x={point.x - 2.2} y={point.y - 2.2} width="4.4" height="4.4" rx="1" />
+            </g>
+          );
+        })}
+        {activeOperations.map((operation) => {
+          const location = state.locations[operation.locationId];
+          if (!location) {
+            return null;
+          }
+          const point = toMapPoint(location.position);
+          return (
+            <g className={`map-operation ${target?.type === "rival_operation" && target.id === operation.id ? "target" : ""}`} key={operation.id}>
+              <path d={`M ${point.x} ${point.y - 3.2} L ${point.x + 3.2} ${point.y + 3.2} L ${point.x - 3.2} ${point.y + 3.2} Z`} />
             </g>
           );
         })}

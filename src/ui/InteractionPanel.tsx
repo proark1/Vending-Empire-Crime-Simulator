@@ -3,7 +3,7 @@ import { Camera, ChevronDown, ChevronUp, CreditCard, HandCoins, Lightbulb, Lock,
 import type { ConflictEvent, GameCommand, GameState, MachineUpgradeId } from "../game/core/types";
 import { machineUpgradeList } from "../game/content/machineUpgrades";
 import { machineModels } from "../game/content/machineModels";
-import { neighborhoodHotspots } from "../game/content/world";
+import { crimeContacts, neighborhoodHotspots } from "../game/content/world";
 import { effectiveMachineSecurity, effectiveMachineVisibility, getMachineUpgradeEffects, machineHasUpgrade, priceDemandMultiplier } from "../game/core/machineStats";
 import {
   activeAlarmForMachine,
@@ -116,9 +116,50 @@ function formatUpgradeEffect(upgradeId: MachineUpgradeId): string {
   return parts.join(" · ");
 }
 
+function encounterFallback(conflict: ConflictEvent) {
+  return (
+    conflict.encounter ?? {
+      advantage: conflict.kind === "base_raid" ? 12 : 0,
+      chaseProgress: conflict.kind === "street_chase" ? 22 : 0,
+      enemyFocus: 50,
+      enemyHealth: 60,
+      playerHealth: 100,
+      playerStamina: 100
+    }
+  );
+}
+
+function MeterRow({ label, value, tone = "neutral" }: { label: string; value: number; tone?: "danger" | "good" | "neutral" | "warning" }) {
+  const clamped = Math.max(0, Math.min(100, value));
+  return (
+    <div className={`encounter-meter ${tone}`}>
+      <span>{label}</span>
+      <strong>{Math.round(clamped)}</strong>
+      <i aria-hidden="true">
+        <b style={{ width: `${clamped}%` }} />
+      </i>
+    </div>
+  );
+}
+
+function findRivalOperation(state: GameState, operationId: string) {
+  for (const organization of Object.values(state.rivalOrganizations ?? {})) {
+    const operation = organization.operations.find((candidate) => candidate.id === operationId);
+    if (operation) {
+      return { operation, organization };
+    }
+  }
+  return null;
+}
+
+function rivalOperationCost(approach: "disrupt" | "expose" | "negotiate"): number {
+  return approach === "negotiate" ? 24 : approach === "expose" ? 12 : 8;
+}
+
 function ConflictActions({ conflict, onCommand, state }: { conflict: ConflictEvent; onCommand: (command: GameCommand) => void; state: GameState }) {
   const vehicle = activeVehicle(state);
   const vehicleAtStop = vehicle?.locationId === conflict.locationId;
+  const encounter = encounterFallback(conflict);
   return (
     <div className="machine-section machine-alarm">
       <div className="section-title">
@@ -127,9 +168,24 @@ function ConflictActions({ conflict, onCommand, state }: { conflict: ConflictEve
         <em>{Math.max(1, Math.ceil((conflict.expiresHour - state.worldTimeHours) * 60))}m</em>
       </div>
       <p>{conflict.message}</p>
+      <div className="encounter-grid">
+        <MeterRow label="Health" value={encounter.playerHealth} tone={encounter.playerHealth <= 30 ? "danger" : "good"} />
+        <MeterRow label="Stamina" value={encounter.playerStamina} tone={encounter.playerStamina <= 25 ? "warning" : "neutral"} />
+        <MeterRow label="Enemy" value={encounter.enemyHealth} tone="danger" />
+        <MeterRow label="Escape" value={encounter.chaseProgress} tone={encounter.chaseProgress >= 70 ? "good" : "neutral"} />
+      </div>
       <div className="action-grid">
-        <ActionButton icon={<Zap size={17} aria-hidden="true" />} onClick={() => onCommand({ type: "resolve_conflict_event", actorId: state.playerFactionId, eventId: conflict.id, resolution: "melee" })}>
-          Melee
+        <ActionButton icon={<Zap size={17} aria-hidden="true" />} onClick={() => onCommand({ type: "player_conflict_action", actorId: state.playerFactionId, eventId: conflict.id, action: "strike" })}>
+          Strike
+        </ActionButton>
+        <ActionButton icon={<Sparkles size={17} aria-hidden="true" />} onClick={() => onCommand({ type: "player_conflict_action", actorId: state.playerFactionId, eventId: conflict.id, action: "dodge" })}>
+          Dodge
+        </ActionButton>
+        <ActionButton icon={<Wrench size={17} aria-hidden="true" />} onClick={() => onCommand({ type: "player_conflict_action", actorId: state.playerFactionId, eventId: conflict.id, action: "tool" })}>
+          Tool
+        </ActionButton>
+        <ActionButton icon={<Truck size={17} aria-hidden="true" />} onClick={() => onCommand({ type: "player_conflict_action", actorId: state.playerFactionId, eventId: conflict.id, action: "push_escape" })}>
+          Push
         </ActionButton>
         <ActionButton
           disabled={!vehicleAtStop}
@@ -173,7 +229,9 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
   const targetLocationId =
     target.type === "base" || target.type === "supplier" || target.type === "placement"
       ? target.id
-      : target.type === "vehicle" || target.type === "neighborhood"
+      : target.type === "rival_operation"
+        ? findRivalOperation(state, target.id)?.operation.locationId ?? null
+      : target.type === "vehicle" || target.type === "neighborhood" || target.type === "crime_contact"
         ? null
       : state.machines[target.id]?.locationId;
   const conflictAtTarget = targetLocationId ? activeConflictEvents(state).find((conflict) => conflict.locationId === targetLocationId) : undefined;
@@ -549,6 +607,104 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
           </div>
         )}
         {unlockInfo.unmetRequirements.length > 0 && <p className="empty-note">Needs {unlockInfo.unmetRequirements.join(" · ")}.</p>}
+      </section>
+    );
+  }
+
+  if (target.type === "crime_contact") {
+    const contact = crimeContacts.find((candidate) => candidate.id === target.id);
+    const district = contact ? state.districts[contact.districtId] : undefined;
+    const unlockInfo = district ? districtUnlockInfo(state, district.id) : undefined;
+    if (!contact || !district || !unlockInfo) {
+      return null;
+    }
+
+    const product = contact.productId ? state.products[contact.productId] : undefined;
+    const handsFull = Boolean(state.player.carriedCrate) || carriedCrateUnits(state) > 0;
+    const sourceBlocked = contact.action === "source_contraband" && handsFull;
+    const costBlocked = player.money < contact.cost;
+    const accessBlocked = unlockInfo.progress.access === "locked";
+    const label = contact.action === "buy_tip" ? "Buy tip" : contact.action === "arrange_bribe" ? "Arrange bribe" : `Take ${product?.name ?? "grey stock"}`;
+
+    return (
+      <section className={panelClassName}>
+        <h2>{contact.label}</h2>
+        {primaryInteraction && <PrimaryHint interaction={primaryInteraction} />}
+        {detailsToggle}
+        <div className="machine-readout">
+          <span>{district.name}</span>
+          <span>{contact.kind.replace("_", " ")}</span>
+          <span>${contact.cost}</span>
+          <span>+{contact.heatRisk.toFixed(1)} heat risk</span>
+        </div>
+        <div className="machine-section crime-dossier">
+          <p>{contact.description}</p>
+        </div>
+        <div className="action-grid">
+          <ActionButton
+            disabled={accessBlocked || sourceBlocked || costBlocked}
+            icon={contact.action === "source_contraband" ? <PackagePlus size={17} aria-hidden="true" /> : <HandCoins size={17} aria-hidden="true" />}
+            onClick={() => onCommand({ type: "work_crime_contact", actorId: state.playerFactionId, contactId: contact.id, action: contact.action })}
+          >
+            {label} ${contact.cost}
+          </ActionButton>
+        </div>
+        {accessBlocked && <p className="empty-note">Scout {district.name} before working this contact.</p>}
+        {sourceBlocked && <p className="empty-note">Hands full. Store or load the current crate first.</p>}
+      </section>
+    );
+  }
+
+  if (target.type === "rival_operation") {
+    const found = findRivalOperation(state, target.id);
+    if (!found) {
+      return null;
+    }
+
+    const { operation, organization } = found;
+    const rival = state.factions[operation.factionId];
+    const location = state.locations[operation.locationId];
+    const approaches = [
+      { id: "negotiate" as const, label: "Negotiate", icon: <Shield size={17} aria-hidden="true" /> },
+      { id: "expose" as const, label: "Expose", icon: <Lightbulb size={17} aria-hidden="true" /> },
+      { id: "disrupt" as const, label: "Disrupt", icon: <Zap size={17} aria-hidden="true" /> }
+    ];
+
+    return (
+      <section className={panelClassName}>
+        <h2>{rival?.name ?? "Rival"} operation</h2>
+        {primaryInteraction && <PrimaryHint interaction={primaryInteraction} />}
+        {detailsToggle}
+        <div className="machine-readout">
+          <span>{location?.name ?? "Unknown stop"}</span>
+          <span>{operation.kind.replace("_", " ")}</span>
+          <span>{Math.round(operation.progress)}% progress</span>
+          <span>{operation.exposed ? "exposed" : "hidden"}</span>
+        </div>
+        <div className="machine-section operation-dossier">
+          <p>
+            {organization.bossName} · {organization.relationship} · leverage {Math.round(organization.leverage)}
+          </p>
+          <div className="operation-meter" aria-hidden="true">
+            <span style={{ width: `${Math.max(0, Math.min(100, operation.progress))}%` }} />
+          </div>
+          <strong>{organization.agenda}</strong>
+        </div>
+        <div className="action-grid">
+          {approaches.map((approach) => {
+            const cost = rivalOperationCost(approach.id);
+            return (
+              <ActionButton
+                disabled={player.money < cost || Boolean(operation.resolvedHour)}
+                icon={approach.icon}
+                key={approach.id}
+                onClick={() => onCommand({ type: "pressure_rival_operation", actorId: state.playerFactionId, operationId: operation.id, approach: approach.id })}
+              >
+                {approach.label} ${cost}
+              </ActionButton>
+            );
+          })}
+        </div>
       </section>
     );
   }

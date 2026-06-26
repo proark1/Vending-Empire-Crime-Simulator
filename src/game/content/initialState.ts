@@ -1,4 +1,4 @@
-import type { DistrictProgress, Faction, GameState, RouteVehicle, VendingMachine } from "../core/types";
+import type { DistrictProgress, Faction, GameState, RivalOrganizationState, RouteVehicle, VendingMachine } from "../core/types";
 import { createInitialBaseFacilities } from "./baseFacilities";
 import { products } from "./products";
 import { districts, locations } from "./world";
@@ -61,6 +61,141 @@ const factions: Record<string, Faction> = {
     publicReputation: 4,
     streetReputation: 7,
     color: "#f97316"
+  }
+};
+
+const rivalOrganizations: Record<string, RivalOrganizationState> = {
+  rival_redline: {
+    factionId: "rival_redline",
+    bossName: "Nico Varela",
+    agenda: "Own the starter sidewalks through cheap stock, tags, and route pressure.",
+    headquartersLocationId: "rival_corner",
+    relationship: "hostile",
+    storyStage: 0,
+    leverage: 18,
+    operations: [
+      {
+        id: "op_redline_foam_price",
+        factionId: "rival_redline",
+        kind: "price_war",
+        districtId: "starter_suburb",
+        locationId: "laundromat",
+        startedHour: 8,
+        progress: 28,
+        strength: 0.58,
+        exposed: false
+      },
+      {
+        id: "op_redline_corner_sabotage",
+        factionId: "rival_redline",
+        kind: "sabotage_cell",
+        districtId: "starter_suburb",
+        locationId: "rival_corner",
+        startedHour: 8,
+        progress: 16,
+        strength: 0.64,
+        exposed: false
+      }
+    ]
+  },
+  rival_glassline: {
+    factionId: "rival_glassline",
+    bossName: "Maris Vale",
+    agenda: "Win permits, lock down commuter contracts, and turn inspectors into a weapon.",
+    headquartersLocationId: "civic_plaza",
+    relationship: "tense",
+    storyStage: 0,
+    leverage: 32,
+    operations: [
+      {
+        id: "op_glassline_civic_permits",
+        factionId: "rival_glassline",
+        kind: "permit_pressure",
+        districtId: "downtown_loop",
+        locationId: "civic_plaza",
+        startedHour: 8,
+        progress: 24,
+        strength: 0.72,
+        exposed: false
+      },
+      {
+        id: "op_glassline_metro_expansion",
+        factionId: "rival_glassline",
+        kind: "expansion",
+        districtId: "downtown_loop",
+        locationId: "metro_concourse",
+        startedHour: 8,
+        progress: 12,
+        strength: 0.52,
+        exposed: false
+      }
+    ]
+  },
+  rival_nightmarket: {
+    factionId: "rival_nightmarket",
+    bossName: "Juno Kade",
+    agenda: "Control after-hours demand with grey stock and supplier rumors.",
+    headquartersLocationId: "night_bazaar",
+    relationship: "tense",
+    storyStage: 0,
+    leverage: 26,
+    operations: [
+      {
+        id: "op_nightmarket_bazaar_grey",
+        factionId: "rival_nightmarket",
+        kind: "grey_supply",
+        districtId: "neon_quarter",
+        locationId: "night_bazaar",
+        startedHour: 8,
+        progress: 22,
+        strength: 0.76,
+        exposed: false
+      },
+      {
+        id: "op_nightmarket_cinema_price",
+        factionId: "rival_nightmarket",
+        kind: "price_war",
+        districtId: "neon_quarter",
+        locationId: "cinema_row",
+        startedHour: 8,
+        progress: 18,
+        strength: 0.62,
+        exposed: false
+      }
+    ]
+  },
+  rival_marlow: {
+    factionId: "rival_marlow",
+    bossName: "Elias Marlow",
+    agenda: "Exploit old route knowledge, isolate profitable stops, and force a buyout.",
+    headquartersLocationId: "motel_cut",
+    relationship: "hostile",
+    storyStage: 0,
+    leverage: 34,
+    operations: [
+      {
+        id: "op_marlow_motel_sabotage",
+        factionId: "rival_marlow",
+        kind: "sabotage_cell",
+        districtId: "old_town",
+        locationId: "motel_cut",
+        startedHour: 8,
+        progress: 20,
+        strength: 0.7,
+        exposed: false
+      },
+      {
+        id: "op_marlow_courthouse_permits",
+        factionId: "rival_marlow",
+        kind: "permit_pressure",
+        districtId: "old_town",
+        locationId: "courthouse_steps",
+        startedHour: 8,
+        progress: 14,
+        strength: 0.56,
+        exposed: false
+      }
+    ]
   }
 };
 
@@ -263,6 +398,7 @@ export function createInitialState(): GameState {
       resolvedToday: 0,
       missedToday: 0
     },
+    rivalOrganizations: cloneContent(rivalOrganizations),
     eventLog: [
       {
         id: "intro_1",

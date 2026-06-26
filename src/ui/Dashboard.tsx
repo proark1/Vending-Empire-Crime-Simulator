@@ -1,6 +1,6 @@
 import { AlertTriangle, BarChart3, Boxes, Building2, ClipboardList, Factory, FlaskConical, HandCoins, Landmark, Lock, Map, Navigation, Package, PackagePlus, Route, Search, ShieldAlert, SlidersHorizontal, Trophy, Truck, Unlock, UserPlus, Users, Wrench } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import type { GameCommand, GameState } from "../game/core/types";
+import type { ConflictEvent, GameCommand, GameState, RivalOperationApproach } from "../game/core/types";
 import { employeeRoleList, employeeRoles } from "../game/content/employees";
 import { getMachineUpgradeEffects } from "../game/core/machineStats";
 import {
@@ -123,6 +123,27 @@ function roleIcon(role: string): React.ReactNode {
   return <PackagePlus size={16} aria-hidden="true" />;
 }
 
+function encounterFallback(conflict: ConflictEvent) {
+  return (
+    conflict.encounter ?? {
+      advantage: conflict.kind === "base_raid" ? 12 : 0,
+      chaseProgress: conflict.kind === "street_chase" ? 22 : 0,
+      enemyFocus: 50,
+      enemyHealth: 60,
+      playerHealth: 100,
+      playerStamina: 100
+    }
+  );
+}
+
+function rivalOperationCost(approach: RivalOperationApproach): number {
+  return approach === "negotiate" ? 24 : approach === "expose" ? 12 : 8;
+}
+
+function rivalOperationLabel(kind: string): string {
+  return kind.replace("_", " ");
+}
+
 export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQualityChange, showDebug }: DashboardProps) {
   const [tab, setTab] = useState<DashboardTab>("machines");
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -168,6 +189,7 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
   const contracts = useMemo(() => activeContracts(state), [state]);
   const inspections = useMemo(() => activeLawInspections(state), [state]);
   const conflicts = useMemo(() => activeConflictEvents(state), [state]);
+  const rivalOrganizations = useMemo(() => Object.values(state.rivalOrganizations ?? {}), [state.rivalOrganizations]);
   const finance = financeSummary(state);
   const ledger = financeLedger(state).slice(0, 16);
   const territory = rivalTerritoryByDistrict(state);
@@ -871,6 +893,7 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
             conflicts.map((conflict) => {
               const location = state.locations[conflict.locationId];
               const threat = state.factions[conflict.threatFactionId];
+              const encounter = encounterFallback(conflict);
               const vehicleAtStop = vehicle?.locationId === conflict.locationId;
               return (
                 <article className="route-task danger" key={conflict.id}>
@@ -882,10 +905,25 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
                       {location?.name ?? "Unknown stop"} · {threat?.name ?? "Rival crew"} · due {formatClock(conflict.expiresHour)}
                     </p>
                     <p>{conflict.message}</p>
+                    <div className="route-actions">
+                      <strong>HP {Math.round(encounter.playerHealth)}</strong>
+                      <strong>Stam {Math.round(encounter.playerStamina)}</strong>
+                      <strong>Enemy {Math.round(encounter.enemyHealth)}</strong>
+                      <strong>Escape {Math.round(encounter.chaseProgress)}%</strong>
+                    </div>
                   </div>
                   <div className="route-actions">
-                    <MiniButton onClick={() => onCommand({ type: "resolve_conflict_event", actorId: state.playerFactionId, eventId: conflict.id, resolution: "melee" })}>
-                      Melee
+                    <MiniButton onClick={() => onCommand({ type: "player_conflict_action", actorId: state.playerFactionId, eventId: conflict.id, action: "strike" })}>
+                      Strike
+                    </MiniButton>
+                    <MiniButton onClick={() => onCommand({ type: "player_conflict_action", actorId: state.playerFactionId, eventId: conflict.id, action: "dodge" })}>
+                      Dodge
+                    </MiniButton>
+                    <MiniButton onClick={() => onCommand({ type: "player_conflict_action", actorId: state.playerFactionId, eventId: conflict.id, action: "tool" })}>
+                      Tool
+                    </MiniButton>
+                    <MiniButton onClick={() => onCommand({ type: "player_conflict_action", actorId: state.playerFactionId, eventId: conflict.id, action: "push_escape" })}>
+                      Push
                     </MiniButton>
                     <MiniButton
                       disabled={!vehicleAtStop}
@@ -922,6 +960,64 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
                   </p>
                 </div>
                 <strong>{controller?.archetype?.replace("_", " ") ?? "territory"}</strong>
+              </article>
+            );
+          })}
+          {rivalOrganizations.map((organization) => {
+            const rival = state.factions[organization.factionId];
+            const activeOperations = organization.operations.filter((operation) => !operation.resolvedHour);
+            return (
+              <article className="rival-panel" key={organization.factionId}>
+                <div className="rival-header">
+                  <Users size={20} aria-hidden="true" />
+                  <div>
+                    <h3>{organization.bossName}</h3>
+                    <p>
+                      {rival?.name ?? organization.factionId} · {organization.relationship} · leverage {Math.round(organization.leverage)}
+                    </p>
+                  </div>
+                </div>
+                <p>{organization.agenda}</p>
+                <div className="storage-list">
+                  {activeOperations.length === 0 ? (
+                    <article className="inventory-row">
+                      <div>
+                        <h3>No active operations</h3>
+                        <p>{rival?.name ?? "This rival"} has no visible strategic cells right now.</p>
+                      </div>
+                    </article>
+                  ) : (
+                    activeOperations.map((operation) => {
+                      const location = state.locations[operation.locationId];
+                      const approaches: RivalOperationApproach[] = ["negotiate", "expose", "disrupt"];
+                      return (
+                        <article className={`route-task ${operation.exposed ? "warning" : "danger"}`} key={operation.id}>
+                          <div>
+                            <h3>{rivalOperationLabel(operation.kind)}</h3>
+                            <p>
+                              {location?.name ?? operation.locationId} · {Math.round(operation.progress)}% progress · strength {Math.round(operation.strength * 100)}%
+                            </p>
+                            <p>{operation.exposed ? "Exposed cell" : "Hidden cell"} · started {formatClock(operation.startedHour)}</p>
+                          </div>
+                          <div className="route-actions">
+                            {approaches.map((approach) => {
+                              const cost = rivalOperationCost(approach);
+                              return (
+                                <MiniButton
+                                  disabled={state.factions[state.playerFactionId].money < cost}
+                                  key={approach}
+                                  onClick={() => onCommand({ type: "pressure_rival_operation", actorId: state.playerFactionId, operationId: operation.id, approach })}
+                                >
+                                  {approach} ${cost}
+                                </MiniButton>
+                              );
+                            })}
+                          </div>
+                        </article>
+                      );
+                    })
+                  )}
+                </div>
               </article>
             );
           })}

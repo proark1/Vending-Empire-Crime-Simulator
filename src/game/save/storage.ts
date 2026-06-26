@@ -82,6 +82,35 @@ export function migrateGameState(parsed: GameState): GameState {
       }
     ])
   );
+  const rivalOrganizations = Object.fromEntries(
+    Object.entries({
+      ...baseline.rivalOrganizations,
+      ...(parsed.rivalOrganizations ?? {})
+    }).map(([factionId, organization]) => {
+      const baselineOrganization = baseline.rivalOrganizations[factionId];
+      const parsedOperations = Array.isArray(organization.operations) ? organization.operations : baselineOrganization?.operations ?? [];
+      return [
+        factionId,
+        {
+          ...baselineOrganization,
+          ...organization,
+          factionId,
+          operations: parsedOperations.map((operation, index) => {
+            const fallback = baselineOrganization?.operations[index];
+            return {
+              ...fallback,
+              ...operation,
+              factionId: operation.factionId ?? factionId,
+              exposed: operation.exposed ?? false,
+              progress: operation.progress ?? fallback?.progress ?? 0,
+              strength: operation.strength ?? fallback?.strength ?? 0.5,
+              startedHour: operation.startedHour ?? fallback?.startedHour ?? baseline.worldTimeHours
+            };
+          })
+        }
+      ];
+    })
+  ) as GameState["rivalOrganizations"];
 
   const migrated: GameState = {
     ...baseline,
@@ -230,8 +259,26 @@ export function migrateGameState(parsed: GameState): GameState {
     conflict: {
       ...baseline.conflict,
       ...(parsed.conflict ?? {}),
-      activeEvents: parsed.conflict?.activeEvents ?? baseline.conflict.activeEvents
+      activeEvents: Object.fromEntries(
+        Object.entries(parsed.conflict?.activeEvents ?? baseline.conflict.activeEvents).map(([eventId, event]) => [
+          eventId,
+          {
+            ...event,
+            encounter: event.encounter
+              ? {
+                  advantage: event.encounter.advantage ?? 0,
+                  chaseProgress: event.encounter.chaseProgress ?? 0,
+                  enemyFocus: event.encounter.enemyFocus ?? 50,
+                  enemyHealth: event.encounter.enemyHealth ?? 50,
+                  playerHealth: event.encounter.playerHealth ?? 100,
+                  playerStamina: event.encounter.playerStamina ?? 100
+                }
+              : event.encounter
+          }
+        ])
+      )
     },
+    rivalOrganizations,
     dayReports: (parsed.dayReports ?? baseline.dayReports).map((report) => ({
       ...report,
       operatingRevenue: report.operatingRevenue ?? 0,

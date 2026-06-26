@@ -613,6 +613,83 @@ describe("game reducer", () => {
     expect(resolved.conflict.resolvedToday).toBe(1);
   });
 
+  it("plays active conflicts through encounter actions", () => {
+    const result = reduceCommands(createInitialState(), [
+      visit("rival_corner"),
+      { type: "sabotage_machine", actorId: "player", machineId: "machine_rival_1" }
+    ]);
+    const conflict = Object.values(result.state.conflict.activeEvents)[0]!;
+    const before = conflict.encounter!;
+
+    const afterStrike = reduceGameState(result.state, {
+      type: "player_conflict_action",
+      actorId: "player",
+      eventId: conflict.id,
+      action: "strike"
+    }).state.conflict.activeEvents[conflict.id].encounter!;
+
+    expect(afterStrike.enemyHealth).toBeLessThan(before.enemyHealth);
+    expect(afterStrike.playerStamina).toBeLessThan(before.playerStamina);
+  });
+
+  it("lets crime contacts source grey-stock crates with heat risk", () => {
+    const initial = createInitialState();
+    initial.factions.player.money = 250;
+    initial.districtProgress.neon_quarter = {
+      access: "unlocked",
+      districtId: "neon_quarter",
+      scoutedHour: initial.worldTimeHours,
+      unlockedHour: initial.worldTimeHours
+    };
+
+    const result = reduceGameState(initial, {
+      type: "work_crime_contact",
+      actorId: "player",
+      contactId: "neon_grey_supplier",
+      action: "source_contraband"
+    });
+
+    expect(result.state.player.carriedCrate).toMatchObject({ productId: "glitch_gum", source: "supplier" });
+    expect(result.state.factions.player.heat).toBeGreaterThan(initial.factions.player.heat);
+    expect(result.state.factions.player.money).toBeLessThan(initial.factions.player.money);
+  });
+
+  it("lets tips expose rival operations", () => {
+    const initial = createInitialState();
+    const operation = initial.rivalOrganizations.rival_redline.operations[0]!;
+    const beforeProgress = operation.progress;
+
+    const result = reduceGameState(initial, {
+      type: "work_crime_contact",
+      actorId: "player",
+      contactId: "laundry_lookout",
+      action: "buy_tip"
+    }).state;
+    const updated = result.rivalOrganizations.rival_redline.operations.find((candidate) => candidate.id === operation.id)!;
+
+    expect(updated.exposed).toBe(true);
+    expect(updated.progress).toBeLessThan(beforeProgress);
+  });
+
+  it("lets the player pressure rival operations", () => {
+    const initial = createInitialState();
+    initial.factions.player.money = 300;
+    const operation = initial.rivalOrganizations.rival_redline.operations[1]!;
+    const beforeStrength = operation.strength;
+    const beforeHeat = initial.factions.player.heat;
+
+    const result = reduceGameState(initial, {
+      type: "pressure_rival_operation",
+      actorId: "player",
+      operationId: operation.id,
+      approach: "disrupt"
+    }).state;
+    const updated = result.rivalOrganizations.rival_redline.operations.find((candidate) => candidate.id === operation.id)!;
+
+    expect(updated.strength).toBeLessThan(beforeStrength);
+    expect(result.factions.player.heat).toBeGreaterThan(beforeHeat);
+  });
+
   it("lets guards intercept assigned machine alarms", () => {
     const initial = withInstalledStarter();
     initial.factions.player.money = 300;

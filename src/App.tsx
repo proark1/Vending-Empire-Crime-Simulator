@@ -19,7 +19,7 @@ import { ToastStack, type ToastMessage } from "./ui/ToastStack";
 import type { GameCommand, GameState, LocationId, ProductId, Vec2, VehicleId } from "./game/core/types";
 import { createDefaultAudioConfig, normalizeAudioConfig, type AudioConfig } from "./game/content/audioConfig";
 import { clearModelConfig, loadModelConfig, MODEL_CONFIG_KEY, MODEL_CONFIG_UPDATED_EVENT, saveModelConfig, type ModelConfig } from "./game/content/modelConfig";
-import { worldBounds, type WorldMapLayout } from "./game/content/world";
+import { crimeContacts, worldBounds, type WorldMapLayout } from "./game/content/world";
 import { endgamePaths, storyMissionArcs } from "./game/content/story";
 import { products } from "./game/content/products";
 import { clearWorldMapLayout, loadWorldMapLayout, saveWorldMapLayout } from "./game/world/mapLayoutStorage";
@@ -40,6 +40,15 @@ function targetLocationId(target: SceneTarget | null, state: GameState): Locatio
 
   if (target.type === "base" || target.type === "supplier" || target.type === "placement") {
     return target.id;
+  }
+
+  if (target.type === "rival_operation") {
+    for (const organization of Object.values(state.rivalOrganizations ?? {})) {
+      const operation = organization.operations.find((candidate) => candidate.id === target.id && !candidate.resolvedHour);
+      if (operation) {
+        return operation.locationId;
+      }
+    }
   }
 
   return null;
@@ -99,6 +108,41 @@ function createSceneFeedback(command: GameCommand, target: SceneTarget | null, s
         machineId: conflict.targetMachineId,
         tone: command.resolution === "melee" ? "danger" : "good"
       };
+    }
+    case "player_conflict_action": {
+      const conflict = state.conflict.activeEvents[command.eventId];
+      if (!conflict) {
+        return null;
+      }
+
+      return {
+        kind: command.action === "push_escape" ? "escape" : "melee",
+        locationId: conflict.locationId,
+        machineId: conflict.targetMachineId,
+        tone: command.action === "dodge" ? "neutral" : command.action === "tool" ? "good" : "danger"
+      };
+    }
+    case "work_crime_contact": {
+      const contact = crimeContacts.find((candidate) => candidate.id === command.contactId);
+      const locationId = contact ? Object.values(state.locations).find((location) => location.districtId === contact.districtId)?.id : undefined;
+      return {
+        kind: command.action === "source_contraband" ? "pickup" : command.action === "arrange_bribe" ? "lockdown" : "scout",
+        locationId,
+        productId: contact?.productId,
+        tone: command.action === "source_contraband" ? "danger" : "good"
+      };
+    }
+    case "pressure_rival_operation": {
+      const operation = Object.values(state.rivalOrganizations ?? {})
+        .flatMap((organization) => organization.operations)
+        .find((candidate) => candidate.id === command.operationId);
+      return operation
+        ? {
+            kind: command.approach === "disrupt" ? "sabotage" : command.approach === "negotiate" ? "district" : "scout",
+            locationId: operation.locationId,
+            tone: command.approach === "disrupt" ? "danger" : "good"
+          }
+        : null;
     }
     case "scout_district": {
       const locationId = targetLocationId(target, state) ?? Object.values(state.locations).find((location) => location.districtId === command.districtId)?.id ?? undefined;

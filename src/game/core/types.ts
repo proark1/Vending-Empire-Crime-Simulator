@@ -462,6 +462,16 @@ export interface LawState {
 export type ConflictEventKind = "route_ambush" | "base_raid" | "street_chase";
 export type ConflictEventStatus = "active" | "resolved" | "missed";
 export type ConflictResolution = "melee" | "drive_escape" | "remote_lockdown";
+export type PlayerConflictAction = "strike" | "dodge" | "tool" | "push_escape";
+
+export interface ConflictEncounterState {
+  advantage: number;
+  chaseProgress: number;
+  enemyFocus: number;
+  enemyHealth: number;
+  playerHealth: number;
+  playerStamina: number;
+}
 
 export interface ConflictEvent {
   id: string;
@@ -473,6 +483,7 @@ export interface ConflictEvent {
   intensity: number;
   status: ConflictEventStatus;
   message: string;
+  encounter?: ConflictEncounterState;
   targetMachineId?: MachineId;
   resolvedHour?: number;
   resolution?: ConflictResolution;
@@ -484,6 +495,36 @@ export interface ConflictState {
   activeEvents: Record<string, ConflictEvent>;
   resolvedToday: number;
   missedToday: number;
+}
+
+export type CrimeContactAction = "buy_tip" | "arrange_bribe" | "source_contraband";
+export type RivalOperationKind = "price_war" | "permit_pressure" | "sabotage_cell" | "grey_supply" | "expansion";
+export type RivalRelationship = "hostile" | "tense" | "truce" | "pressured";
+export type RivalOperationApproach = "negotiate" | "expose" | "disrupt";
+
+export interface RivalOperation {
+  districtId: DistrictId;
+  exposed: boolean;
+  factionId: FactionId;
+  id: string;
+  kind: RivalOperationKind;
+  locationId: LocationId;
+  progress: number;
+  resolvedHour?: number;
+  startedHour: number;
+  strength: number;
+}
+
+export interface RivalOrganizationState {
+  agenda: string;
+  bossName: string;
+  factionId: FactionId;
+  headquartersLocationId: LocationId;
+  leverage: number;
+  operations: RivalOperation[];
+  relationship: RivalRelationship;
+  storyStage: number;
+  truceUntilHour?: number;
 }
 
 export interface PlacementQuote {
@@ -584,6 +625,7 @@ export interface GameState {
   machineAlarms: Record<string, MachineAlarm>;
   law: LawState;
   conflict: ConflictState;
+  rivalOrganizations: Record<FactionId, RivalOrganizationState>;
   eventLog: GameEvent[];
   streetLife: StreetLifeState;
   mission: MissionState;
@@ -621,7 +663,10 @@ export type GameCommand =
   | { type: "sabotage_machine"; actorId: FactionId; machineId: MachineId }
   | { type: "confront_alarm"; actorId: FactionId; alarmId: string }
   | { type: "resolve_conflict_event"; actorId: FactionId; eventId: string; resolution: ConflictResolution }
+  | { type: "player_conflict_action"; actorId: FactionId; eventId: string; action: PlayerConflictAction }
   | { type: "resolve_inspection"; actorId: FactionId; inspectionId: string; resolution: LawInspectionResolution }
+  | { type: "work_crime_contact"; actorId: FactionId; contactId: string; action: CrimeContactAction }
+  | { type: "pressure_rival_operation"; actorId: FactionId; operationId: string; approach: RivalOperationApproach }
   | { type: "debug_grant_cash"; actorId: FactionId; amount: number }
   | { type: "debug_complete_requirements"; actorId: FactionId }
   | { type: "debug_set_district_access"; actorId: FactionId; districtId: DistrictId; access: DistrictAccess }

@@ -1,6 +1,8 @@
 import type {
   BaseFacilityId,
   CommandResult,
+  ConflictEncounterState,
+  ConflictEvent,
   Employee,
   EmployeeRole,
   Faction,
@@ -19,6 +21,8 @@ import type {
   PlacementMethod,
   ProductCustomizationMode,
   ProductId,
+  RivalOperation,
+  RivalOperationApproach,
   ServiceContract,
   StreetActivity,
   StreetActivityKind,
@@ -63,6 +67,7 @@ import { machineUpgrades } from "../content/machineUpgrades";
 import { machineModels } from "../content/machineModels";
 import { baseFacilities } from "../content/baseFacilities";
 import { employeeRoles } from "../content/employees";
+import { crimeContacts } from "../content/world";
 import { machineHasUpgrade, sabotageDamage } from "../core/machineStats";
 import { runMachineSales } from "./economy";
 
@@ -127,6 +132,51 @@ function ensureConflictState(state: GameState): void {
   state.conflict.activeEvents ??= {};
   state.conflict.resolvedToday ??= 0;
   state.conflict.missedToday ??= 0;
+  for (const event of Object.values(state.conflict.activeEvents)) {
+    if (event.status === "active") {
+      event.encounter ??= createConflictEncounter(event.kind, event.intensity);
+    }
+  }
+}
+
+function createConflictEncounter(kind: ConflictEvent["kind"], intensity: number): ConflictEncounterState {
+  return {
+    advantage: kind === "base_raid" ? 12 : kind === "route_ambush" ? 4 : 0,
+    chaseProgress: kind === "street_chase" ? 22 : kind === "route_ambush" ? 12 : 0,
+    enemyFocus: Math.min(100, 42 + intensity * 0.9),
+    enemyHealth: Math.min(100, 44 + intensity * 1.6),
+    playerHealth: 100,
+    playerStamina: 100
+  };
+}
+
+function ensureConflictEncounter(event: ConflictEvent): ConflictEncounterState {
+  event.encounter ??= createConflictEncounter(event.kind, event.intensity);
+  return event.encounter;
+}
+
+function ensureRivalOrganizationState(state: GameState): void {
+  state.rivalOrganizations ??= {};
+  for (const faction of Object.values(state.factions)) {
+    if (faction.type !== "npc") {
+      continue;
+    }
+
+    state.rivalOrganizations[faction.id] ??= {
+      factionId: faction.id,
+      bossName: `${faction.name} boss`,
+      agenda: faction.tactic ?? "Competes for vending territory.",
+      headquartersLocationId: ownedMachines(state, faction.id)[0]?.locationId ?? "rival_corner",
+      relationship: "tense",
+      storyStage: 0,
+      leverage: Math.round(faction.streetReputation + faction.money * 0.04),
+      operations: []
+    };
+    state.rivalOrganizations[faction.id].operations ??= [];
+    state.rivalOrganizations[faction.id].relationship ??= "tense";
+    state.rivalOrganizations[faction.id].leverage ??= 0;
+    state.rivalOrganizations[faction.id].storyStage ??= 0;
+  }
 }
 
 function ensureBaseState(state: GameState): void {
@@ -752,6 +802,7 @@ function createConflictEvent(
     intensity,
     status: "active" as const,
     message,
+    encounter: createConflictEncounter(kind, intensity),
     targetMachineId
   };
   state.conflict.activeEvents[event.id] = event;
@@ -984,6 +1035,156 @@ function maybeTriggerRouteAmbush(state: GameState, events: GameEvent[], vehicleI
     Math.ceil(9 + risk * 5),
     `ROUTE AMBUSH: trouble is waiting near ${location.name}. Drive out or fight through it.`
   );
+}
+
+function finishPlayerConflict(
+  state: GameState,
+  events: GameEvent[],
+  conflict: ConflictEvent,
+  resolution: "melee" | "drive_escape" | "remote_lockdown",
+  message: string,
+  tone: GameEventTone = "good"
+): void {
+  const player = state.factions[state.playerFactionId];
+  const threat = state.factions[conflict.threatFactionId];
+  const location = state.locations[conflict.locationId];
+  conflict.status = "resolved";
+  conflict.resolution = resolution;
+  conflict.resolvedHour = state.worldTimeHours;
+  state.conflict.resolvedToday += 1;
+
+  if (resolution === "melee") {
+    player.streetReputation += 1.3;
+    player.heat += 1.1;
+    if (threat) {
+      threat.heat += 1.5;
+      threat.streetReputation = Math.max(0, threat.streetReputation - 0.25);
+    }
+    if (location) {
+      location.rivalPressure = Math.max(0, location.rivalPressure - 0.12);
+    }
+  }
+
+  if (resolution === "drive_escape") {
+    player.streetReputation += 0.4;
+    player.heat += 0.75;
+    if (location) {
+      location.rivalPressure = Math.max(0, location.rivalPressure - 0.08);
+    }
+  }
+
+  if (resolution === "remote_lockdown" && location) {
+    location.rivalPressure = Math.max(0, location.rivalPressure - 0.04);
+  }
+
+  log(state, events, message, tone);
+}
+
+function activeRivalOperations(state: GameState): RivalOperation[] {
+  ensureRivalOrganizationState(state);
+  return Object.values(state.rivalOrganizations).flatMap((organization) => organization.operations.filter((operation) => !operation.resolvedHour));
+}
+
+function findRivalOperation(state: GameState, operationId: string): { operation: RivalOperation; organization: GameState["rivalOrganizations"][FactionId] } | null {
+  ensureRivalOrganizationState(state);
+  for (const organization of Object.values(state.rivalOrganizations)) {
+    const operation = organization.operations.find((candidate) => candidate.id === operationId);
+    if (operation) {
+      return { operation, organization };
+    }
+  }
+  return null;
+}
+
+function operationKindLabel(kind: RivalOperation["kind"]): string {
+  return kind.replace("_", " ");
+}
+
+function rivalOperationApproachCost(approach: RivalOperationApproach): number {
+  return approach === "negotiate" ? 24 : approach === "expose" ? 12 : 8;
+}
+
+function applyRivalOperationConsequence(state: GameState, events: GameEvent[], operation: RivalOperation): void {
+  const rival = state.factions[operation.factionId];
+  const location = state.locations[operation.locationId];
+  const district = state.districts[operation.districtId];
+  const player = state.factions[state.playerFactionId];
+  const rivalName = rival?.name ?? "A rival";
+
+  if (operation.kind === "price_war") {
+    if (location) {
+      location.rivalPressure = clamp01(location.rivalPressure + 0.08 + operation.strength * 0.1);
+    }
+    if (rival) {
+      rival.money = Math.max(0, rival.money - Math.round(7 + operation.strength * 8));
+    }
+    log(state, events, `${rivalName} price-war operation tightened pressure near ${location?.name ?? district?.name ?? "the route"}.`, "warning");
+  }
+
+  if (operation.kind === "permit_pressure") {
+    player.heat += 0.8 + operation.strength * 1.3;
+    state.law.nextInspectionHour = Math.min(state.law.nextInspectionHour, state.worldTimeHours + Math.max(0.35, 1.1 - operation.strength * 0.45));
+    log(state, events, `${rivalName} leaned on permit offices. Inspection heat is moving faster.`, "danger");
+  }
+
+  if (operation.kind === "sabotage_cell") {
+    const districtMachine = installedMachines(state, state.playerFactionId)
+      .filter((machine) => state.locations[machine.locationId]?.districtId === operation.districtId)
+      .sort((a, b) => (state.locations[b.locationId]?.rivalPressure ?? 0) - (state.locations[a.locationId]?.rivalPressure ?? 0))[0];
+    if (districtMachine) {
+      createMachineAlarm(state, events, districtMachine, operation.factionId, "sabotage", Math.round(18 + operation.strength * 18));
+    } else if (location) {
+      createConflictEvent(state, events, "street_chase", location.id, operation.factionId, Math.round(12 + operation.strength * 16), `${rivalName} sabotage cell spilled into a chase near ${location.name}.`);
+    }
+  }
+
+  if (operation.kind === "grey_supply") {
+    if (rival) {
+      rival.money += Math.round(12 + operation.strength * 18);
+      rival.heat += 0.8;
+    }
+    if (location) {
+      location.rivalPressure = clamp01(location.rivalPressure + 0.06 + operation.strength * 0.08);
+    }
+    log(state, events, `${rivalName} moved grey stock through ${location?.name ?? district?.name ?? "the district"}.`, "warning");
+  }
+
+  if (operation.kind === "expansion") {
+    if (location && !machineAtLocation(state, location.id) && isDistrictUnlockedForPlacement(state, location.districtId) && rival && rival.money >= 20) {
+      createMachine(state, operation.factionId, location.id, "rival_territory");
+      rival.money = Math.max(0, rival.money - 20);
+      location.rivalPressure = clamp01(location.rivalPressure + 0.12);
+      log(state, events, `${rivalName} completed an expansion cell at ${location.name}.`, "danger");
+    } else if (location) {
+      location.rivalPressure = clamp01(location.rivalPressure + 0.1);
+      log(state, events, `${rivalName} expansion scouts raised pressure near ${location.name}.`, "warning");
+    }
+  }
+
+  operation.progress = 34;
+  operation.strength = clamp01(operation.strength + 0.04);
+}
+
+function advanceRivalOperations(state: GameState, events: GameEvent[], hours: number): void {
+  ensureRivalOrganizationState(state);
+  for (const organization of Object.values(state.rivalOrganizations)) {
+    const truceActive = Boolean(organization.truceUntilHour && organization.truceUntilHour > state.worldTimeHours);
+    for (const operation of organization.operations) {
+      if (operation.resolvedHour) {
+        continue;
+      }
+
+      const access = districtProgress(state, operation.districtId).access;
+      const accessMultiplier = access === "unlocked" ? 1 : access === "scouted" ? 0.64 : 0.35;
+      const exposureDrag = operation.exposed ? 0.7 : 1;
+      const truceDrag = truceActive ? 0.38 : 1;
+      operation.progress = Math.min(130, operation.progress + hours * (3.8 + operation.strength * 5.4) * accessMultiplier * exposureDrag * truceDrag);
+      if (operation.progress >= 100) {
+        applyRivalOperationConsequence(state, events, operation);
+        organization.leverage = Math.min(100, organization.leverage + 2);
+      }
+    }
+  }
 }
 
 function shiftSupplierMarket(state: GameState, events: GameEvent[]): void {
@@ -2211,6 +2412,7 @@ function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number):
   const previousHour = state.worldTimeHours;
   ensureStreetLifeState(state);
   ensureConflictState(state);
+  ensureRivalOrganizationState(state);
   ensureBaseState(state);
   ensureEconomyState(state);
   state.worldTimeHours += hours;
@@ -2248,6 +2450,7 @@ function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number):
 
   maybeTriggerStarterUndercut(state, events, playerEarned);
   applyLawInspections(state, events);
+  advanceRivalOperations(state, events, hours);
   maybeSpawnAmbientConflict(state, events);
 
   applyEmployeeAutomation(state, events);
@@ -2277,6 +2480,7 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
   ensureLawState(state);
   ensureStreetLifeState(state);
   ensureConflictState(state);
+  ensureRivalOrganizationState(state);
   ensureBaseState(state);
   ensureEconomyState(state);
   const actor = getFactionOrThrow(state, command.actorId);
@@ -3241,6 +3445,97 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       break;
     }
 
+    case "player_conflict_action": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      const conflict = state.conflict.activeEvents[command.eventId];
+      if (!conflict || conflict.status !== "active") {
+        break;
+      }
+
+      if (conflict.expiresHour <= state.worldTimeHours) {
+        missConflictEvent(state, events, conflict.id);
+        break;
+      }
+
+      if (!requirePlayerAtLocation(state, events, conflict.locationId, "handle the conflict")) {
+        break;
+      }
+
+      const encounter = ensureConflictEncounter(conflict);
+      const threat = state.factions[conflict.threatFactionId];
+      const location = state.locations[conflict.locationId];
+      const securityBonus = baseSecurityScore(state);
+      let actionText = "";
+
+      if (command.action === "strike") {
+        const tired = encounter.playerStamina < 10;
+        const damage = tired ? 7 : 16 + encounter.advantage * 0.18;
+        encounter.enemyHealth = Math.max(0, encounter.enemyHealth - damage);
+        encounter.playerStamina = Math.max(0, encounter.playerStamina - (tired ? 7 : 14));
+        encounter.advantage = Math.min(45, encounter.advantage + (tired ? 2 : 5));
+        encounter.enemyFocus = Math.max(0, encounter.enemyFocus - 3);
+        actionText = tired ? "You swung tired and barely shifted the crew." : "You pushed the crew back with a clean hit.";
+      }
+
+      if (command.action === "dodge") {
+        encounter.playerStamina = Math.min(100, encounter.playerStamina + 22);
+        encounter.enemyFocus = Math.max(0, encounter.enemyFocus - 14);
+        encounter.advantage = Math.min(45, encounter.advantage + 8);
+        encounter.chaseProgress = Math.min(100, encounter.chaseProgress + (conflict.kind === "street_chase" ? 8 : 3));
+        actionText = "You slipped the pressure and recovered stamina.";
+      }
+
+      if (command.action === "tool") {
+        const toolImpact = 8 + securityBonus * 8;
+        encounter.enemyHealth = Math.max(0, encounter.enemyHealth - toolImpact);
+        encounter.enemyFocus = Math.max(0, encounter.enemyFocus - (18 + securityBonus * 14));
+        encounter.playerStamina = Math.max(0, encounter.playerStamina - 8);
+        encounter.advantage = Math.min(45, encounter.advantage + 6 + securityBonus * 6);
+        actionText = securityBonus > 0.25 ? "Security tools and route gear broke their rhythm." : "A quick tool play bought breathing room.";
+      }
+
+      if (command.action === "push_escape") {
+        const vehicle = Object.values(state.vehicles).find((candidate) => candidate.locationId === conflict.locationId);
+        const burst = 16 + encounter.advantage * 0.35 + encounter.playerStamina * 0.1 + (vehicle ? vehicle.escapeRating * 12 : 0);
+        encounter.chaseProgress = Math.min(100, encounter.chaseProgress + burst);
+        encounter.playerStamina = Math.max(0, encounter.playerStamina - 12);
+        encounter.enemyFocus = Math.max(0, encounter.enemyFocus - 6);
+        encounter.advantage = Math.min(45, encounter.advantage + 3);
+        actionText = vehicle ? `You used ${vehicle.name} and the sidewalk gap to widen the escape.` : "You sprinted for separation.";
+      }
+
+      if (encounter.enemyHealth <= 0) {
+        finishPlayerConflict(state, events, conflict, "melee", `${actionText} ${threat?.name ?? "The crew"} backed off near ${location?.name ?? "the stop"}.`, "good");
+        break;
+      }
+
+      if (encounter.chaseProgress >= 100) {
+        finishPlayerConflict(state, events, conflict, "drive_escape", `${actionText} You cleared the trouble zone near ${location?.name ?? "the stop"}.`, "good");
+        break;
+      }
+
+      const guardMultiplier = command.action === "dodge" ? 0.45 : command.action === "tool" ? 0.7 : 1;
+      const counterDamage = Math.max(1, Math.round((encounter.enemyFocus * 0.07 + conflict.intensity * 0.14 - encounter.advantage * 0.05) * guardMultiplier));
+      encounter.playerHealth = Math.max(0, encounter.playerHealth - counterDamage);
+      encounter.enemyFocus = Math.min(100, encounter.enemyFocus + (command.action === "strike" ? 4 : 2));
+
+      if (encounter.playerHealth <= 0) {
+        missConflictEvent(state, events, conflict.id);
+        break;
+      }
+
+      log(
+        state,
+        events,
+        `${actionText} Counter-pressure hit for ${counterDamage}. Health ${Math.round(encounter.playerHealth)} / stamina ${Math.round(encounter.playerStamina)} / escape ${Math.round(encounter.chaseProgress)}.`,
+        counterDamage >= 8 ? "warning" : "neutral"
+      );
+      break;
+    }
+
     case "resolve_conflict_event": {
       if (actor.id !== state.playerFactionId) {
         break;
@@ -3403,6 +3698,154 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       actor.streetReputation += 1;
       inspection.resolution = "bribe";
       finishInspection(state, events, inspection, "resolved", `Inspector took $${bribeCost} to walk away from ${machine.name}. Heat rises.`, "danger");
+      break;
+    }
+
+    case "work_crime_contact": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      const contact = crimeContacts.find((candidate) => candidate.id === command.contactId);
+      if (!contact || contact.action !== command.action) {
+        break;
+      }
+
+      const district = state.districts[contact.districtId];
+      const access = districtProgress(state, contact.districtId).access;
+      if (access === "locked") {
+        log(state, events, `${district?.name ?? "This district"} is still locked. Scout the contact first.`, "warning");
+        break;
+      }
+
+      if (actor.money < contact.cost) {
+        log(state, events, `${contact.label} needs $${contact.cost}.`, "warning");
+        break;
+      }
+
+      if (command.action === "source_contraband") {
+        if (state.player.carriedCrate || inventoryUnits(state.player.cargo, state) > 0) {
+          log(state, events, "Hands are full. Store the current crate before taking grey stock.", "warning");
+          break;
+        }
+
+        const productId = contact.productId ?? "mystery_capsules";
+        const product = state.products[productId];
+        const quantity = Math.max(1, Math.min(8, Math.floor(state.player.cargoCapacity / product.size)));
+        chargePlayer(state, "stock", contact.cost, `${contact.label} grey stock`);
+        state.player.carriedCrate = {
+          productId,
+          quantity,
+          capacity: Math.floor(state.player.cargoCapacity / product.size),
+          source: "supplier"
+        };
+        actor.heat += contact.heatRisk;
+        actor.streetReputation += 0.8;
+        log(state, events, `${contact.label} handed off ${quantity}x ${product.name}. Heat risk rose.`, "danger");
+        break;
+      }
+
+      chargePlayer(state, command.action === "arrange_bribe" ? "fines" : "base", contact.cost, contact.label);
+
+      if (command.action === "buy_tip") {
+        const operation = activeRivalOperations(state)
+          .filter((candidate) => candidate.districtId === contact.districtId)
+          .sort((a, b) => b.progress * b.strength - a.progress * a.strength)[0];
+        actor.heat += contact.heatRisk * 0.35;
+        actor.streetReputation += 0.25;
+        if (operation) {
+          operation.exposed = true;
+          operation.progress = Math.max(0, operation.progress - 16);
+          log(state, events, `${contact.label} exposed a ${operationKindLabel(operation.kind)} cell near ${state.locations[operation.locationId]?.name ?? district?.name ?? "the district"}.`, "good");
+        } else {
+          state.law.nextInspectionHour += 0.8;
+          log(state, events, `${contact.label} found no active rival cell, but inspection timing is clearer.`, "neutral");
+        }
+        break;
+      }
+
+      const activeInspection = activeLawInspections(state).sort((a, b) => b.severity - a.severity)[0];
+      actor.heat += contact.heatRisk;
+      actor.streetReputation += 0.6;
+      if (activeInspection) {
+        activeInspection.resolution = "bribe";
+        finishInspection(state, events, activeInspection, "resolved", `${contact.label} moved paperwork on inspection ${activeInspection.id}.`, "good");
+      } else {
+        state.law.nextInspectionHour += 1.5;
+        log(state, events, `${contact.label} bought time with local paperwork. Next inspection pushed back.`, "warning");
+      }
+      break;
+    }
+
+    case "pressure_rival_operation": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+
+      const found = findRivalOperation(state, command.operationId);
+      if (!found) {
+        break;
+      }
+
+      const { operation, organization } = found;
+      if (operation.resolvedHour) {
+        log(state, events, "That rival operation is already neutralized.", "neutral");
+        break;
+      }
+
+      const cost = rivalOperationApproachCost(command.approach);
+      if (actor.money < cost) {
+        log(state, events, `${command.approach.replace("_", " ")} needs $${cost}.`, "warning");
+        break;
+      }
+
+      const rival = state.factions[operation.factionId];
+      const location = state.locations[operation.locationId];
+      chargePlayer(state, command.approach === "disrupt" ? "sabotage" : "base", cost, `${operationKindLabel(operation.kind)} ${command.approach}`);
+
+      if (command.approach === "negotiate") {
+        operation.progress = Math.max(0, operation.progress - 22);
+        operation.strength = clamp01(operation.strength - 0.08);
+        organization.relationship = "truce";
+        organization.truceUntilHour = state.worldTimeHours + 4;
+        organization.leverage = Math.min(100, organization.leverage + 7);
+        actor.publicReputation += 0.2;
+        log(state, events, `Negotiated a short truce with ${rival?.name ?? "the rival"} around ${location?.name ?? "the operation"}.`, "good");
+      }
+
+      if (command.approach === "expose") {
+        operation.exposed = true;
+        operation.progress = Math.max(0, operation.progress - 28);
+        operation.strength = clamp01(operation.strength - 0.1);
+        organization.relationship = "pressured";
+        if (rival) {
+          rival.heat += 3;
+        }
+        actor.publicReputation += 0.7;
+        actor.heat += 0.4;
+        log(state, events, `Exposed ${rival?.name ?? "a rival"} ${operationKindLabel(operation.kind)} operation near ${location?.name ?? "the district"}.`, "good");
+      }
+
+      if (command.approach === "disrupt") {
+        operation.progress = Math.max(0, operation.progress - 36);
+        operation.strength = clamp01(operation.strength - 0.22);
+        organization.relationship = "hostile";
+        actor.streetReputation += 1.2;
+        actor.heat += 2.4;
+        if (location) {
+          location.rivalPressure = Math.max(0, location.rivalPressure - 0.08);
+        }
+        if (operation.strength > 0.42 && location) {
+          createConflictEvent(state, events, "street_chase", location.id, operation.factionId, Math.round(10 + operation.strength * 18), `${rival?.name ?? "A rival"} crew reacted to your disruption near ${location.name}.`);
+        }
+        log(state, events, `Disrupted ${rival?.name ?? "a rival"} ${operationKindLabel(operation.kind)} operation. Heat rose.`, "danger");
+      }
+
+      if (operation.progress <= 0 || operation.strength <= 0.12) {
+        operation.resolvedHour = state.worldTimeHours;
+        organization.leverage = Math.max(0, organization.leverage - 6);
+        log(state, events, `${rival?.name ?? "Rival"} operation neutralized at ${location?.name ?? "the district"}.`, "good");
+      }
       break;
     }
 
