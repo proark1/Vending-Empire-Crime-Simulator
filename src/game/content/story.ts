@@ -10,7 +10,29 @@ export interface StoryMissionArc {
   title: string;
   districtId: string;
   beats: string[];
+  missionChain: StoryMissionObjective[];
   reward: string;
+}
+
+export type StoryMissionRequirement =
+  | "starter_mission_complete"
+  | "district_scouted"
+  | "district_unlocked"
+  | "district_machine"
+  | "hire_guard_or_runner"
+  | "legal_placement"
+  | "inspection_resolved"
+  | "grey_stock_sourced"
+  | "custom_product"
+  | "rival_operation_disrupted"
+  | "old_town_machine";
+
+export interface StoryMissionObjective {
+  id: string;
+  title: string;
+  description: string;
+  requirement: StoryMissionRequirement;
+  rewardMoney: number;
 }
 
 export interface EndgamePath {
@@ -72,6 +94,15 @@ export const storyMissionArcs: StoryMissionArc[] = [
     title: "Cinderblock Row Takeover",
     districtId: "starter_suburb",
     beats: ["Repair Rusty Starter", "Place Foam & Fold", "Stock first route", "Answer Redline undercut", "Control three machines"],
+    missionChain: [
+      {
+        id: "starter_three_profitable",
+        title: "Lock down Cinderblock Row",
+        description: "Own three profitable starter machines to prove the route can carry itself.",
+        requirement: "starter_mission_complete",
+        rewardMoney: 0
+      }
+    ],
     reward: "Iron Yard scouting and expansion cash"
   },
   {
@@ -79,6 +110,29 @@ export const storyMissionArcs: StoryMissionArc[] = [
     title: "Iron Yard Leverage",
     districtId: "industrial_yards",
     beats: ["Open Freight Depot", "Serve worker rush", "Survive route ambush", "Hire first guard or runner", "Claim the dock route"],
+    missionChain: [
+      {
+        id: "yard_scout",
+        title: "Map the loading yards",
+        description: "Scout Iron Yard so the dock pads and setup terms are visible.",
+        requirement: "district_scouted",
+        rewardMoney: 20
+      },
+      {
+        id: "yard_open",
+        title: "Open the freight route",
+        description: "Pay the setup and unlock Iron Yard for placements.",
+        requirement: "district_unlocked",
+        rewardMoney: 35
+      },
+      {
+        id: "yard_muscle",
+        title: "Put muscle on the route",
+        description: "Place a machine in Iron Yard and hire a guard or runner to cover the run.",
+        requirement: "hire_guard_or_runner",
+        rewardMoney: 55
+      }
+    ],
     reward: "Bulk supplier pricing and armored machine access"
   },
   {
@@ -86,6 +140,29 @@ export const storyMissionArcs: StoryMissionArc[] = [
     title: "Downtown Paper Trail",
     districtId: "downtown_loop",
     beats: ["Win a legal placement", "Beat corporate undercuts", "Handle an inspection chain", "Negotiate an office tower route"],
+    missionChain: [
+      {
+        id: "downtown_scout",
+        title: "Read the paper trail",
+        description: "Scout Downtown Loop to expose the clean placement pads.",
+        requirement: "district_scouted",
+        rewardMoney: 25
+      },
+      {
+        id: "downtown_legal",
+        title: "Win a legal lobby",
+        description: "Install a legal-contract machine in Downtown Loop.",
+        requirement: "legal_placement",
+        rewardMoney: 70
+      },
+      {
+        id: "downtown_inspection",
+        title: "Pass the audit",
+        description: "Resolve an inspection after the downtown paper trail starts.",
+        requirement: "inspection_resolved",
+        rewardMoney: 85
+      }
+    ],
     reward: "Luxury vendors and cleaner public reputation"
   },
   {
@@ -93,6 +170,29 @@ export const storyMissionArcs: StoryMissionArc[] = [
     title: "Neon Afterhours",
     districtId: "neon_quarter",
     beats: ["Unlock grey supplier stock", "Protect midnight machines", "Choose legal or hidden product mix", "Break a black-market vendor route"],
+    missionChain: [
+      {
+        id: "neon_scout",
+        title: "Find the afterhours pads",
+        description: "Scout Neon Quarter to locate the late-night route.",
+        requirement: "district_scouted",
+        rewardMoney: 30
+      },
+      {
+        id: "neon_grey_stock",
+        title: "Source the fiction-only grey shelf",
+        description: "Carry or store fictional grey stock for the Neon route.",
+        requirement: "grey_stock_sourced",
+        rewardMoney: 55
+      },
+      {
+        id: "neon_brand_choice",
+        title: "Package the afterhours brand",
+        description: "Use the product lab to create a custom package for any eligible product.",
+        requirement: "custom_product",
+        rewardMoney: 80
+      }
+    ],
     reward: "Discreet machine models and high-risk fictional products"
   },
   {
@@ -100,6 +200,29 @@ export const storyMissionArcs: StoryMissionArc[] = [
     title: "Old Town War",
     districtId: "old_town",
     beats: ["Find the former partner", "Defend the garage", "Flip rival locations", "Force an ending branch"],
+    missionChain: [
+      {
+        id: "old_town_scout",
+        title: "Find the former partner",
+        description: "Scout Old Town to expose the final rival route.",
+        requirement: "district_scouted",
+        rewardMoney: 35
+      },
+      {
+        id: "old_town_pressure",
+        title: "Break a visible operation",
+        description: "Disrupt, expose, or negotiate down an active rival operation.",
+        requirement: "rival_operation_disrupted",
+        rewardMoney: 90
+      },
+      {
+        id: "old_town_claim",
+        title: "Plant a final flag",
+        description: "Own a machine in Old Town to unlock ending pressure.",
+        requirement: "old_town_machine",
+        rewardMoney: 120
+      }
+    ],
     reward: "Citywide control decision"
   }
 ];

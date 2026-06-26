@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
-import type { DistrictAccess, GameState, GameEventTone, Location, MachineId, MachineUpgradeId, ProductId, RouteVehicle, StockCrate, StreetActivity, Vec2, VehicleId, VendingMachine } from "../../game/core/types";
+import type { DistrictAccess, Employee, GameState, GameEventTone, Location, MachineId, MachineUpgradeId, ProductId, RouteVehicle, StockCrate, StreetActivity, Vec2, VehicleId, VendingMachine } from "../../game/core/types";
 import { activeConflictEvents, activeMachineAlarms, activeVehicle, carriedCrateUnits, districtProgress, garageStorageUnits, machineAtLocation, machineRoutePressure } from "../../game/core/selectors";
 import { modelTransformFor, type ModelConfig, type ModelTransform } from "../../game/content/modelConfig";
 import {
@@ -1735,7 +1735,7 @@ function createActivityPulse(activity: StreetActivity): THREE.Group {
 }
 
 function activityActorVariant(activity: StreetActivity): "customer" | "rival" | "scout" | "worker" {
-  if (activity.actor === "worker") {
+  if (activity.actor === "worker" || activity.actor === "employee") {
     return "worker";
   }
 
@@ -1834,6 +1834,65 @@ function createAmbientMachineActor(machine: VendingMachine, location: Location, 
   ];
   character.userData.walkSpeed = 0.13 + Math.min(0.15, location.footTraffic * 0.04);
   applyModelTransformById(character, modelConfig, unitModelId(variant));
+  return character;
+}
+
+function employeeActorVariant(employee: Employee): "scout" | "worker" {
+  return employee.role === "scout" || employee.role === "negotiator" || employee.role === "regional_manager" ? "scout" : "worker";
+}
+
+function employeeVisibleLocation(currentState: GameState, employee: Employee): Location | undefined {
+  const routeLocationId = employee.routeTargetLocationId ?? employee.lastLocationId;
+  if (routeLocationId && currentState.locations[routeLocationId]) {
+    return currentState.locations[routeLocationId];
+  }
+
+  const assignedMachineId = employee.assignedMachineIds[0];
+  const assignedMachine = assignedMachineId ? currentState.machines[assignedMachineId] : undefined;
+  if (assignedMachine) {
+    return currentState.locations[assignedMachine.locationId];
+  }
+
+  return currentState.locations.garage;
+}
+
+function createEmployeeRouteActor(
+  employee: Employee,
+  location: Location,
+  currentWorldTime: number,
+  quality: GraphicsQuality,
+  modelConfig: ModelConfig,
+  index: number
+): THREE.Group {
+  const variant = employeeActorVariant(employee);
+  const character = createNpcCharacter(variant, quality);
+  const center = new THREE.Vector3(location.position.x, 0, location.position.z);
+  const phase = currentWorldTime * (0.22 + employee.speed * 0.08) + employee.employeeNumber * 0.83;
+  const angle = phase + index * 0.9;
+  const radius = 1 + (index % 3) * 0.28;
+  const start = center.clone().add(new THREE.Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius));
+  const stop = center.clone().add(new THREE.Vector3(Math.cos(angle + 0.9) * 0.72, 0, Math.sin(angle + 0.9) * 0.72));
+  const exit = center.clone().add(new THREE.Vector3(Math.cos(angle + 1.7) * (radius + 0.35), 0, Math.sin(angle + 1.7) * (radius + 0.35)));
+
+  character.position.copy(start);
+  character.scale.setScalar(employee.role === "guard" ? 1.06 : employee.role === "runner" ? 0.92 : 0.98);
+  character.userData.action = employee.routePhase === "idle" || employee.status === "blocked" ? "pace" : employee.routePhase === "restock" ? "carry" : "walk";
+  character.userData.baseY = 0;
+  character.userData.dynamicNpc = true;
+  character.userData.floatAmount = 0.006;
+  character.userData.floatSpeed = 1.05 + employee.speed * 0.35;
+  character.userData.pathOffset = Math.max(0, currentWorldTime - employee.lastWorkedHour) * 5 + employee.employeeNumber;
+  character.userData.phase = phase;
+  character.userData.walkPath = [start, stop, exit];
+  character.userData.walkSpeed = 0.24 + employee.speed * 0.18;
+  applyModelTransformById(character, modelConfig, unitModelId(variant));
+
+  const marker = new THREE.Mesh(
+    new THREE.SphereGeometry(0.055, 10, 8),
+    new THREE.MeshBasicMaterial({ color: employee.status === "blocked" ? "#f97316" : employee.role === "guard" ? "#38bdf8" : "#a3e635" })
+  );
+  marker.position.set(0, 1.58, -0.08);
+  character.add(marker);
   return character;
 }
 
@@ -3433,6 +3492,20 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
         actor.userData.phase = index * 0.9 + activity.hour;
         group.add(actor);
       }
+    });
+
+  Object.values(currentState.employees ?? {})
+    .filter((employee) => !employee.betrayed)
+    .slice(0, quality === "low" ? 3 : quality === "high" ? 9 : 6)
+    .forEach((employee, index) => {
+      const location = employeeVisibleLocation(currentState, employee);
+      if (!location) {
+        return;
+      }
+
+      const actor = createEmployeeRouteActor(employee, location, currentState.worldTimeHours, quality, modelConfig, index);
+      actor.userData.employeeId = employee.id;
+      group.add(actor);
     });
 
   const vehicle = activeVehicle(currentState);

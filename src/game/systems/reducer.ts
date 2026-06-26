@@ -1,9 +1,11 @@
 import type {
   BaseFacilityId,
+  CampaignMissionState,
   CommandResult,
   ConflictEncounterState,
   ConflictEvent,
   Employee,
+  EmployeeRoutePhase,
   EmployeeRole,
   Faction,
   FactionId,
@@ -68,6 +70,7 @@ import { machineModels } from "../content/machineModels";
 import { baseFacilities } from "../content/baseFacilities";
 import { employeeRoles } from "../content/employees";
 import { crimeContacts } from "../content/world";
+import { storyMissionArcs, type StoryMissionArc, type StoryMissionObjective } from "../content/story";
 import { machineHasUpgrade, sabotageDamage } from "../core/machineStats";
 import { runMachineSales } from "./economy";
 
@@ -281,33 +284,103 @@ function ensureEconomyState(state: GameState): void {
   state.economy.productCustomizations ??= {};
 }
 
+function ensureCampaignMissionState(state: GameState): void {
+  state.mission ??= {
+    id: "starter_takeover",
+    title: "Launch Foam & Fold and survive Redline retaliation",
+    completed: false,
+    campaign: {}
+  };
+  state.mission.campaign ??= {};
+  state.progression.productDesignsCompleted ??= Object.keys(state.economy?.productCustomizations ?? {}).length;
+
+  for (const arc of storyMissionArcs) {
+    const firstStep = arc.missionChain[0];
+    if (!firstStep) {
+      continue;
+    }
+
+    const current = state.mission.campaign[arc.id];
+    state.mission.campaign[arc.id] = {
+      arcId: arc.id,
+      activeStepId: current?.activeStepId ?? firstStep.id,
+      completed: current?.completed ?? false,
+      completedHour: current?.completedHour,
+      completedStepIds: Array.isArray(current?.completedStepIds) ? current.completedStepIds : [],
+      unlockedHour: current?.unlockedHour ?? (arc.id === "starter_takeover" ? 0 : state.worldTimeHours)
+    };
+  }
+}
+
 const insurancePlans: Record<InsurancePlan, { dailyCost: number; coverage: number; label: string }> = {
   none: { dailyCost: 0, coverage: 0, label: "No insurance" },
   basic: { dailyCost: 9, coverage: 0.35, label: "Basic insurance" },
   premium: { dailyCost: 22, coverage: 0.68, label: "Premium insurance" }
 };
 
-const customizationModes: Record<ProductCustomizationMode, { cost: number; costDelta: number; demandBonus: number; heatDelta: number; label: string }> = {
+const customizationModes: Record<ProductCustomizationMode, {
+  brandName: string;
+  brandRecognition: number;
+  brandTone: "value" | "premium" | "discreet";
+  colorway: string;
+  cost: number;
+  costDelta: number;
+  demandBonus: number;
+  designScore: number;
+  heatDelta: number;
+  label: string;
+  packageAppeal: number;
+  packageStyle: "budget_sleeve" | "premium_wrap" | "stealth_label";
+  riskMasking: number;
+  tagline: string;
+}> = {
   value_pack: {
     label: "Value pack",
+    brandName: "Corner Value",
+    brandRecognition: 0.18,
+    brandTone: "value",
+    colorway: "signal yellow / bottle green",
     cost: 55,
     demandBonus: 0.1,
+    designScore: 54,
     costDelta: -0.35,
-    heatDelta: 0.05
+    heatDelta: 0.05,
+    packageAppeal: 0.58,
+    packageStyle: "budget_sleeve",
+    riskMasking: 0.08,
+    tagline: "More route for less."
   },
   premium_wrap: {
     label: "Premium wrap",
+    brandName: "Vendetta Select",
+    brandRecognition: 0.34,
+    brandTone: "premium",
+    colorway: "carbon black / mint foil",
     cost: 75,
     demandBonus: 0.18,
+    designScore: 72,
     costDelta: 0.4,
-    heatDelta: 0
+    heatDelta: 0,
+    packageAppeal: 0.76,
+    packageStyle: "premium_wrap",
+    riskMasking: 0.16,
+    tagline: "Clean shelf, sharper margin."
   },
   discreet_label: {
     label: "Discreet label",
+    brandName: "Plain Sight Goods",
+    brandRecognition: 0.22,
+    brandTone: "discreet",
+    colorway: "matte white / slate code",
     cost: 95,
     demandBonus: 0.04,
+    designScore: 66,
     costDelta: 0.25,
-    heatDelta: -0.38
+    heatDelta: -0.38,
+    packageAppeal: 0.42,
+    packageStyle: "stealth_label",
+    riskMasking: 0.72,
+    tagline: "Nothing to see, everything to sell."
   }
 };
 
@@ -357,6 +430,16 @@ function logStreetActivity(state: GameState, events: GameEvent[], activity: Omit
   };
   state.streetLife.recentActivities = [streetActivity, ...state.streetLife.recentActivities].slice(0, 10);
   log(state, events, activity.message, activity.tone);
+}
+
+function recordStreetActivity(state: GameState, activity: Omit<StreetActivity, "hour" | "id">): void {
+  ensureStreetLifeState(state);
+  const streetActivity: StreetActivity = {
+    ...activity,
+    id: `street_${state.streetLife.activitySequence++}`,
+    hour: state.worldTimeHours
+  };
+  state.streetLife.recentActivities = [streetActivity, ...state.streetLife.recentActivities].slice(0, 10);
 }
 
 function scheduleNextStreetActivity(state: GameState): void {
@@ -515,6 +598,8 @@ function createEmployee(state: GameState, role: EmployeeRole): Employee {
     name,
     reliability: definition.reliability,
     role,
+    routePhase: "idle",
+    routeTargetLocationId: "garage",
     skill: definition.skill,
     speed: definition.speed,
     status: "idle",
@@ -1938,6 +2023,33 @@ function employeeWorkInterval(employee: Employee): number {
 function markEmployeeBlocked(employee: Employee, detail: string): void {
   employee.status = "blocked";
   employee.statusDetail = detail;
+  employee.routePhase = "idle";
+}
+
+function markEmployeeRoute(
+  state: GameState,
+  employee: Employee,
+  locationId: string | undefined,
+  phase: EmployeeRoutePhase,
+  message: string,
+  machineId?: string
+): void {
+  const location = locationId ? state.locations[locationId] : undefined;
+  employee.routePhase = phase;
+  employee.lastLocationId = location?.id ?? employee.lastLocationId;
+  employee.routeTargetLocationId = location?.id ?? employee.routeTargetLocationId;
+  if (!location) {
+    return;
+  }
+
+  recordStreetActivity(state, {
+    actor: "employee",
+    kind: "employee_route",
+    locationId: location.id,
+    machineId,
+    message,
+    tone: "neutral"
+  });
 }
 
 function sortedStoredProductsForMachine(state: GameState, machine: VendingMachine): ProductId[] {
@@ -1991,6 +2103,7 @@ function runRestocker(state: GameState, events: GameEvent[], employee: Employee)
       machine.lastServicedHour = state.worldTimeHours;
       employee.status = "working";
       employee.statusDetail = `Restocked ${machine.name}.`;
+      markEmployeeRoute(state, employee, machine.locationId, "restock", `${employee.name} is restocking ${machine.name}.`, machine.id);
       applyContractDelivery(state, events, machine, product.id, quantity);
       log(state, events, `${employee.name} restocked ${quantity}x ${product.name} into ${machine.name}.`, "good");
       return true;
@@ -2018,6 +2131,7 @@ function runCollector(state: GameState, events: GameEvent[], employee: Employee)
   state.progression.revenueCollectedToday += amount;
   employee.status = "working";
   employee.statusDetail = `Collected from ${machine.name}.`;
+  markEmployeeRoute(state, employee, machine.locationId, "collect", `${employee.name} is pulling cash from ${machine.name}.`, machine.id);
   log(state, events, `${employee.name} collected $${amount} from ${machine.name}.`, "good");
   return true;
 }
@@ -2045,6 +2159,7 @@ function runTechnician(state: GameState, events: GameEvent[], employee: Employee
   machine.lastServicedHour = state.worldTimeHours;
   employee.status = "working";
   employee.statusDetail = `Repaired ${machine.name}.`;
+  markEmployeeRoute(state, employee, machine.locationId, "repair", `${employee.name} is repairing ${machine.name}.`, machine.id);
   log(state, events, `${employee.name} repaired ${machine.name} for $${cost}.`, "good");
   return true;
 }
@@ -2064,6 +2179,7 @@ function runGuard(state: GameState, events: GameEvent[], employee: Employee): bo
     }
     employee.status = "working";
     employee.statusDetail = `Drove off a crew at ${machine?.name ?? "a machine"}.`;
+    markEmployeeRoute(state, employee, machine?.locationId ?? alarm.locationId, "patrol", `${employee.name} is guarding ${machine?.name ?? "the route"}.`, machine?.id);
     employee.fear = Math.min(1, employee.fear + 0.02);
     employee.loyalty = Math.min(1, employee.loyalty + 0.01);
     log(state, events, `${employee.name} intercepted ${intruder?.name ?? "an intruder"} before the hit landed.`, "good");
@@ -2083,6 +2199,7 @@ function runGuard(state: GameState, events: GameEvent[], employee: Employee): bo
   patrol.location.rivalPressure = Math.max(0, patrol.location.rivalPressure - (0.06 + employee.skill * 0.08));
   employee.status = "working";
   employee.statusDetail = `Patrolled ${patrol.machine.name}.`;
+  markEmployeeRoute(state, employee, patrol.machine.locationId, "patrol", `${employee.name} is patrolling ${patrol.machine.name}.`, patrol.machine.id);
   log(state, events, `${employee.name} patrolled ${patrol.location.name} and cooled local pressure.`, "good");
   return true;
 }
@@ -2113,6 +2230,8 @@ function runScout(state: GameState, events: GameEvent[], employee: Employee): bo
   };
   employee.status = "working";
   employee.statusDetail = `Mapped ${candidate.name}.`;
+  const scoutLocation = Object.values(state.locations).find((location) => location.districtId === candidate.id)?.id;
+  markEmployeeRoute(state, employee, scoutLocation, "scout", `${employee.name} is mapping ${candidate.name}.`);
   log(state, events, `${employee.name} scouted ${candidate.name} for $${cost}.`, "good");
   return true;
 }
@@ -2133,6 +2252,7 @@ function runNegotiator(state: GameState, events: GameEvent[], employee: Employee
   player.publicReputation += 0.08;
   employee.status = "working";
   employee.statusDetail = `Smoothed over ${target.location.name}.`;
+  markEmployeeRoute(state, employee, target.machine.locationId, "negotiate", `${employee.name} is negotiating around ${target.location.name}.`, target.machine.id);
   log(state, events, `${employee.name} cooled landlord pressure around ${target.location.name}.`, "good");
   return true;
 }
@@ -2171,6 +2291,7 @@ function runRegionalManager(state: GameState, events: GameEvent[], employee: Emp
 
   employee.status = "working";
   employee.statusDetail = `Managed ${target.district.name}.`;
+  markEmployeeRoute(state, employee, target.machines[0]?.locationId, "manage", `${employee.name} is coordinating ${target.district.name}.`, target.machines[0]?.id);
   log(state, events, `${employee.name} coordinated ${target.district.name} and tightened route discipline.`, "good");
   return true;
 }
@@ -2408,6 +2529,121 @@ function maybeCompleteMission(state: GameState, events: GameEvent[]): void {
   }
 }
 
+function playerMachinesInStoryDistrict(state: GameState, arc: StoryMissionArc): VendingMachine[] {
+  return installedMachines(state, state.playerFactionId).filter((machine) => state.locations[machine.locationId]?.districtId === arc.districtId);
+}
+
+function hasGreyStockSourced(state: GameState): boolean {
+  const isGreyProduct = (productId: string): boolean => {
+    const product = state.products[productId as ProductId];
+    return product?.category === "fictional-grey" || product?.category === "fictional-contraband";
+  };
+
+  if (state.player.carriedCrate && isGreyProduct(state.player.carriedCrate.productId)) {
+    return true;
+  }
+
+  const inventories = [
+    state.player.garageStorage ?? {},
+    ...Object.values(state.vehicles).map((vehicle) => vehicle.inventory),
+    ...installedMachines(state, state.playerFactionId).map((machine) => Object.fromEntries(machine.slots.map((slot) => [slot.productId, slot.quantity])))
+  ];
+
+  return inventories.some((inventory) => Object.entries(inventory).some(([productId, quantity]) => quantity > 0 && isGreyProduct(productId)));
+}
+
+function campaignRequirementMet(state: GameState, arc: StoryMissionArc, objective: StoryMissionObjective): boolean {
+  const progress = districtProgress(state, arc.districtId);
+  const machines = playerMachinesInStoryDistrict(state, arc);
+
+  if (objective.requirement === "starter_mission_complete") {
+    return state.mission.completed;
+  }
+
+  if (objective.requirement === "district_scouted") {
+    return progress.access === "scouted" || progress.access === "unlocked";
+  }
+
+  if (objective.requirement === "district_unlocked") {
+    return progress.access === "unlocked";
+  }
+
+  if (objective.requirement === "district_machine") {
+    return machines.length > 0;
+  }
+
+  if (objective.requirement === "hire_guard_or_runner") {
+    const hasRouteCover = Object.values(state.employees).some((employee) => !employee.betrayed && (employee.role === "guard" || employee.role === "runner"));
+    return machines.length > 0 && hasRouteCover;
+  }
+
+  if (objective.requirement === "legal_placement") {
+    return machines.some((machine) => machine.placementMethod === "legal_contract");
+  }
+
+  if (objective.requirement === "inspection_resolved") {
+    return Object.values(state.law?.activeInspections ?? {}).some((inspection) => inspection.status === "resolved" && Boolean(inspection.resolvedHour));
+  }
+
+  if (objective.requirement === "grey_stock_sourced") {
+    return hasGreyStockSourced(state);
+  }
+
+  if (objective.requirement === "custom_product") {
+    return (state.progression.productDesignsCompleted ?? 0) > 0 || Object.keys(state.economy?.productCustomizations ?? {}).length > 0;
+  }
+
+  if (objective.requirement === "rival_operation_disrupted") {
+    return Object.values(state.rivalOrganizations ?? {}).some((organization) => organization.operations.some((operation) => Boolean(operation.resolvedHour)));
+  }
+
+  if (objective.requirement === "old_town_machine") {
+    return machines.length > 0;
+  }
+
+  return false;
+}
+
+function advanceCampaignMissions(state: GameState, events: GameEvent[]): void {
+  ensureCampaignMissionState(state);
+
+  for (const arc of storyMissionArcs) {
+    const mission = state.mission.campaign[arc.id];
+    if (!mission || mission.completed || arc.missionChain.length === 0) {
+      continue;
+    }
+
+    let advanced = true;
+    while (advanced && !mission.completed) {
+      advanced = false;
+      const completedSteps = new Set(mission.completedStepIds);
+      const step = arc.missionChain.find((candidate) => candidate.id === mission.activeStepId) ?? arc.missionChain.find((candidate) => !completedSteps.has(candidate.id));
+      if (!step || !campaignRequirementMet(state, arc, step)) {
+        break;
+      }
+
+      if (!completedSteps.has(step.id)) {
+        mission.completedStepIds = [...mission.completedStepIds, step.id];
+        if (step.rewardMoney > 0) {
+          creditPlayer(state, "contracts", step.rewardMoney, `${step.title} mission objective`);
+        }
+        log(state, events, `${arc.title}: ${step.title} complete${step.rewardMoney > 0 ? ` (+$${step.rewardMoney})` : ""}.`, "good");
+      }
+
+      const nextStep = arc.missionChain.find((candidate) => !mission.completedStepIds.includes(candidate.id));
+      if (nextStep) {
+        mission.activeStepId = nextStep.id;
+      } else {
+        mission.completed = true;
+        mission.completedHour = state.worldTimeHours;
+        mission.activeStepId = step.id;
+        log(state, events, `${arc.title} chain complete. ${arc.reward}.`, "good");
+      }
+      advanced = true;
+    }
+  }
+}
+
 function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number): void {
   const previousHour = state.worldTimeHours;
   ensureStreetLifeState(state);
@@ -2483,6 +2719,7 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
   ensureRivalOrganizationState(state);
   ensureBaseState(state);
   ensureEconomyState(state);
+  ensureCampaignMissionState(state);
   const actor = getFactionOrThrow(state, command.actorId);
 
   switch (command.type) {
@@ -2984,15 +3221,28 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       }
 
       chargePlayer(state, "upgrades", mode.cost, `${product.name} ${mode.label}`);
+      const wasNewDesign = !state.economy.productCustomizations[product.id];
       state.economy.productCustomizations[product.id] = {
+        brandName: mode.brandName,
+        brandRecognition: mode.brandRecognition,
+        brandTone: mode.brandTone,
+        colorway: mode.colorway,
+        designScore: mode.designScore,
         productId: product.id,
         mode: command.mode,
         demandBonus: mode.demandBonus,
         costDelta: mode.costDelta,
         heatDelta: mode.heatDelta,
+        packageAppeal: mode.packageAppeal,
+        packageStyle: mode.packageStyle,
+        riskMasking: mode.riskMasking,
+        tagline: mode.tagline,
         createdHour: state.worldTimeHours
       };
-      log(state, events, `${product.name} tuned as ${mode.label}.`, "good");
+      if (wasNewDesign) {
+        state.progression.productDesignsCompleted = (state.progression.productDesignsCompleted ?? 0) + 1;
+      }
+      log(state, events, `${product.name} launched as ${mode.brandName}: ${mode.tagline}`, "good");
       break;
     }
 
@@ -3118,11 +3368,16 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
         assignments.add(machine.id);
         employee.status = "idle";
         employee.statusDetail = `Assigned to ${machine.name}.`;
+        employee.routePhase = "idle";
+        employee.routeTargetLocationId = machine.locationId;
         log(state, events, `${employee.name} assigned to ${machine.name}.`, "neutral");
       } else {
         assignments.delete(machine.id);
         employee.status = assignments.size > 0 ? "idle" : "blocked";
         employee.statusDetail = assignments.size > 0 ? "Route assignment updated." : "Assign a machine route.";
+        employee.routePhase = employee.status === "blocked" ? "idle" : employee.routePhase ?? "idle";
+        const nextAssignedId = [...assignments][0];
+        employee.routeTargetLocationId = nextAssignedId ? state.machines[nextAssignedId]?.locationId : undefined;
         log(state, events, `${employee.name} removed from ${machine.name}.`, "neutral");
       }
 
@@ -3913,6 +4168,7 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
   }
 
   maybeCompleteMission(state, events);
+  advanceCampaignMissions(state, events);
 
   return { state, events };
 }

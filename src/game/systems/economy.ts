@@ -64,12 +64,13 @@ function timeOfDayMultiplier(worldTimeHours: number, product: Product): number {
 
 function customizationDemandMultiplier(state: GameState, product: Product): number {
   const customization = state.economy?.productCustomizations?.[product.id];
-  return Math.max(0.75, 1 + (customization?.demandBonus ?? 0));
+  const brandLift = (customization?.packageAppeal ?? 0) * 0.04 + (customization?.brandRecognition ?? 0) * 0.05;
+  return Math.max(0.75, 1 + (customization?.demandBonus ?? 0) + brandLift);
 }
 
 function customizedProductHeat(state: GameState, product: Product): number {
   const customization = state.economy?.productCustomizations?.[product.id];
-  return Math.max(0, product.heat + (customization?.heatDelta ?? 0));
+  return Math.max(0, product.heat + (customization?.heatDelta ?? 0) - (customization?.riskMasking ?? 0) * 0.08);
 }
 
 export function runMachineSales(state: GameState, machine: VendingMachine, hours: number): number {

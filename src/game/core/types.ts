@@ -322,6 +322,7 @@ export interface ProgressionState {
   contractsCompletedToday: number;
   contractsFailedToday: number;
   rivalActionsToday: number;
+  productDesignsCompleted: number;
   starterMachinePlaced: boolean;
   firstUndercutTriggered: boolean;
   firstRetaliationTriggered: boolean;
@@ -384,13 +385,24 @@ export interface TrafficState {
 }
 
 export type ProductCustomizationMode = "value_pack" | "premium_wrap" | "discreet_label";
+export type ProductPackageStyle = "budget_sleeve" | "premium_wrap" | "stealth_label";
+export type ProductBrandTone = "value" | "premium" | "discreet";
 
 export interface ProductCustomization {
+  brandName: string;
+  brandRecognition: number;
+  brandTone: ProductBrandTone;
+  colorway: string;
+  designScore: number;
   productId: ProductId;
   mode: ProductCustomizationMode;
   demandBonus: number;
   costDelta: number;
   heatDelta: number;
+  packageAppeal: number;
+  packageStyle: ProductPackageStyle;
+  riskMasking: number;
+  tagline: string;
   createdHour: number;
 }
 
@@ -543,6 +555,7 @@ export interface PlacementQuote {
 
 export type EmployeeRole = "restocker" | "collector" | "technician" | "guard" | "scout" | "negotiator" | "runner" | "regional_manager";
 export type EmployeeStatus = "idle" | "working" | "blocked";
+export type EmployeeRoutePhase = "idle" | "restock" | "collect" | "repair" | "patrol" | "scout" | "negotiate" | "manage";
 
 export interface Employee {
   assignedMachineIds: MachineId[];
@@ -552,11 +565,14 @@ export interface Employee {
   fear: number;
   id: EmployeeId;
   lastWorkedHour: number;
+  lastLocationId?: LocationId;
   level: number;
   loyalty: number;
   name: string;
   reliability: number;
   role: EmployeeRole;
+  routePhase?: EmployeeRoutePhase;
+  routeTargetLocationId?: LocationId;
   skill: number;
   speed: number;
   status: EmployeeStatus;
@@ -574,8 +590,8 @@ export interface GameEvent {
   message: string;
 }
 
-export type StreetActivityKind = "customer_purchase" | "customer_complaint" | "rival_scout" | "worker_supply" | "chase" | "base_watch";
-export type StreetActivityActor = "customer" | "rival" | "worker" | "scout" | "guard" | "driver";
+export type StreetActivityKind = "customer_purchase" | "customer_complaint" | "rival_scout" | "worker_supply" | "employee_route" | "chase" | "base_watch";
+export type StreetActivityActor = "customer" | "rival" | "worker" | "employee" | "scout" | "guard" | "driver";
 
 export interface StreetActivity {
   id: string;
@@ -600,6 +616,16 @@ export interface MissionState {
   id: string;
   title: string;
   completed: boolean;
+  campaign: Record<string, CampaignMissionState>;
+}
+
+export interface CampaignMissionState {
+  arcId: string;
+  activeStepId: string;
+  completed: boolean;
+  completedHour?: number;
+  completedStepIds: string[];
+  unlockedHour: number;
 }
 
 export interface GameState {

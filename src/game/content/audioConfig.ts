@@ -93,6 +93,62 @@ const defaultMixer: AudioMixerSettings = {
   voiceVolume: 0.9
 };
 
+const defaultAudioAssets: AudioAsset[] = [
+  { id: "synth_music_city_bed", category: "music", label: "Procedural city bed", loop: true, sizeBytes: 0, url: "synth://music/city_bed", volume: 0.7 },
+  { id: "synth_music_heat", category: "music", label: "Procedural heat bed", loop: true, sizeBytes: 0, url: "synth://music/heat", volume: 0.78 },
+  { id: "synth_music_conflict", category: "music", label: "Procedural conflict pulse", loop: true, sizeBytes: 0, url: "synth://music/conflict", volume: 0.84 },
+  { id: "synth_sound_cash", category: "sound", label: "Register chime", loop: false, sizeBytes: 0, url: "synth://sound/cash", volume: 0.85 },
+  { id: "synth_sound_crate", category: "sound", label: "Crate handling", loop: false, sizeBytes: 0, url: "synth://sound/crate", volume: 0.8 },
+  { id: "synth_sound_tools", category: "sound", label: "Tool burst", loop: false, sizeBytes: 0, url: "synth://sound/tools", volume: 0.78 },
+  { id: "synth_sound_conflict", category: "sound", label: "Conflict hit", loop: false, sizeBytes: 0, url: "synth://sound/conflict", volume: 0.86 },
+  { id: "synth_sound_alert", category: "sound", label: "System alert", loop: false, sizeBytes: 0, url: "synth://sound/alert", volume: 0.82 },
+  { id: "synth_voice_radio", category: "voice", label: "Radio voice pulse", loop: false, sizeBytes: 0, url: "synth://voice/radio", volume: 0.72 }
+];
+
+const defaultCueAssetByTrigger: Record<string, string> = {
+  "music.ambient": "synth_music_city_bed",
+  "music.heat": "synth_music_heat",
+  "music.conflict": "synth_music_conflict",
+  "feedback.cash": "synth_sound_cash",
+  "feedback.pickup": "synth_sound_crate",
+  "feedback.store": "synth_sound_crate",
+  "feedback.stock": "synth_sound_crate",
+  "feedback.vehicle": "synth_sound_crate",
+  "feedback.repair": "synth_sound_tools",
+  "feedback.upgrade": "synth_sound_tools",
+  "feedback.install": "synth_sound_tools",
+  "feedback.sabotage": "synth_sound_conflict",
+  "feedback.fight": "synth_sound_conflict",
+  "feedback.melee": "synth_sound_conflict",
+  "feedback.escape": "synth_sound_tools",
+  "feedback.lockdown": "synth_sound_alert",
+  "feedback.scout": "synth_sound_alert",
+  "feedback.district": "synth_sound_alert",
+  "event.good": "synth_sound_cash",
+  "event.warning": "synth_sound_alert",
+  "event.danger": "synth_sound_conflict",
+  "event.neutral": "synth_sound_tools"
+};
+
+function defaultAudioCues(): AudioCue[] {
+  return audioTriggerOptions.map((option, index) => {
+    const assetId = defaultCueAssetByTrigger[option.trigger] ?? (option.category === "voice" ? "synth_voice_radio" : "synth_sound_alert");
+    return {
+      assetId,
+      category: option.category,
+      cooldownMs: option.category === "music" ? 0 : option.category === "voice" ? 2500 : 120,
+      duckMusic: option.category === "voice",
+      enabled: true,
+      id: `default_${option.trigger.replace(/[^a-z0-9]+/g, "_")}_${index}`,
+      label: option.label,
+      priority: option.category === "music" ? 10 : option.category === "voice" ? 6 : 4,
+      speaker: option.category === "voice" ? "Radio" : "",
+      subtitle: option.category === "voice" ? option.label : "",
+      trigger: option.trigger
+    };
+  });
+}
+
 function cloneConfig(config: AudioConfig): AudioConfig {
   return JSON.parse(JSON.stringify(config)) as AudioConfig;
 }
@@ -129,8 +185,8 @@ function idFromLabel(label: string, fallback: string): string {
 
 export function createDefaultAudioConfig(): AudioConfig {
   return cloneConfig({
-    assets: [],
-    cues: [],
+    assets: defaultAudioAssets,
+    cues: defaultAudioCues(),
     mixer: defaultMixer,
     version: 1
   });

@@ -415,7 +415,8 @@ export function createInitialState(): GameState {
     mission: {
       id: "starter_takeover",
       title: "Launch Foam & Fold and survive Redline retaliation",
-      completed: false
+      completed: false,
+      campaign: {}
     },
     routePlan: {
       selectedTaskId: null
@@ -432,6 +433,7 @@ export function createInitialState(): GameState {
       contractsCompletedToday: 0,
       contractsFailedToday: 0,
       rivalActionsToday: 0,
+      productDesignsCompleted: 0,
       starterMachinePlaced: false,
       firstUndercutTriggered: false,
       firstRetaliationTriggered: false

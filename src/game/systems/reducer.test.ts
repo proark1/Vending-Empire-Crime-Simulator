@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createInitialState } from "../content/initialState";
 import {
   baseStorageCapacity,
+  campaignMissionProgress,
   currentProductCost,
   districtUnlockInfo,
   endgamePathScores,
@@ -13,6 +14,7 @@ import {
   storyArcProgress
 } from "../core/selectors";
 import type { GameCommand, LocationId } from "../core/types";
+import { createDefaultAudioConfig, validateAudioConfig } from "../content/audioConfig";
 import { reduceCommands, reduceGameState } from "./reducer";
 
 function visit(locationId: LocationId): GameCommand {
@@ -651,7 +653,7 @@ describe("game reducer", () => {
 
     expect(result.state.player.carriedCrate).toMatchObject({ productId: "glitch_gum", source: "supplier" });
     expect(result.state.factions.player.heat).toBeGreaterThan(initial.factions.player.heat);
-    expect(result.state.factions.player.money).toBeLessThan(initial.factions.player.money);
+    expect(result.state.economy.finance.ledger.some((entry) => entry.category === "stock" && entry.amount < 0)).toBe(true);
   });
 
   it("lets tips expose rival operations", () => {
@@ -837,7 +839,13 @@ describe("game reducer", () => {
     ]).state;
 
     expect(productLabSlots(customized)).toBeGreaterThan(0);
-    expect(customized.economy.productCustomizations.soda).toMatchObject({ mode: "premium_wrap" });
+    expect(customized.economy.productCustomizations.soda).toMatchObject({
+      brandName: "Vendetta Select",
+      brandTone: "premium",
+      mode: "premium_wrap",
+      packageStyle: "premium_wrap"
+    });
+    expect(customized.progression.productDesignsCompleted).toBe(1);
     expect(currentProductCost(customized, "soda")).toBeGreaterThanOrEqual(1);
   });
 
@@ -898,6 +906,40 @@ describe("game reducer", () => {
     ]).state;
 
     expect(worked.employees[employee.id].level).toBeGreaterThan(1);
+    expect(worked.employees[employee.id]).toMatchObject({
+      lastLocationId: "laundromat",
+      routePhase: "restock",
+      routeTargetLocationId: "laundromat"
+    });
+    expect(worked.streetLife.recentActivities.some((activity) => activity.kind === "employee_route" && activity.actor === "employee")).toBe(true);
     expect(worked.machines.machine_player_1.slots.find((slot) => slot.productId === "soda")?.quantity).toBeGreaterThan(0);
+  });
+
+  it("advances playable campaign chains from world actions", () => {
+    const initial = withInstalledStarter();
+    initial.mission.completed = true;
+    initial.factions.player.money = 500;
+
+    const result = reduceGameState(initial, {
+      type: "scout_district",
+      actorId: "player",
+      districtId: "industrial_yards"
+    }).state;
+    const yard = campaignMissionProgress(result).find((progress) => progress.arc.id === "yard_leverage");
+
+    expect(yard?.completedObjectives.map((objective) => objective.id)).toContain("yard_scout");
+    expect(yard?.activeObjective?.id).toBe("yard_open");
+    expect(result.mission.campaign.yard_leverage.completedStepIds).toContain("yard_scout");
+  });
+
+  it("ships validated default procedural audio content", () => {
+    const config = createDefaultAudioConfig();
+    const issues = validateAudioConfig(config);
+
+    expect(config.assets.length).toBeGreaterThan(0);
+    expect(config.cues.length).toBeGreaterThan(0);
+    expect(config.assets.some((asset) => asset.category === "music" && asset.url.startsWith("synth://music/"))).toBe(true);
+    expect(config.cues.some((cue) => cue.category === "voice" && cue.assetId === "synth_voice_radio")).toBe(true);
+    expect(issues.filter((issue) => issue.severity === "error")).toEqual([]);
   });
 });

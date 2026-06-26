@@ -13,6 +13,7 @@ import {
   baseSecurityScore,
   baseStorageCapacity,
   carriedCrateUnits,
+  campaignMissionProgress,
   coldStorageProtection,
   contractProgressRatio,
   contractRemainingQuantity,
@@ -195,6 +196,7 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
   const territory = rivalTerritoryByDistrict(state);
   const dayReport = latestDayReport(state);
   const storyProgress = useMemo(() => storyArcProgress(state), [state]);
+  const campaignProgress = useMemo(() => campaignMissionProgress(state), [state]);
   const endingScores = useMemo(() => endgamePathScores(state), [state]);
   const advancedTabs = useMemo<DashboardTab[]>(() => ["catalog", "finance", "logistics", "heat", "conflict", "rival", "story", ...(showDebug ? (["debug"] as DashboardTab[]) : [])], [showDebug]);
   const visibleTabs = useMemo<Array<{ icon: React.ReactNode; id: DashboardTab; label: string }>>(
@@ -381,8 +383,23 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
                     {product.category} · supplier ${currentProductCost(state, product.id)} · price ${product.basePrice} · demand {Math.round(product.demand * 100)} · heat {product.heat}
                   </p>
                   <p>
-                    {product.demandTags.join(" · ")}{customization ? ` · ${customization.mode.replace("_", " ")}` : ""}
+                    {product.demandTags.join(" · ")}
                   </p>
+                  {customization && (
+                    <p>
+                      {customization.brandName} · {customization.packageStyle.replace("_", " ")} · {customization.colorway} · design {customization.designScore}/100 · masking {Math.round(customization.riskMasking * 100)}
+                    </p>
+                  )}
+                  {customization && (
+                    <p>
+                      "{customization.tagline}"
+                    </p>
+                  )}
+                  {!customization && product.customizable && (
+                    <p>
+                      Lab-ready: choose package, brand tone, and shelf signal.
+                    </p>
+                  )}
                 </div>
                 <div className="route-actions">
                   <MiniButton disabled={!product.customizable || productLabSlots(state) <= 0} onClick={() => onCommand({ type: "customize_product", actorId: state.playerFactionId, productId: product.id, mode: "value_pack" })}>Value</MiniButton>
@@ -724,6 +741,8 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
           ) : (
             employees.map((employee) => {
               const role = employeeRoles[employee.role];
+              const routeLocationId = employee.routeTargetLocationId ?? employee.lastLocationId;
+              const routeLocation = routeLocationId ? state.locations[routeLocationId] : undefined;
               return (
                 <article className={`route-task ${employee.status === "blocked" ? "warning" : "good"}`} key={employee.id}>
                   <div>
@@ -736,6 +755,9 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
                     </p>
                     <p>
                       Reliability {Math.round(employee.reliability * 100)} · Skill {Math.round(employee.skill * 100)} · Loyalty {Math.round(employee.loyalty * 100)} · XP {Math.round(employee.xp ?? 0)}
+                    </p>
+                    <p>
+                      Route agent: {(employee.routePhase ?? "idle").replace("_", " ")} · {routeLocation ? `${routeLocation.name}, ${state.districts[routeLocation.districtId]?.name ?? routeLocation.districtId}` : "no visible stop"}
                     </p>
                   </div>
                   <div className="route-actions">
@@ -1052,9 +1074,30 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
           <article className="cargo-summary">
             <ClipboardList size={18} aria-hidden="true" />
             <span>
-              {gameDesignPillars.length} pillars · {storyProgress.length} arcs · leading ending {endingScores[0]?.path.title ?? "unknown"}
+              {campaignProgress.filter((progress) => progress.mission.completed).length}/{campaignProgress.length} chains · {storyProgress.length} arcs · leading ending {endingScores[0]?.path.title ?? "unknown"}
             </span>
           </article>
+
+          {campaignProgress.map((progress) => (
+            <article className={`route-task ${progress.tone}`} key={`campaign_${progress.arc.id}`}>
+              <div>
+                <h3>{progress.arc.title}</h3>
+                <p>
+                  {progress.mission.completed
+                    ? `${progress.arc.reward}`
+                    : progress.activeObjective
+                      ? `${progress.activeObjective.title} · ${progress.activeObjective.description}`
+                      : "No active objective"}
+                </p>
+                <p>
+                  {progress.completedObjectives.length > 0
+                    ? `Completed: ${progress.completedObjectives.map((objective) => objective.title).join(" · ")}`
+                    : `Chain: ${progress.arc.missionChain.map((objective) => objective.title).join(" · ")}`}
+                </p>
+              </div>
+              <strong>{Math.round(progress.progressRatio * 100)}%</strong>
+            </article>
+          ))}
 
           {gameDesignPillars.map((pillar) => (
             <article className="inventory-row" key={pillar.id}>

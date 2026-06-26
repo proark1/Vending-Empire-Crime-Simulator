@@ -1,6 +1,7 @@
 import type {
   BaseFacilityEffects,
   BaseFacilityId,
+  CampaignMissionState,
   DayReport,
   ConflictEvent,
   DistrictId,
@@ -23,7 +24,7 @@ import type {
   VendingMachine
 } from "./types";
 import { baseFacilities } from "../content/baseFacilities";
-import { endgamePaths, storyMissionArcs, type EndgamePath, type StoryMissionArc } from "../content/story";
+import { endgamePaths, storyMissionArcs, type EndgamePath, type StoryMissionArc, type StoryMissionObjective } from "../content/story";
 
 export type RouteTaskType = "supplier" | "garage" | "placement" | "stock" | "collect" | "repair" | "pressure" | "contract" | "alarm" | "inspection" | "conflict";
 
@@ -50,6 +51,16 @@ export interface StoryArcProgress {
   progressRatio: number;
   signals: string[];
   stage: StoryArcStage;
+  tone: "good" | "warning" | "danger";
+}
+
+export interface CampaignMissionProgress {
+  activeObjective?: StoryMissionObjective;
+  arc: StoryMissionArc;
+  completedObjectives: StoryMissionObjective[];
+  mission: CampaignMissionState;
+  pendingObjectives: StoryMissionObjective[];
+  progressRatio: number;
   tone: "good" | "warning" | "danger";
 }
 
@@ -615,6 +626,36 @@ export function storyArcProgress(state: GameState): StoryArcProgress[] {
       signals,
       stage,
       tone: stage === "complete" ? "good" : activeConflictEvents(state).length > 0 ? "danger" : "warning"
+    };
+  });
+}
+
+export function campaignMissionProgress(state: GameState): CampaignMissionProgress[] {
+  return storyMissionArcs.map((arc) => {
+    const firstStep = arc.missionChain[0];
+    const stored = state.mission?.campaign?.[arc.id];
+    const mission: CampaignMissionState = {
+      arcId: arc.id,
+      activeStepId: stored?.activeStepId ?? firstStep?.id ?? "",
+      completed: stored?.completed ?? false,
+      completedHour: stored?.completedHour,
+      completedStepIds: Array.isArray(stored?.completedStepIds) ? stored.completedStepIds : [],
+      unlockedHour: stored?.unlockedHour ?? 0
+    };
+    const completedStepIds = new Set(mission.completedStepIds);
+    const completedObjectives = arc.missionChain.filter((objective) => completedStepIds.has(objective.id));
+    const pendingObjectives = arc.missionChain.filter((objective) => !completedStepIds.has(objective.id));
+    const activeObjective = mission.completed ? undefined : arc.missionChain.find((objective) => objective.id === mission.activeStepId) ?? pendingObjectives[0];
+    const progressRatio = arc.missionChain.length === 0 ? 1 : completedObjectives.length / arc.missionChain.length;
+
+    return {
+      activeObjective,
+      arc,
+      completedObjectives,
+      mission,
+      pendingObjectives,
+      progressRatio: mission.completed ? 1 : progressRatio,
+      tone: mission.completed ? "good" : completedObjectives.length > 0 ? "warning" : "danger"
     };
   });
 }

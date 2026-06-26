@@ -160,6 +160,11 @@ export function migrateGameState(parsed: GameState): GameState {
       ...(parsed.law ?? {}),
       activeInspections: parsed.law?.activeInspections ?? baseline.law.activeInspections
     },
+    mission: {
+      ...baseline.mission,
+      ...(parsed.mission ?? {}),
+      campaign: parsed.mission?.campaign ?? baseline.mission.campaign
+    },
     streetLife: {
       ...baseline.streetLife,
       ...(parsed.streetLife ?? {}),
@@ -201,7 +206,8 @@ export function migrateGameState(parsed: GameState): GameState {
           ...employee,
           betrayed: employee.betrayed ?? false,
           level: employee.level ?? 1,
-          xp: employee.xp ?? 0
+          xp: employee.xp ?? 0,
+          routePhase: employee.routePhase ?? "idle"
         }
       ])
     ),
@@ -289,6 +295,7 @@ export function migrateGameState(parsed: GameState): GameState {
       ...baseline.progression,
       ...(parsed.progression ?? {}),
       contractsCompletedTotal: parsed.progression?.contractsCompletedTotal ?? parsed.progression?.contractsCompletedToday ?? baseline.progression.contractsCompletedTotal,
+      productDesignsCompleted: parsed.progression?.productDesignsCompleted ?? Object.keys(parsed.economy?.productCustomizations ?? {}).length,
       starterMachinePlaced: parsed.progression?.starterMachinePlaced ?? baseline.progression.starterMachinePlaced,
       firstUndercutTriggered: parsed.progression?.firstUndercutTriggered ?? baseline.progression.firstUndercutTriggered,
       firstRetaliationTriggered: parsed.progression?.firstRetaliationTriggered ?? baseline.progression.firstRetaliationTriggered

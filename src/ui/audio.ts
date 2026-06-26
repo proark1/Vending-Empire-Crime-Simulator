@@ -16,6 +16,7 @@ let ambienceOscillators: OscillatorNode[] = [];
 let audioConfig: AudioConfig = createDefaultAudioConfig();
 let currentMusicElement: HTMLAudioElement | null = null;
 let currentMusicCueId: string | null = null;
+let currentSynthMusicCueId: string | null = null;
 let musicDuckedUntil = 0;
 const activeOneShots = new Set<HTMLAudioElement>();
 const lastCueTimes = new Map<string, number>();
@@ -64,14 +65,18 @@ function channelVolume(category: AudioCategory, assetVolume = 1): number {
 }
 
 function updateCurrentMusicVolume(): void {
-  if (!currentMusicElement) {
+  const cue = audioConfig.cues.find((candidate) => candidate.id === (currentMusicCueId ?? currentSynthMusicCueId));
+  const asset = cue ? audioConfig.assets.find((candidate) => candidate.id === cue.assetId) : null;
+  const ducking = Date.now() < musicDuckedUntil ? audioConfig.mixer.voiceDucking : 1;
+  if (currentMusicElement) {
+    currentMusicElement.volume = channelVolume("music", asset?.volume ?? 1) * ducking;
     return;
   }
 
-  const cue = audioConfig.cues.find((candidate) => candidate.id === currentMusicCueId);
-  const asset = cue ? audioConfig.assets.find((candidate) => candidate.id === cue.assetId) : null;
-  const ducking = Date.now() < musicDuckedUntil ? audioConfig.mixer.voiceDucking : 1;
-  currentMusicElement.volume = channelVolume("music", asset?.volume ?? 1) * ducking;
+  const context = getContext();
+  if (context && ambienceGain && currentSynthMusicCueId) {
+    ambienceGain.gain.setTargetAtTime(0.02 * channelVolume("music", asset?.volume ?? 1) * ducking, context.currentTime, 0.25);
+  }
 }
 
 function configureElementVolume(element: HTMLAudioElement, category: AudioCategory, asset: AudioAsset): void {
@@ -125,10 +130,160 @@ function stopAmbience(): void {
   ambienceOscillators = [];
   ambienceGain?.disconnect();
   ambienceGain = null;
+  currentSynthMusicCueId = null;
+}
+
+function isSynthAsset(asset: AudioAsset): boolean {
+  return asset.url.startsWith("synth://");
+}
+
+function synthPreset(asset: AudioAsset): string {
+  return asset.url.replace(/^synth:\/\//, "");
+}
+
+function synthTone(frequency: number, start: number, duration: number, gain: number, type: OscillatorType = "sine", category: AudioCategory = "sound", assetVolume = 1): void {
+  const context = getContext();
+  if (!context || !unlocked) {
+    return;
+  }
+
+  const oscillator = context.createOscillator();
+  const volume = context.createGain();
+  const effectiveGain = gain * channelVolume(category, assetVolume);
+  if (effectiveGain <= 0.0001) {
+    return;
+  }
+  oscillator.type = type;
+  oscillator.frequency.setValueAtTime(frequency, start);
+  volume.gain.setValueAtTime(0.0001, start);
+  volume.gain.exponentialRampToValueAtTime(effectiveGain, start + 0.015);
+  volume.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+  oscillator.connect(volume);
+  volume.connect(context.destination);
+  oscillator.start(start);
+  oscillator.stop(start + duration + 0.03);
+}
+
+function playSynthMusicCue(cue: AudioCue, asset: AudioAsset): boolean {
+  const context = getContext();
+  if (!context || !unlocked) {
+    return false;
+  }
+
+  if (currentSynthMusicCueId === cue.id && ambienceGain) {
+    updateCurrentMusicVolume();
+    return true;
+  }
+
+  stopCurrentMusic();
+  stopAmbience();
+
+  const preset = synthPreset(asset);
+  const base = preset.includes("conflict") ? 72 : preset.includes("heat") ? 61 : 54;
+  const shimmer = preset.includes("conflict") ? 168 : preset.includes("heat") ? 136 : 118;
+  const pulse = preset.includes("conflict") ? 94 : preset.includes("heat") ? 82 : 0;
+  ambienceGain = context.createGain();
+  ambienceGain.gain.setValueAtTime(0.02 * channelVolume("music", asset.volume), context.currentTime);
+  ambienceGain.connect(context.destination);
+
+  const lowDrone = context.createOscillator();
+  lowDrone.type = preset.includes("conflict") ? "sawtooth" : "sine";
+  lowDrone.frequency.setValueAtTime(base, context.currentTime);
+  lowDrone.connect(ambienceGain);
+  lowDrone.start();
+
+  const fluorescentBuzz = context.createOscillator();
+  fluorescentBuzz.type = preset.includes("conflict") ? "square" : "triangle";
+  fluorescentBuzz.frequency.setValueAtTime(shimmer, context.currentTime);
+  fluorescentBuzz.connect(ambienceGain);
+  fluorescentBuzz.start();
+
+  ambienceOscillators = [lowDrone, fluorescentBuzz];
+  if (pulse > 0) {
+    const pulseOscillator = context.createOscillator();
+    pulseOscillator.type = "triangle";
+    pulseOscillator.frequency.setValueAtTime(pulse, context.currentTime);
+    pulseOscillator.connect(ambienceGain);
+    pulseOscillator.start();
+    ambienceOscillators.push(pulseOscillator);
+  }
+
+  currentSynthMusicCueId = cue.id;
+  lastCueTimes.set(cue.id, Date.now());
+  return true;
+}
+
+function playSynthAsset(cue: AudioCue, asset: AudioAsset): boolean {
+  if (asset.category === "music") {
+    return playSynthMusicCue(cue, asset);
+  }
+
+  const context = getContext();
+  if (!context || !unlocked) {
+    return false;
+  }
+
+  const now = context.currentTime;
+  const preset = synthPreset(asset);
+  const category = asset.category;
+  lastCueTimes.set(cue.id, Date.now());
+
+  if (category === "voice" && cue.duckMusic) {
+    musicDuckedUntil = Date.now() + Math.max(1400, 900 + cue.cooldownMs);
+    updateCurrentMusicVolume();
+    window.setTimeout(() => {
+      musicDuckedUntil = 0;
+      updateCurrentMusicVolume();
+    }, Math.max(1400, 900 + cue.cooldownMs));
+  }
+
+  if (preset.includes("cash")) {
+    synthTone(880, now, 0.08, 0.035, "triangle", category, asset.volume);
+    synthTone(1320, now + 0.07, 0.09, 0.026, "triangle", category, asset.volume);
+    return true;
+  }
+
+  if (preset.includes("crate")) {
+    synthTone(150, now, 0.07, 0.034, "square", category, asset.volume);
+    synthTone(215, now + 0.07, 0.1, 0.026, "square", category, asset.volume);
+    return true;
+  }
+
+  if (preset.includes("tools")) {
+    synthTone(420, now, 0.05, 0.03, "sawtooth", category, asset.volume);
+    synthTone(640, now + 0.05, 0.06, 0.026, "sawtooth", category, asset.volume);
+    synthTone(920, now + 0.11, 0.07, 0.02, "triangle", category, asset.volume);
+    return true;
+  }
+
+  if (preset.includes("conflict")) {
+    synthTone(92, now, 0.12, 0.04, "sawtooth", category, asset.volume);
+    synthTone(58, now + 0.08, 0.11, 0.035, "square", category, asset.volume);
+    return true;
+  }
+
+  if (preset.includes("voice")) {
+    synthTone(360, now, 0.08, 0.018, "triangle", category, asset.volume);
+    synthTone(430, now + 0.12, 0.08, 0.016, "triangle", category, asset.volume);
+    synthTone(310, now + 0.24, 0.1, 0.014, "sine", category, asset.volume);
+    return true;
+  }
+
+  synthTone(520, now, 0.07, 0.028, "triangle", category, asset.volume);
+  synthTone(780, now + 0.08, 0.09, 0.022, "triangle", category, asset.volume);
+  return true;
 }
 
 function playAsset(cue: AudioCue, asset: AudioAsset): boolean {
-  if (typeof Audio === "undefined" || !unlocked || !asset.url) {
+  if (!unlocked || !asset.url) {
+    return false;
+  }
+
+  if (isSynthAsset(asset)) {
+    return playSynthAsset(cue, asset);
+  }
+
+  if (typeof Audio === "undefined") {
     return false;
   }
 
@@ -175,7 +330,15 @@ function playConfiguredCue(trigger: string, fallback: () => void): void {
 function playMusicCue(trigger: string): boolean {
   const cue = findCue(trigger, "music");
   const asset = cueAsset(cue);
-  if (!cue || !asset || !asset.url || typeof Audio === "undefined" || !unlocked) {
+  if (!cue || !asset || !asset.url || !unlocked) {
+    return false;
+  }
+
+  if (isSynthAsset(asset)) {
+    return playSynthMusicCue(cue, asset);
+  }
+
+  if (typeof Audio === "undefined") {
     return false;
   }
 
@@ -208,8 +371,10 @@ function playFirstMusicCue(triggers: string[]): boolean {
 export function configureGameAudio(config: AudioConfig): void {
   audioConfig = normalizeAudioConfig(config);
 
-  if (currentMusicCueId && !audioConfig.cues.some((cue) => cue.id === currentMusicCueId && cue.enabled)) {
+  const currentCueId = currentMusicCueId ?? currentSynthMusicCueId;
+  if (currentCueId && !audioConfig.cues.some((cue) => cue.id === currentCueId && cue.enabled)) {
     stopCurrentMusic();
+    stopAmbience();
   } else {
     updateCurrentMusicVolume();
   }
