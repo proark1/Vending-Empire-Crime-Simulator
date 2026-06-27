@@ -38,7 +38,8 @@ import {
   pointInRect,
   rectsOverlap,
   snap,
-  snapBounds
+  snapBounds,
+  sortedUnique
 } from "./rectGrid";
 
 export interface CityBlock {
@@ -215,6 +216,45 @@ function mergeArterialLines(globals: number[], edges: number[], min: number, max
   return Array.from(new Set(kept)).sort((a, b) => a - b);
 }
 
+// Split an arterial's span into per-district segments so each segment carries the
+// correct district curb/lane colour. A full-span arterial tagged to a single
+// district would clash with the local roads of every other district it crosses.
+// Adjacent segments share an edge, so the arterial stays one connected run.
+function arterialSegments(
+  spanMin: number,
+  spanMax: number,
+  districtEdges: number[],
+  districtAtPos: (pos: number) => string
+): Array<{ a: number; b: number; districtId: string }> {
+  const inner = districtEdges.filter((edge) => edge > spanMin + 0.5 && edge < spanMax - 0.5);
+  const bounds = sortedUnique([spanMin, ...inner, spanMax]);
+  const segments: Array<{ a: number; b: number; districtId: string }> = [];
+  for (let i = 0; i < bounds.length - 1; i += 1) {
+    const a = bounds[i];
+    const b = bounds[i + 1];
+    const districtId = districtAtPos((a + b) / 2);
+    const last = segments[segments.length - 1];
+    if (last && last.districtId === districtId) {
+      last.b = b; // merge consecutive same-district stretches
+    } else {
+      segments.push({ a, b, districtId });
+    }
+  }
+  // Fold away any sub-minimum sliver so no road segment is too narrow.
+  const minLen = WORLD_SCALE.road.minimumStreetWidth;
+  for (let i = segments.length - 1; i > 0; i -= 1) {
+    if (segments[i].b - segments[i].a < minLen) {
+      segments[i - 1].b = segments[i].b;
+      segments.splice(i, 1);
+    }
+  }
+  if (segments.length > 1 && segments[0].b - segments[0].a < minLen) {
+    segments[1].a = segments[0].a;
+    segments.splice(0, 1);
+  }
+  return segments;
+}
+
 function generateRoads(options: CityPlanOptions, roadsRng: Rng): WorldRoad[] {
   const rng = roadsRng.fork("arterials");
   const { worldBounds } = options;
@@ -245,27 +285,34 @@ function generateRoads(options: CityPlanOptions, roadsRng: Rng): WorldRoad[] {
   const districtForPoint = (point: Vec2): string =>
     districtOwnerAt(point, ordered) ?? ordered[ordered.length - 1].id;
 
-  // Vertical arterials (constant x, full height).
+  const districtXEdges = Object.values(options.districts).flatMap((d) => [d.bounds.minX, d.bounds.maxX]);
+  const districtZEdges = Object.values(options.districts).flatMap((d) => [d.bounds.minZ, d.bounds.maxZ]);
+
+  // Vertical arterials (constant x), split into per-district segments.
   xs.forEach((x, index) => {
-    roads.push({
-      id: `arterial_v_${index}`,
-      districtId: districtForPoint({ x, z: (spanMinZ + spanMaxZ) / 2 }),
-      x: snap(x),
-      z: snap((spanMinZ + spanMaxZ) / 2),
-      width: AVENUE_WIDTH,
-      depth: snap(spanMaxZ - spanMinZ)
+    arterialSegments(spanMinZ, spanMaxZ, districtZEdges, (z) => districtForPoint({ x, z })).forEach((seg, si) => {
+      roads.push({
+        id: `arterial_v_${index}_${si}`,
+        districtId: seg.districtId,
+        x: snap(x),
+        z: snap((seg.a + seg.b) / 2),
+        width: AVENUE_WIDTH,
+        depth: snap(seg.b - seg.a)
+      });
     });
   });
 
-  // Horizontal arterials (constant z, full width).
+  // Horizontal arterials (constant z), split into per-district segments.
   zs.forEach((z, index) => {
-    roads.push({
-      id: `arterial_h_${index}`,
-      districtId: districtForPoint({ x: (spanMinX + spanMaxX) / 2, z }),
-      x: snap((spanMinX + spanMaxX) / 2),
-      z: snap(z),
-      width: snap(spanMaxX - spanMinX),
-      depth: AVENUE_WIDTH
+    arterialSegments(spanMinX, spanMaxX, districtXEdges, (xx) => districtForPoint({ x: xx, z })).forEach((seg, si) => {
+      roads.push({
+        id: `arterial_h_${index}_${si}`,
+        districtId: seg.districtId,
+        x: snap((seg.a + seg.b) / 2),
+        z: snap(z),
+        width: snap(seg.b - seg.a),
+        depth: AVENUE_WIDTH
+      });
     });
   });
 
@@ -419,7 +466,21 @@ function placeRow(spec: RowSpec, rng: Rng, options: CityPlanOptions, districtId:
   return buildings;
 }
 
-function placeBuildingsInBlock(block: CityBlock, rng: Rng, options: CityPlanOptions, idCounter: { value: number }): WorldBuilding[] {
+// Is there a road in the thin strip just outside one edge of the block?
+function edgeHasRoad(block: CityBlock, side: BuildingFacing, roadFootprints: Bounds2[]): boolean {
+  const b = block.bounds;
+  const probe: Bounds2 =
+    side === "north"
+      ? { minX: b.minX, maxX: b.maxX, minZ: b.minZ - 2.5, maxZ: b.minZ - 0.05 }
+      : side === "south"
+        ? { minX: b.minX, maxX: b.maxX, minZ: b.maxZ + 0.05, maxZ: b.maxZ + 2.5 }
+        : side === "west"
+          ? { minX: b.minX - 2.5, maxX: b.minX - 0.05, minZ: b.minZ, maxZ: b.maxZ }
+          : { minX: b.maxX + 0.05, maxX: b.maxX + 2.5, minZ: b.minZ, maxZ: b.maxZ };
+  return roadFootprints.some((fp) => rectsOverlap(probe, fp));
+}
+
+function placeBuildingsInBlock(block: CityBlock, rng: Rng, options: CityPlanOptions, idCounter: { value: number }, roadFootprints: Bounds2[]): WorldBuilding[] {
   const buildable = snapBounds(inflate(block.bounds, -(SIDEWALK + options.setback)));
   const width = boundsWidth(buildable);
   const depth = boundsDepth(buildable);
@@ -430,9 +491,23 @@ function placeBuildingsInBlock(block: CityBlock, rng: Rng, options: CityPlanOpti
   const buildings: WorldBuilding[] = [];
   const idPrefix = `${block.districtId}_lot`;
 
-  const runAlongX = width >= depth;
+  // Only edges that actually border a road are frontages — buildings line up
+  // against those, facing the street. Edges that are district/world boundaries
+  // (no road) become the block's back, so no storefront is ever stranded far
+  // from its street.
+  const hasN = edgeHasRoad(block, "north", roadFootprints);
+  const hasS = edgeHasRoad(block, "south", roadFootprints);
+  const hasW = edgeHasRoad(block, "west", roadFootprints);
+  const hasE = edgeHasRoad(block, "east", roadFootprints);
+  const xFront = [hasN ? "north" : null, hasS ? "south" : null].filter(Boolean) as BuildingFacing[];
+  const zFront = [hasW ? "west" : null, hasE ? "east" : null].filter(Boolean) as BuildingFacing[];
+  if (xFront.length === 0 && zFront.length === 0) {
+    return []; // landlocked block — no street access, no buildings
+  }
+
+  const runAlongX = xFront.length !== zFront.length ? xFront.length > zFront.length : width >= depth;
+  const frontages = runAlongX ? xFront : zFront;
   const spanDepth = runAlongX ? depth : width;
-  const twoRows = spanDepth >= 2 * MIN_ROW_DEPTH + MIN_ALLEY;
 
   const makeRow = (depthCenter: number, rowDepth: number, facing: BuildingFacing) => {
     const spec: RowSpec = {
@@ -448,22 +523,21 @@ function placeBuildingsInBlock(block: CityBlock, rng: Rng, options: CityPlanOpti
     buildings.push(...placed);
   };
 
+  const min = runAlongX ? buildable.minZ : buildable.minX;
+  const max = runAlongX ? buildable.maxZ : buildable.maxX;
+  const nearFacing: BuildingFacing = runAlongX ? "north" : "west";
+  const farFacing: BuildingFacing = runAlongX ? "south" : "east";
+  const twoRows = frontages.length >= 2 && spanDepth >= 2 * MIN_ROW_DEPTH + MIN_ALLEY;
+
   if (twoRows) {
     const rowDepth = Math.max(MIN_ROW_DEPTH, Math.min(rng.range(ROW_DEPTH[0], ROW_DEPTH[1]), (spanDepth - MIN_ALLEY) / 2));
-    if (runAlongX) {
-      makeRow(snap(buildable.minZ + rowDepth / 2), rowDepth, "north");
-      makeRow(snap(buildable.maxZ - rowDepth / 2), rowDepth, "south");
-    } else {
-      makeRow(snap(buildable.minX + rowDepth / 2), rowDepth, "west");
-      makeRow(snap(buildable.maxX - rowDepth / 2), rowDepth, "east");
-    }
+    makeRow(snap(min + rowDepth / 2), rowDepth, nearFacing);
+    makeRow(snap(max - rowDepth / 2), rowDepth, farFacing);
   } else {
+    // One row hugging an edge that has a road.
     const rowDepth = Math.min(rng.range(ROW_DEPTH[0], ROW_DEPTH[1]), spanDepth);
-    if (runAlongX) {
-      makeRow(snap((buildable.minZ + buildable.maxZ) / 2), rowDepth, "north");
-    } else {
-      makeRow(snap((buildable.minX + buildable.maxX) / 2), rowDepth, "west");
-    }
+    const hugNear = frontages.includes(nearFacing);
+    makeRow(hugNear ? snap(min + rowDepth / 2) : snap(max - rowDepth / 2), rowDepth, hugNear ? nearFacing : farFacing);
   }
 
   return relaxBuildings(buildings, { gap: options.minGap, bounds: buildable, iterations: 8 });
@@ -567,6 +641,7 @@ export function generateCityPlan(seed: string, optionsInput?: Partial<CityPlanOp
   }
 
   const blocks = enumerateBlocks(options, roads, ordered);
+  const roadFootprints = roads.map(roadFootprint);
 
   const buildingsRng = rootRng.fork("buildings");
   const idCounter = { value: 0 };
@@ -581,7 +656,7 @@ export function generateCityPlan(seed: string, optionsInput?: Partial<CityPlanOp
   });
   orderedBlocks.forEach((block, index) => {
     const blockRng = buildingsRng.fork(`${index}`);
-    buildings.push(...placeBuildingsInBlock(block, blockRng, options, idCounter));
+    buildings.push(...placeBuildingsInBlock(block, blockRng, options, idCounter, roadFootprints));
   });
 
   return { blocks, buildings, roads };

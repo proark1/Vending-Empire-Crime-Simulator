@@ -41,7 +41,8 @@ import {
   pointInRect,
   rectContains,
   rectsOverlap,
-  snap
+  snap,
+  snapBounds
 } from "./rectGrid";
 
 const SIDEWALK = WORLD_SCALE.road.sidewalkWidth;
@@ -413,14 +414,28 @@ function roadDistrictMap(roads: WorldRoad[]): Map<string, string> {
 
 function buildDecorations(roads: WorldRoad[], sidewalks: Array<{ depth: number; sourceRoadId: string; width: number; x: number; z: number }>, rng: Rng): WorldDecoration[] {
   const roadDistrict = roadDistrictMap(roads);
+  const roadFps = roads.map(roadFootprint);
   const decorations: WorldDecoration[] = [];
   const kinds: WorldDecorationKind[] = ["streetlight", "planter", "bollard", "utility_box"];
+  // A prop's footprint must stay this far clear of every road — nothing belongs
+  // on the asphalt, only cars and pedestrians.
+  const PROP_CLEARANCE = 0.9;
   let index = 0;
-  // Place a prop on the larger sidewalk pieces, skipping most to avoid clutter.
-  const eligible = sidewalks.filter((piece) => piece.width >= 2.4 && piece.depth >= 2.4);
+  // Sidewalk strips are only ~sidewalkWidth deep, so qualify on the longer span;
+  // skip the rest to avoid clutter.
+  const eligible = sidewalks.filter((piece) => Math.max(piece.width, piece.depth) >= 3 && Math.min(piece.width, piece.depth) >= 1.4);
   for (const piece of eligible) {
     if (!rng.chance(0.4)) {
       continue;
+    }
+    const propBounds: Bounds2 = {
+      minX: piece.x - PROP_CLEARANCE,
+      maxX: piece.x + PROP_CLEARANCE,
+      minZ: piece.z - PROP_CLEARANCE,
+      maxZ: piece.z + PROP_CLEARANCE
+    };
+    if (roadFps.some((fp) => rectsOverlap(propBounds, fp))) {
+      continue; // would intrude onto a road
     }
     const kind = rng.pick(kinds);
     decorations.push({
@@ -525,30 +540,42 @@ function buildTrafficLoops(roads: WorldRoad[]): TrafficLoop[] {
 }
 
 // ---------------------------------------------------------------------------
-// Parks — keep the authored park, drop buildings that would sit on it
+// Parks — drop the park into a real, EMPTY block so it reads as open green
+// space. A block still holding a named location building would bury the grass
+// behind storefronts (the minimap showed a park the player never saw), so only
+// blocks free of location buildings qualify; their filler is dropped later.
 // ---------------------------------------------------------------------------
-function fitParks(blocks: CityBlock[]): WorldPark[] {
+function fitParks(blocks: CityBlock[], buildings: WorldBuilding[]): WorldPark[] {
+  const locationFootprints = buildings.filter((b) => b.locationId).map(footprint);
+  const used: Bounds2[] = [];
   return worldParks.map((park) => {
-    // Prefer a generated block in the park's district big enough to host it.
     const candidates = blocks
-      .filter((block) => block.districtId === park.districtId)
-      .filter((block) => boundsArea(block.bounds) > 200)
-      .sort((a, b) => boundsArea(b.bounds) - boundsArea(a.bounds));
+      .filter((block) => boundsArea(block.bounds) > 240)
+      .filter((block) => {
+        const inset = inflate(block.bounds, -SIDEWALK);
+        return !locationFootprints.some((fp) => rectsOverlap(inset, fp)) && !used.some((u) => rectsOverlap(block.bounds, u));
+      })
+      .sort((a, b) => {
+        const prefA = a.districtId === park.districtId ? 1 : 0;
+        const prefB = b.districtId === park.districtId ? 1 : 0;
+        if (prefA !== prefB) {
+          return prefB - prefA;
+        }
+        return boundsArea(b.bounds) - boundsArea(a.bounds);
+      });
     const block = candidates[0];
     if (!block) {
       return park;
     }
-    const bounds = inflate(block.bounds, -SIDEWALK);
+    used.push(block.bounds);
+    const bounds = snapBounds(inflate(block.bounds, -SIDEWALK));
     const center = boundsCenter(bounds);
+    const radius = Math.min(park.pond.radius, Math.min(bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ) / 4);
     return {
       ...park,
-      bounds: {
-        minX: snap(bounds.minX),
-        maxX: snap(bounds.maxX),
-        minZ: snap(bounds.minZ),
-        maxZ: snap(bounds.maxZ)
-      },
-      pond: { x: snap(center.x), z: snap(center.z), radius: Math.min(park.pond.radius, 3.5) }
+      districtId: block.districtId,
+      bounds,
+      pond: { x: snap(center.x), z: snap(center.z), radius: snap(radius) }
     };
   });
 }
@@ -623,7 +650,7 @@ export function regenerateCity(seed: string): WorldMapLayout {
   const rng = createRng(seed).fork("regen");
 
   const buildings = buildBuildings(plan);
-  const parks = fitParks(plan.blocks);
+  const parks = fitParks(plan.blocks, buildings);
 
   // Drop any building that would sit on a park.
   const parkBounds = parks.map((park) => park.bounds);
