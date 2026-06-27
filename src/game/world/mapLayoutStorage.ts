@@ -1,9 +1,9 @@
 import type { Bounds2, Vec2 } from "../core/types";
 import {
+  buildingFootprintExtents,
   defaultWorldMapLayout,
   districts,
   locations,
-  machinePlacementAnchors,
   worldBounds,
   type CityBackdropBuilding,
   type PatrolZone,
@@ -18,16 +18,45 @@ import {
 import { disconnectedRoadIds, pathOnRoads } from "./roadGraph";
 import { WORLD_SCALE } from "./scale";
 import { sidewalkFootprintBounds, sidewalkFootprintsForRoads } from "./sidewalks";
+import { anchorsForLayout } from "./locationGeometry";
+
+const FINAL_CLEARANCE = WORLD_SCALE.layout.finalOverlapClearance;
+const GAP_TOLERANCE = 0.01;
+
+function inflateBounds(bounds: Bounds2, margin: number): Bounds2 {
+  return { minX: bounds.minX - margin, maxX: bounds.maxX + margin, minZ: bounds.minZ - margin, maxZ: bounds.maxZ + margin };
+}
+
+// Edge-to-edge separation between two AABBs on each axis (negative if they
+// overlap on that axis). Two rects are "too close" when both separations are
+// below the navigable gap.
+function tooClose(a: Bounds2, b: Bounds2, gap: number): boolean {
+  const sepX = Math.max(b.minX - a.maxX, a.minX - b.maxX);
+  const sepZ = Math.max(b.minZ - a.maxZ, a.minZ - b.maxZ);
+  return sepX < gap - GAP_TOLERANCE && sepZ < gap - GAP_TOLERANCE;
+}
 
 const MAP_LAYOUT_KEY = "vendetta-vending.map-layout.v1";
 // Bump when authored world content changes structurally (roads, buildings, parks)
 // so stale persisted layouts are discarded in favour of the fresh default.
-const MAP_LAYOUT_VERSION = 4;
+// v5: buildings gained `facing`/`id`; merge is now id-keyed with a replace mode.
+const MAP_LAYOUT_VERSION = 5;
 
 interface StoredWorldMapLayout {
   layout: WorldMapLayout;
+  // "merge" (default) additively merges a hand-edited layout over the code
+  // defaults; "replace" stores a self-contained generated layout verbatim so its
+  // (different-length) road/building/decoration arrays are not polluted by the
+  // default tail. `seed` records the generator seed for reproducibility.
+  mode?: "merge" | "replace";
+  seed?: string;
   updatedAt: string;
   version: number;
+}
+
+export interface SaveLayoutOptions {
+  replace?: boolean;
+  seed?: string;
 }
 
 export interface MapValidationIssue {
@@ -62,18 +91,52 @@ function mergeArray<T extends object>(candidate: unknown, fallback: T[]): T[] {
   return merged;
 }
 
-export function normalizeLayout(candidate: unknown): WorldMapLayout {
+function clampBuilding(building: WorldBuilding): WorldBuilding {
+  return {
+    ...building,
+    facing: building.facing ?? "north",
+    height: Math.max(building.height, WORLD_SCALE.building.minimumStorefrontHeight)
+  };
+}
+
+// A generated layout is a self-contained set, not a descendant of the authored
+// default, so it must be stored/loaded verbatim (replace) rather than merged.
+// Generated location buildings carry a derived `anchor`; the default never does,
+// which is a reliable, flag-free signal.
+export function layoutLooksGenerated(layout: Partial<WorldMapLayout> | undefined): boolean {
+  return Array.isArray(layout?.buildings) && layout.buildings.some((building) => Boolean(building?.anchor));
+}
+
+export function normalizeLayout(candidate: unknown, options: { replace?: boolean } = {}): WorldMapLayout {
   const fallback = cloneLayout(defaultWorldMapLayout);
   const input = typeof candidate === "object" && candidate !== null ? candidate as Partial<WorldMapLayout> : {};
+  const replace = options.replace ?? layoutLooksGenerated(input);
+
+  // Replace mode: take a self-contained generated layout verbatim (no per-index
+  // merge, no default tail) so its arrays survive a save/load round-trip. Only
+  // missing whole layers fall back to the default.
+  if (replace) {
+    const take = <T,>(value: T[] | undefined, fb: T[]): T[] =>
+      Array.isArray(value) ? value.map((item) => ({ ...(item as object) }) as T) : fb.map((item) => ({ ...(item as object) }) as T);
+    return {
+      backdropBuildings: take(input.backdropBuildings, fallback.backdropBuildings),
+      buildings: take(input.buildings, fallback.buildings).map(clampBuilding),
+      decorations: take(input.decorations, fallback.decorations),
+      interiors: take(input.interiors, fallback.interiors),
+      parks: take(input.parks, fallback.parks),
+      patrolZones: take(input.patrolZones, fallback.patrolZones),
+      policePatrolPaths: take(input.policePatrolPaths, fallback.policePatrolPaths),
+      roads: take(input.roads, fallback.roads),
+      trafficLoops: take(input.trafficLoops, fallback.trafficLoops)
+    };
+  }
 
   return {
     backdropBuildings: mergeArray(input.backdropBuildings, fallback.backdropBuildings),
     // Clamp building heights to the human-scale storefront floor so a stale saved
-    // layout still renders tall enough for the door + window the renderer draws.
-    buildings: mergeArray(input.buildings, fallback.buildings).map((building) => ({
-      ...building,
-      height: Math.max(building.height, WORLD_SCALE.building.minimumStorefrontHeight)
-    })),
+    // layout still renders tall enough for the door + window the renderer draws,
+    // and backfill `facing` so pre-facing layouts keep their legacy -Z facade.
+    buildings: mergeArray(input.buildings, fallback.buildings).map(clampBuilding),
     decorations: mergeArray(input.decorations, fallback.decorations),
     interiors: mergeArray(input.interiors, fallback.interiors),
     parks: mergeArray(input.parks, fallback.parks),
@@ -101,7 +164,8 @@ export function loadWorldMapLayout(): WorldMapLayout {
   try {
     const parsed = JSON.parse(raw) as Partial<StoredWorldMapLayout> | WorldMapLayout;
     if (typeof parsed === "object" && parsed !== null && "layout" in parsed && parsed.version === MAP_LAYOUT_VERSION) {
-      return normalizeLayout(parsed.layout);
+      // Honour an explicit replace mode; otherwise let normalizeLayout auto-detect.
+      return normalizeLayout(parsed.layout, parsed.mode === "replace" ? { replace: true } : {});
     }
 
     return normalizeLayout(parsed);
@@ -110,13 +174,16 @@ export function loadWorldMapLayout(): WorldMapLayout {
   }
 }
 
-export function saveWorldMapLayout(layout: WorldMapLayout): void {
+export function saveWorldMapLayout(layout: WorldMapLayout, options: SaveLayoutOptions = {}): void {
   if (!hasBrowserStorage()) {
     return;
   }
 
+  const replace = options.replace ?? layoutLooksGenerated(layout);
   const stored: StoredWorldMapLayout = {
-    layout: normalizeLayout(layout),
+    layout: normalizeLayout(layout, { replace }),
+    mode: replace ? "replace" : "merge",
+    seed: options.seed,
     updatedAt: new Date().toISOString(),
     version: MAP_LAYOUT_VERSION
   };
@@ -140,12 +207,15 @@ export function roadFootprint(road: WorldRoad): Bounds2 {
   };
 }
 
-export function buildingFootprint(building: Pick<WorldBuilding, "depth" | "width" | "x" | "z">): Bounds2 {
+export function buildingFootprint(
+  building: Pick<WorldBuilding, "depth" | "width" | "x" | "z"> & { facing?: WorldBuilding["facing"] }
+): Bounds2 {
+  const extents = buildingFootprintExtents(building);
   return {
-    minX: building.x - building.width / 2,
-    maxX: building.x + building.width / 2,
-    minZ: building.z - building.depth / 2,
-    maxZ: building.z + building.depth / 2
+    minX: building.x - extents.x / 2,
+    maxX: building.x + extents.x / 2,
+    minZ: building.z - extents.z / 2,
+    maxZ: building.z + extents.z / 2
   };
 }
 
@@ -310,24 +380,45 @@ export function validateWorldMapLayout(layout: WorldMapLayout): MapValidationIss
       pushIssue(issues, "warning", "buildings", `${label} references unknown location "${building.locationId}".`);
     }
 
+    const district = districts[building.districtId];
+    if (district && !pointInsideBounds({ x: building.x, z: building.z }, district.bounds)) {
+      pushIssue(issues, "warning", "buildings", `${label} sits outside its district bounds.`);
+    }
+
+    const setbackBounds = inflateBounds(buildingBounds, WORLD_SCALE.layout.minBuildingSetback);
     for (const road of layout.roads) {
-      if (rectsIntersect(buildingBounds, roadFootprint(road))) {
+      const roadBounds = roadFootprint(road);
+      if (rectsIntersect(buildingBounds, roadBounds, FINAL_CLEARANCE)) {
         pushIssue(issues, "error", "buildings", `${label} overlaps ${road.id}. Move either object so streets stay clear of building footprints.`);
+      } else if (rectsIntersect(setbackBounds, roadBounds, FINAL_CLEARANCE)) {
+        pushIssue(issues, "warning", "buildings", `${label} sits too close to ${road.id}; leave a setback off the street.`);
       }
     }
   });
+
+  // Buildings must keep a navigable gap from one another so the player can walk
+  // around them (collision boxes are inflated by the player radius at runtime).
+  for (let i = 0; i < buildingBounds.length; i += 1) {
+    for (let j = i + 1; j < buildingBounds.length; j += 1) {
+      if (tooClose(buildingBounds[i], buildingBounds[j], WORLD_SCALE.layout.minBuildingGap)) {
+        const a = objectLabel(layout.buildings[i], i);
+        const b = objectLabel(layout.buildings[j], j);
+        pushIssue(issues, "warning", "buildings", `${a} and ${b} are too close to walk between; widen the gap.`);
+      }
+    }
+  }
 
   sidewalkFootprintsForRoads(layout.roads, layout.buildings).forEach((sidewalk, sidewalkIndex) => {
     const sidewalkBounds = sidewalkFootprintBounds(sidewalk);
     validateRect(issues, "roads", sidewalkBounds, `${sidewalk.sourceRoadId} sidewalk ${sidewalkIndex + 1}`);
 
     for (const road of layout.roads) {
-      if (rectsIntersect(sidewalkBounds, roadFootprint(road))) {
+      if (rectsIntersect(sidewalkBounds, roadFootprint(road), FINAL_CLEARANCE)) {
         pushIssue(issues, "error", "roads", `${sidewalk.sourceRoadId} sidewalk crosses ${road.id}.`);
       }
     }
 
-    if (buildingBounds.some((bounds) => rectsIntersect(sidewalkBounds, bounds))) {
+    if (buildingBounds.some((bounds) => rectsIntersect(sidewalkBounds, bounds, FINAL_CLEARANCE))) {
       pushIssue(issues, "error", "roads", `${sidewalk.sourceRoadId} sidewalk overlaps a building footprint.`);
     }
   });
@@ -386,8 +477,9 @@ export function validateWorldMapLayout(layout: WorldMapLayout): MapValidationIss
   const installableLocationIds = Object.values(locations)
     .filter((location) => location.kind !== "garage" && location.kind !== "supplier")
     .map((location) => location.id);
+  const effectiveAnchors = anchorsForLayout(layout);
   for (const locationId of installableLocationIds) {
-    const anchor = machinePlacementAnchors[locationId];
+    const anchor = effectiveAnchors[locationId];
     if (!anchor) {
       pushIssue(issues, "error", undefined, `${locations[locationId].name} has no machine placement anchor.`);
       continue;

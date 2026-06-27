@@ -1,6 +1,7 @@
 import type { Bounds2 } from "../core/types";
-import type { WorldBuilding, WorldRoad } from "../content/world";
+import { buildingFootprintExtents, type WorldBuilding, type WorldRoad } from "../content/world";
 import { WORLD_SCALE } from "./scale";
+import { snapBounds } from "./rectGrid";
 
 export interface SidewalkFootprint {
   depth: number;
@@ -13,21 +14,24 @@ export interface SidewalkFootprint {
 const minimumSegmentSize = 0.12;
 
 function roadFootprint(road: WorldRoad): Bounds2 {
-  return {
+  return snapBounds({
     minX: road.x - road.width / 2,
     maxX: road.x + road.width / 2,
     minZ: road.z - road.depth / 2,
     maxZ: road.z + road.depth / 2
-  };
+  });
 }
 
-function buildingFootprint(building: Pick<WorldBuilding, "depth" | "width" | "x" | "z">): Bounds2 {
-  return {
-    minX: building.x - building.width / 2,
-    maxX: building.x + building.width / 2,
-    minZ: building.z - building.depth / 2,
-    maxZ: building.z + building.depth / 2
-  };
+function buildingFootprint(
+  building: Pick<WorldBuilding, "depth" | "width" | "x" | "z"> & { facing?: WorldBuilding["facing"] }
+): Bounds2 {
+  const extents = buildingFootprintExtents(building);
+  return snapBounds({
+    minX: building.x - extents.x / 2,
+    maxX: building.x + extents.x / 2,
+    minZ: building.z - extents.z / 2,
+    maxZ: building.z + extents.z / 2
+  });
 }
 
 function footprintFromSidewalk(sidewalk: SidewalkFootprint): Bounds2 {
@@ -39,7 +43,8 @@ function footprintFromSidewalk(sidewalk: SidewalkFootprint): Bounds2 {
   };
 }
 
-function sidewalkFromFootprint(bounds: Bounds2, sourceRoadId: string): SidewalkFootprint | null {
+function sidewalkFromFootprint(rawBounds: Bounds2, sourceRoadId: string): SidewalkFootprint | null {
+  const bounds = snapBounds(rawBounds);
   const width = bounds.maxX - bounds.minX;
   const depth = bounds.maxZ - bounds.minZ;
   if (width < minimumSegmentSize || depth < minimumSegmentSize) {
@@ -132,7 +137,7 @@ export function sidewalkFootprintsForRoads(
     const blockers = [...otherRoads, ...buildingBlockers];
 
     return sidewalkStripsForRoad(road).flatMap((strip) => {
-      const stripBounds = footprintFromSidewalk(strip);
+      const stripBounds = snapBounds(footprintFromSidewalk(strip));
       const localBlockers = blockers.filter((blocker) => rectsOverlap(stripBounds, blocker));
       const pieces = subtractMany(stripBounds, localBlockers);
       return pieces

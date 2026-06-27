@@ -8,6 +8,7 @@ import {
   crimeContacts,
   districtLabels,
   districtVisualProfiles,
+  facingToRotationY,
   machinePlacementAnchors,
   neighborhoodHotspots,
   worldBounds,
@@ -531,7 +532,15 @@ function buildingCollisionBoxesForLayout(layout: WorldMapLayout): CollisionBox[]
   const walkableInteriorLocationIds = walkableInteriorLocationIdsForLayout(layout);
   return layout.buildings
     .filter((building) => !building.locationId || !walkableInteriorLocationIds.has(building.locationId))
-    .map((building) => collisionBoxFromCenter(building.x, building.z, building.width, building.depth));
+    .map((building) =>
+      collisionBoxFromRotatedCenter(
+        building.x,
+        building.z,
+        building.width,
+        building.depth,
+        facingToRotationY(building.facing ?? "north")
+      )
+    );
 }
 
 function clampToWorld(position: THREE.Vector3): void {
@@ -4366,6 +4375,9 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       addStaticObject(() => {
         const buildingGroup = createBuilding(building.width, building.depth, building.height, building.style, building.signText, renderProfile.detail);
         buildingGroup.position.set(building.x, 0, building.z);
+        // Turn the -Z storefront to face the building's street before the global
+        // storefront transform is added on top (applyModelTransformById uses +=).
+        buildingGroup.rotation.y += facingToRotationY(building.facing ?? "north");
         applyModelTransformById(buildingGroup, modelConfig, "building.storefront");
         return buildingGroup;
       }, building.x, building.z);
