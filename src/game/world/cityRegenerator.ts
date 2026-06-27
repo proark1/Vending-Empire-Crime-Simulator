@@ -79,6 +79,17 @@ function normalized(point: Vec2, bounds: Bounds2): Vec2 {
   return { x: (point.x - bounds.minX) / w, z: (point.z - bounds.minZ) / d };
 }
 
+function distanceToNearestRoad(point: Vec2, roads: WorldRoad[]): number {
+  let nearest = Infinity;
+  for (const road of roads) {
+    const b = roadFootprint(road);
+    const dx = Math.max(b.minX - point.x, point.x - b.maxX, 0);
+    const dz = Math.max(b.minZ - point.z, point.z - b.maxZ, 0);
+    nearest = Math.min(nearest, Math.hypot(dx, dz));
+  }
+  return nearest;
+}
+
 // Cardinal direction from a point toward the nearest road.
 function facingTowardNearestRoad(point: Vec2, roads: WorldRoad[]): BuildingFacing {
   let best: WorldRoad | null = null;
@@ -236,41 +247,61 @@ function forcePlaceNamed(
     }
   }
 
-  // Absolute last resort for a fully-packed district: a tiny footprint that only
-  // has to be non-overlapping (it may sit closer than the navigable gap, which
-  // surfaces as a non-blocking warning rather than failing generation outright).
-  const tiny = 2.5;
-  for (let x = region.minX + tiny / 2; x <= region.maxX - tiny / 2; x += 0.5) {
-    for (let z = region.minZ + tiny / 2; z <= region.maxZ - tiny / 2; z += 0.5) {
-      const facing = facingTowardNearestRoad({ x, z }, roads);
-      const building: WorldBuilding = {
-        id: `${template.locationId}_building`,
-        locationId: template.locationId,
-        districtId: template.districtId,
-        facing,
-        height: Math.max(template.height, WORLD_SCALE.building.minimumStorefrontHeight),
-        signText: template.signText,
-        style: template.style,
-        width: tiny,
-        depth: tiny,
-        x: snap(x),
-        z: snap(z)
-      };
-      if (coversSpawn(building) || !pointInRect({ x, z }, region)) {
-        continue;
-      }
-      const fp = footprint(building);
-      if (!rectContains(worldBounds, fp)) {
-        continue;
-      }
-      if (roads.some((road) => rectsOverlap(inflate(fp, clear), roadFootprint(road)))) {
-        continue;
-      }
-      if (placed.some((other) => rectsOverlap(fp, footprint(other)))) {
-        continue;
-      }
-      return building;
+  // Packed district: take over a SAME-district filler's clean, street-facing slot
+  // (never relabel a building from another district — that would strand it
+  // outside its district bounds).
+  const stealIndex = placed.findIndex((b) => !b.locationId && b.districtId === template.districtId);
+  if (stealIndex >= 0) {
+    const filler = placed[stealIndex];
+    placed.splice(stealIndex, 1);
+    return {
+      ...filler,
+      id: `${template.locationId}_building`,
+      locationId: template.locationId,
+      signText: template.signText,
+      style: template.style,
+      height: Math.max(template.height, WORLD_SCALE.building.minimumStorefrontHeight)
+    };
+  }
+
+  // Last resort: a tiny in-district footprint. Try road-hugging slots first, then
+  // the remaining free spots ordered by proximity to a road, so the building
+  // still ends up beside a street rather than mid-block. It only has to stay off
+  // the road (exact) and not overlap another building — it may sit closer than
+  // the navigable gap (a non-blocking warning) but never errors or leaves its
+  // district.
+  const tiny = 2;
+  const tinyCandidates = [
+    ...alongRoadCandidates(region, roads, tiny, tiny),
+    ...gridCandidates(region, roads, tiny, tiny, 0.5).sort(
+      (a, b) => distanceToNearestRoad({ x: a.x, z: a.z }, roads) - distanceToNearestRoad({ x: b.x, z: b.z }, roads)
+    )
+  ];
+  for (const candidate of tinyCandidates) {
+    const building: WorldBuilding = {
+      id: `${template.locationId}_building`,
+      locationId: template.locationId,
+      districtId: template.districtId,
+      facing: candidate.facing,
+      height: Math.max(template.height, WORLD_SCALE.building.minimumStorefrontHeight),
+      signText: template.signText,
+      style: template.style,
+      width: tiny,
+      depth: tiny,
+      x: candidate.x,
+      z: candidate.z
+    };
+    if (coversSpawn(building) || !pointInRect({ x: building.x, z: building.z }, region)) {
+      continue;
     }
+    const fp = footprint(building);
+    if (!rectContains(worldBounds, fp) || roads.some((road) => rectsOverlap(inflate(fp, 0.1), roadFootprint(road)))) {
+      continue;
+    }
+    if (placed.some((other) => rectsOverlap(fp, footprint(other)))) {
+      continue;
+    }
+    return building;
   }
   return null;
 }
@@ -482,27 +513,46 @@ function clampZoneCenter(point: Vec2, radius: number): Vec2 {
 function buildPatrols(roads: WorldRoad[]): { zones: PatrolZone[]; paths: PolicePatrolPath[] } {
   const zones: PatrolZone[] = [];
   const centerByZone = new Map<string, Vec2>();
+  const roadByZone = new Map<string, WorldRoad>();
   for (const zone of defaultPatrolZones) {
     const road = longestRoadInDistrict(roads, zone.districtId);
     const anchor = road ? boundsCenter(roadFootprint(road)) : { x: 0, z: 0 };
     const center = clampZoneCenter(anchor, zone.radius);
     centerByZone.set(zone.id, center);
+    if (road) {
+      roadByZone.set(zone.id, road);
+    }
     zones.push({ ...zone, x: snap(center.x), z: snap(center.z) });
   }
 
   const paths: PolicePatrolPath[] = defaultPolicePatrolPaths.map((patrol) => {
     const zone = zones.find((candidate) => candidate.id === patrol.zoneId);
     const center = centerByZone.get(patrol.zoneId) ?? { x: 0, z: 0 };
-    const half = Math.min((zone?.radius ?? 4) * 0.45, 3);
-    return {
-      ...patrol,
-      path: [
-        { x: snap(center.x - half), z: snap(center.z - half) },
-        { x: snap(center.x + half), z: snap(center.z - half) },
-        { x: snap(center.x + half), z: snap(center.z + half) },
-        { x: snap(center.x - half), z: snap(center.z + half) }
-      ]
-    };
+    const radius = zone?.radius ?? 4;
+    const road = roadByZone.get(patrol.zoneId);
+    // Keep the loop inside the road footprint (building-free) and within radius.
+    const along = Math.min(radius * 0.55, 6);
+    let perp = Math.min(radius * 0.45, 2);
+    let horizontal = true;
+    if (road) {
+      horizontal = road.width >= road.depth;
+      const crossHalf = (horizontal ? road.depth : road.width) / 2 - 0.6;
+      perp = Math.max(0.6, Math.min(perp, crossHalf));
+    }
+    const rect = horizontal
+      ? [
+          { x: center.x - along, z: center.z - perp },
+          { x: center.x + along, z: center.z - perp },
+          { x: center.x + along, z: center.z + perp },
+          { x: center.x - along, z: center.z + perp }
+        ]
+      : [
+          { x: center.x - perp, z: center.z - along },
+          { x: center.x + perp, z: center.z - along },
+          { x: center.x + perp, z: center.z + along },
+          { x: center.x - perp, z: center.z + along }
+        ];
+    return { ...patrol, path: rect.map((p) => ({ x: snap(p.x), z: snap(p.z) })) };
   });
 
   return { zones, paths };
