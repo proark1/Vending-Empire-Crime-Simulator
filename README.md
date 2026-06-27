@@ -1,6 +1,8 @@
 # Vendetta Vending — Empire Crime Simulator
 
 [![CI](https://github.com/proark1/Vending-Empire-Crime-Simulator/actions/workflows/ci.yml/badge.svg)](https://github.com/proark1/Vending-Empire-Crime-Simulator/actions/workflows/ci.yml)
+[![Lint](https://github.com/proark1/Vending-Empire-Crime-Simulator/actions/workflows/lint.yml/badge.svg)](https://github.com/proark1/Vending-Empire-Crime-Simulator/actions/workflows/lint.yml)
+[![Deploy](https://github.com/proark1/Vending-Empire-Crime-Simulator/actions/workflows/deploy.yml/badge.svg)](https://github.com/proark1/Vending-Empire-Crime-Simulator/actions/workflows/deploy.yml)
 
 A first-person vending-machine crime sim: fix busted machines, stock
 questionable products, outrun rivals, and turn pocket change into territory
@@ -23,9 +25,12 @@ npm run dev        # Vite dev server (127.0.0.1)
 npm run typecheck  # tsc -b
 npm test           # vitest run
 npm run build      # tsc -b && vite build
+npm run lint       # eslint .
 ```
 
-CI runs all three on every push and PR to `main`.
+CI runs typecheck/test/build on every push and PR to `main`. A separate
+**Lint** workflow runs ESLint on PRs, scoped to the files the PR changes, so
+it flags issues in new work without failing on pre-existing code.
 
 ## Run the server
 

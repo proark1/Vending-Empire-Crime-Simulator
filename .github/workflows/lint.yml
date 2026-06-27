@@ -1,0 +1,43 @@
+name: Lint
+
+# Lints only the files a PR changes, so it flags issues in new work without
+# failing on pre-existing code.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  eslint:
+    name: ESLint (changed files)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint changed files
+        run: |
+          base="origin/${{ github.base_ref }}"
+          files=$(git diff --name-only --diff-filter=ACMR "$base"...HEAD -- '*.ts' '*.tsx' | tr '\n' ' ')
+          if [ -z "$files" ]; then
+            echo "No changed TS/TSX files to lint."
+            exit 0
+          fi
+          echo "Linting changed files:"
+          echo "$files" | tr ' ' '\n'
+          npx eslint $files
