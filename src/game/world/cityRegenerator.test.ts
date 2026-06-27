@@ -107,6 +107,45 @@ describe("city regenerator", () => {
     }
   });
 
+  it.each(SEEDS)("never overlaps two buildings (%s)", (seed) => {
+    const fps = regenerateCity(seed).buildings.map(buildingFootprint);
+    for (let i = 0; i < fps.length; i += 1) {
+      for (let j = i + 1; j < fps.length; j += 1) {
+        expect(rectsOverlap(fps[i], fps[j]), `buildings ${i} & ${j} overlap`).toBe(false);
+      }
+    }
+  });
+
+  it.each(SEEDS)("keeps backdrop skyline off roads and off buildings (%s)", (seed) => {
+    const layout = regenerateCity(seed);
+    const buildingBounds = layout.buildings.map(buildingFootprint);
+    for (const backdrop of layout.backdropBuildings) {
+      const bounds = {
+        minX: backdrop.x - backdrop.width / 2,
+        maxX: backdrop.x + backdrop.width / 2,
+        minZ: backdrop.z - backdrop.depth / 2,
+        maxZ: backdrop.z + backdrop.depth / 2
+      };
+      for (const road of layout.roads) {
+        expect(rectsOverlap(bounds, roadBounds(road)), "backdrop on a road").toBe(false);
+      }
+      expect(buildingBounds.some((b) => rectsOverlap(bounds, b)), "backdrop on a building").toBe(false);
+    }
+  });
+
+  it.each(SEEDS)("keeps every decoration off the road (%s)", (seed) => {
+    const layout = regenerateCity(seed);
+    for (const decoration of layout.decorations) {
+      expect(
+        layout.roads.some((road) => rectsOverlap(
+          { minX: decoration.x - 0.2, maxX: decoration.x + 0.2, minZ: decoration.z - 0.2, maxZ: decoration.z + 0.2 },
+          roadBounds(road)
+        )),
+        `${decoration.id} on a road`
+      ).toBe(false);
+    }
+  });
+
   it.each(SEEDS)("tags every building to a real district it lies within (%s)", (seed) => {
     const layout = regenerateCity(seed);
     for (const building of layout.buildings) {

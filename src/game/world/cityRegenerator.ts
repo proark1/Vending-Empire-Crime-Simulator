@@ -8,7 +8,6 @@
 
 import type { Bounds2, Vec2 } from "../core/types";
 import {
-  cityBackdropBuildings,
   districts,
   patrolZones as defaultPatrolZones,
   policePatrolPaths as defaultPolicePatrolPaths,
@@ -18,6 +17,7 @@ import {
   worldInteriors,
   worldParks,
   type BuildingFacing,
+  type CityBackdropBuilding,
   type PatrolZone,
   type PolicePatrolPath,
   type TrafficLoop,
@@ -554,6 +554,70 @@ function fitParks(blocks: CityBlock[]): WorldPark[] {
 }
 
 // ---------------------------------------------------------------------------
+// Backdrop skyline — regenerated to fit the new layout
+//
+// The authored skyline is positioned for the authored geography; reusing it
+// drops tall, collision-free buildings onto the generated streets and on top of
+// generated storefronts. Instead, scatter distant skyline boxes only where they
+// clear the roads (and their sidewalks) and every generated building.
+// ---------------------------------------------------------------------------
+const BACKDROP_COLORS = ["#475569", "#334155", "#1e293b", "#3f3f46", "#52525b", "#293548", "#1f2937"];
+
+const districtsByArea = Object.values(districts).sort((a, b) => {
+  const area = boundsArea(a.bounds) - boundsArea(b.bounds);
+  return area !== 0 ? area : a.id < b.id ? -1 : 1;
+});
+
+function districtAt(point: Vec2): string {
+  for (const district of districtsByArea) {
+    if (pointInRect(point, district.bounds)) {
+      return district.id;
+    }
+  }
+  return districtsByArea[districtsByArea.length - 1].id;
+}
+
+function buildBackdrops(roads: WorldRoad[], buildings: WorldBuilding[], rng: Rng): CityBackdropBuilding[] {
+  const roadBlockers = roads.map((road) => inflate(roadFootprint(road), SIDEWALK + 0.5));
+  const buildingBlockers = buildings.map((building) => inflate(footprint(building), 0.5));
+  const out: CityBackdropBuilding[] = [];
+  const step = 13;
+  for (let x = worldBounds.minX + 8; x <= worldBounds.maxX - 8; x += step) {
+    for (let z = worldBounds.minZ + 8; z <= worldBounds.maxZ - 8; z += step) {
+      if (!rng.chance(0.5)) {
+        continue;
+      }
+      const w = rng.range(7, 13);
+      const d = rng.range(7, 13);
+      const fp: Bounds2 = { minX: x - w / 2, maxX: x + w / 2, minZ: z - d / 2, maxZ: z + d / 2 };
+      if (!rectContains(worldBounds, fp)) {
+        continue;
+      }
+      if (roadBlockers.some((blocker) => rectsOverlap(fp, blocker))) {
+        continue;
+      }
+      if (buildingBlockers.some((blocker) => rectsOverlap(fp, blocker))) {
+        continue;
+      }
+      if (out.some((other) => rectsOverlap(fp, { minX: other.x - other.width / 2, maxX: other.x + other.width / 2, minZ: other.z - other.depth / 2, maxZ: other.z + other.depth / 2 }))) {
+        continue;
+      }
+      out.push({
+        districtId: districtAt({ x, z }),
+        x: snap(x),
+        z: snap(z),
+        width: snap(w),
+        depth: snap(d),
+        height: snap(rng.range(8, 24)),
+        color: rng.pick(BACKDROP_COLORS),
+        lit: rng.range(0.15, 0.5)
+      });
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 export function regenerateCity(seed: string): WorldMapLayout {
   const plan = generateCityPlan(seed);
   const rng = createRng(seed).fork("regen");
@@ -574,9 +638,10 @@ export function regenerateCity(seed: string): WorldMapLayout {
   // Sidewalks are derived for decoration placement only (not stored).
   const sidewalks = sidewalkFootprintsForRoads(plan.roads, buildingsOffParks);
   const decorations = buildDecorations(plan.roads, sidewalks, rng.fork("decor"));
+  const backdropBuildings = buildBackdrops(plan.roads, buildingsOffParks, rng.fork("backdrop"));
 
   return {
-    backdropBuildings: cityBackdropBuildings.map((building) => ({ ...building })),
+    backdropBuildings,
     buildings: buildingsOffParks,
     decorations,
     interiors,
