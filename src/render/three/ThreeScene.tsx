@@ -1487,14 +1487,16 @@ function createRoutePressureRing(tone: "good" | "warning" | "danger"): THREE.Gro
 
 export function createVehicleMesh(quality: GraphicsQuality = "medium"): THREE.Group {
   const group = new THREE.Group();
-  const paintMaterial = new THREE.MeshPhysicalMaterial({ color: "#d9f99d", roughness: 0.34, metalness: 0.14, clearcoat: 0.38, clearcoatRoughness: 0.45 });
-  const panelMaterial = new THREE.MeshPhysicalMaterial({ color: "#bef264", roughness: 0.42, metalness: 0.1, clearcoat: 0.28, clearcoatRoughness: 0.5 });
-  const trimMaterial = new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.42, metalness: 0.24 });
+  // Glossy automotive clearcoat: low clearcoatRoughness + envMapIntensity makes the
+  // night-city environment map read as a wet, reflective paint job instead of flat plastic.
+  const paintMaterial = new THREE.MeshPhysicalMaterial({ color: "#d9f99d", roughness: 0.3, metalness: 0.16, clearcoat: 0.75, clearcoatRoughness: 0.18, envMapIntensity: 1.3 });
+  const panelMaterial = new THREE.MeshPhysicalMaterial({ color: "#bef264", roughness: 0.36, metalness: 0.12, clearcoat: 0.6, clearcoatRoughness: 0.22, envMapIntensity: 1.2 });
+  const trimMaterial = new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.34, metalness: 0.45, envMapIntensity: 1.1 });
   const tireMaterial = new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.68, metalness: 0.08 });
-  const hubMaterial = new THREE.MeshStandardMaterial({ color: "#cbd5e1", roughness: 0.34, metalness: 0.42 });
-  const glassMaterial = new THREE.MeshPhysicalMaterial({ color: "#93c5fd", roughness: 0.02, metalness: 0.02, transparent: true, opacity: 0.58, transmission: 0.12 });
-  const lightMaterial = new THREE.MeshBasicMaterial({ color: "#fde68a", transparent: true, opacity: 0.9 });
-  const tailLightMaterial = new THREE.MeshBasicMaterial({ color: "#ef4444", transparent: true, opacity: 0.88 });
+  const hubMaterial = new THREE.MeshStandardMaterial({ color: "#e2e8f0", roughness: 0.2, metalness: 0.88, envMapIntensity: 1.5 });
+  const glassMaterial = new THREE.MeshPhysicalMaterial({ color: "#93c5fd", roughness: 0.02, metalness: 0.02, transparent: true, opacity: 0.58, transmission: 0.12, envMapIntensity: 1.6 });
+  const lightMaterial = new THREE.MeshBasicMaterial({ color: "#fff3c4", transparent: true, opacity: 1 });
+  const tailLightMaterial = new THREE.MeshBasicMaterial({ color: "#ff4d4d", transparent: true, opacity: 0.95 });
   const decalMaterial = new THREE.MeshBasicMaterial({ map: createVehicleDecalTexture("VEND-X", "#d9f99d", "#2dd4bf") });
   const markerMaterial = new THREE.MeshBasicMaterial({ color: "#fb923c", transparent: true, opacity: 0.86 });
   const plateMaterial = new THREE.MeshBasicMaterial({ color: "#f8fafc" });
@@ -1746,6 +1748,9 @@ export function createVehicleMesh(quality: GraphicsQuality = "medium"): THREE.Gr
     tail.position.set(length * 0.45, baseY + 0.42, z);
     group.add(tail);
   }
+
+  // Grounding blob shadow (van length runs along X, width along Z).
+  group.add(createContactShadow(length * 1.5, width * 1.7, 0.5));
 
   return group;
 }
@@ -3140,12 +3145,12 @@ function createPolicePatrolLayer(patrols: PolicePatrolPath[], maxPatrols: number
 function createTrafficVehicleMesh(loop: TrafficLoop, enableShadows: boolean, quality: GraphicsQuality): THREE.Group {
   const group = new THREE.Group();
   const bodyColor = loop.kind === "police" ? "#f8fafc" : loop.color;
-  const bodyMaterial = new THREE.MeshPhysicalMaterial({ color: bodyColor, roughness: 0.34, metalness: 0.12, clearcoat: 0.32, clearcoatRoughness: 0.42 });
-  const secondaryBodyMaterial = new THREE.MeshPhysicalMaterial({ color: bodyColor, roughness: 0.44, metalness: 0.1, clearcoat: 0.24, clearcoatRoughness: 0.48 });
-  const trimMaterial = new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.52, metalness: 0.18 });
+  const bodyMaterial = new THREE.MeshPhysicalMaterial({ color: bodyColor, roughness: 0.3, metalness: 0.14, clearcoat: 0.7, clearcoatRoughness: 0.18, envMapIntensity: 1.3 });
+  const secondaryBodyMaterial = new THREE.MeshPhysicalMaterial({ color: bodyColor, roughness: 0.36, metalness: 0.12, clearcoat: 0.55, clearcoatRoughness: 0.22, envMapIntensity: 1.2 });
+  const trimMaterial = new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.36, metalness: 0.45, envMapIntensity: 1.1 });
   const tireMaterial = new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.72, metalness: 0.08 });
-  const hubMaterial = new THREE.MeshStandardMaterial({ color: "#cbd5e1", roughness: 0.34, metalness: 0.42 });
-  const glassMaterial = new THREE.MeshPhysicalMaterial({ color: "#93c5fd", roughness: 0.03, metalness: 0.02, transparent: true, opacity: 0.55, transmission: 0.1 });
+  const hubMaterial = new THREE.MeshStandardMaterial({ color: "#e2e8f0", roughness: 0.2, metalness: 0.88, envMapIntensity: 1.5 });
+  const glassMaterial = new THREE.MeshPhysicalMaterial({ color: "#93c5fd", roughness: 0.03, metalness: 0.02, transparent: true, opacity: 0.55, transmission: 0.1, envMapIntensity: 1.6 });
   const markerMaterial = new THREE.MeshBasicMaterial({ color: "#fb923c", transparent: true, opacity: 0.86 });
   const deliveryDecalMaterial = new THREE.MeshBasicMaterial({ map: createVehicleDecalTexture("DROP", "#fef3c7", "#d97706") });
   const length = loop.kind === "delivery" ? WORLD_SCALE.vehicle.deliveryLength : loop.kind === "police" ? WORLD_SCALE.vehicle.policeLength : WORLD_SCALE.vehicle.length;
@@ -3346,6 +3351,9 @@ function createTrafficVehicleMesh(loop: TrafficLoop, enableShadows: boolean, qua
       group.add(tail);
     }
   }
+
+  // Grounding blob shadow (traffic body length runs along Z, width along X).
+  group.add(createContactShadow(width * 1.7, length * 1.5, 0.45));
 
   return group;
 }
@@ -4085,19 +4093,32 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     const renderer = new THREE.WebGLRenderer({ antialias: !renderProfile.lowPower, powerPreference: renderProfile.lowPower ? "default" : "high-performance" });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, renderProfile.maxPixelRatio));
     renderer.setSize(mount.clientWidth, mount.clientHeight);
-    // Filmic tone mapping so the scene's heavy emissive neon rolls off into a moody
-    // night grade instead of clipping flat to white. Exposure compensates for the
-    // mid-tone darkening ACES introduces relative to the previous NoToneMapping look.
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.2;
     renderer.shadowMap.enabled = renderProfile.enableShadows;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // Filmic tone mapping gives the night-city neon a proper highlight rolloff
+    // instead of clipping flat to white. Exposure compensates for the mid-tone
+    // darkening ACES introduces relative to the previous linear (NoToneMapping) look.
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.18;
     mount.appendChild(renderer.domElement);
+
+    // Environment map: clearcoat car paint and glass need something to reflect.
+    // Without this, MeshPhysicalMaterial vehicles render as flat matte plastic.
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const envEquirect = createEnvironmentMapTexture(renderProfile.detail);
+    const envTarget = pmrem.fromEquirectangular(envEquirect);
+    scene.environment = envTarget.texture;
+    scene.environmentIntensity = renderProfile.detail === "low" ? 0.4 : 0.6;
+    envEquirect.dispose();
+    pmrem.dispose();
 
     scene.add(createSkyDome(renderProfile.detail));
     const atmosphere = createAtmosphere(renderProfile.detail, renderProfile.atmosphereParticles);
     scene.add(atmosphere);
 
+    // hemi + key are driven dynamically by the day/night palette below (see the
+    // animate loop). Construction values are immediately overwritten each frame.
     const hemi = new THREE.HemisphereLight("#dbeafe", "#172554", 1.2);
     scene.add(hemi);
 
@@ -4106,6 +4127,14 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     keyLight.castShadow = renderProfile.enableShadows;
     if (renderProfile.shadowMapSize > 0) {
       keyLight.shadow.mapSize.set(renderProfile.shadowMapSize, renderProfile.shadowMapSize);
+      keyLight.shadow.camera.near = 1;
+      keyLight.shadow.camera.far = 70;
+      keyLight.shadow.camera.left = -38;
+      keyLight.shadow.camera.right = 38;
+      keyLight.shadow.camera.top = 38;
+      keyLight.shadow.camera.bottom = -38;
+      keyLight.shadow.bias = -0.0004;
+      keyLight.shadow.normalBias = 0.025;
     }
     scene.add(keyLight);
 
@@ -4124,6 +4153,16 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     const nightBgColor = new THREE.Color("#05090f");
     const sceneFog = scene.fog as THREE.Fog;
     const sceneBackground = scene.background as THREE.Color;
+
+    // Static warm fill + cool rim from the polish pass — these complement the
+    // day/night-driven key/hemi and give cars and buildings extra form.
+    const fillLight = new THREE.DirectionalLight("#f7b079", 0.55);
+    fillLight.position.set(11, 6, -9);
+    scene.add(fillLight);
+
+    const rimLight = new THREE.DirectionalLight("#86b6ff", 0.7);
+    rimLight.position.set(5, 9, -13);
+    scene.add(rimLight);
 
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(worldWidth + 10, worldDepth + 10), createAsphaltMaterial(renderProfile.detail));
     ground.rotation.x = -Math.PI / 2;
@@ -4693,6 +4732,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       renderer.domElement.removeEventListener("click", onCanvasClick);
       clearGroup(dynamicGroup);
       disposeObject(scene);
+      envTarget.dispose();
       renderer.dispose();
       mount.removeChild(renderer.domElement);
       dynamicGroupRef.current = null;

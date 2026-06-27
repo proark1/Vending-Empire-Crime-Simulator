@@ -325,22 +325,61 @@ export function createContactShadow(spanX: number, spanZ: number, opacity = 0.46
 
   const mesh = new THREE.Mesh(
     new THREE.PlaneGeometry(spanX, spanZ),
-    new THREE.MeshBasicMaterial({ map: texture, color: "#000000", transparent: true, opacity, depthWrite: false })
+    new THREE.MeshBasicMaterial({
+      map: texture,
+      color: "#000000",
+      transparent: true,
+      opacity,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2
+    })
   );
   mesh.rotation.x = -Math.PI / 2;
-  mesh.position.y = 0.02;
+  // Ride just clear of the road (top ~0.043) / ground surfaces; the soft gradient
+  // makes the small float imperceptible while staying visible on either surface.
+  mesh.position.y = 0.05;
   mesh.renderOrder = 2;
   return mesh;
 }
 
-function litWindowMaterial(style: BuildingStyle, lit: boolean): THREE.MeshStandardMaterial {
-  const color = style === "arcade"
+function windowLitColor(style: BuildingStyle): string {
+  return style === "arcade"
     ? "#f5d0fe"
     : style === "transit"
       ? "#bae6fd"
       : style === "rival"
         ? "#fecaca"
         : "#d1fae5";
+}
+
+let cachedWindowGlowTexture: THREE.CanvasTexture | null = null;
+function windowGlowTexture(): THREE.CanvasTexture {
+  if (cachedWindowGlowTexture) {
+    return cachedWindowGlowTexture;
+  }
+  const size = 64;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext("2d");
+  if (context) {
+    const glow = context.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    glow.addColorStop(0, "rgba(255, 255, 255, 1)");
+    glow.addColorStop(0.45, "rgba(255, 255, 255, 0.4)");
+    glow.addColorStop(1, "rgba(255, 255, 255, 0)");
+    context.fillStyle = glow;
+    context.fillRect(0, 0, size, size);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  cachedWindowGlowTexture = texture;
+  return texture;
+}
+
+function litWindowMaterial(style: BuildingStyle, lit: boolean): THREE.MeshStandardMaterial {
+  const color = windowLitColor(style);
   const emissive = style === "arcade"
     ? "#a21caf"
     : style === "transit"
@@ -352,7 +391,7 @@ function litWindowMaterial(style: BuildingStyle, lit: boolean): THREE.MeshStanda
   return new THREE.MeshStandardMaterial({
     color: lit ? color : "#1e293b",
     emissive,
-    emissiveIntensity: lit ? (style === "arcade" ? 0.82 : 0.32) : 0.04,
+    emissiveIntensity: lit ? (style === "arcade" ? 0.9 : 0.42) : 0.04,
     roughness: lit ? 0.16 : 0.38,
     metalness: 0.04
   });
@@ -362,6 +401,17 @@ function addWindows(group: THREE.Group, width: number, height: number, depth: nu
   const frameMaterial = new THREE.MeshStandardMaterial({ color: "#0f172a", roughness: 0.48, metalness: 0.12 });
   const mullionMaterial = new THREE.MeshBasicMaterial({ color: "#020617", transparent: true, opacity: 0.78 });
   const sillMaterial = new THREE.MeshStandardMaterial({ color: "#cbd5e1", roughness: 0.7, metalness: 0.05 });
+  // Soft additive glow that makes lit windows spill light onto the facade instead of reading as flat squares.
+  const glowMaterial = quality === "low"
+    ? null
+    : new THREE.MeshBasicMaterial({
+        map: windowGlowTexture(),
+        color: windowLitColor(style),
+        transparent: true,
+        opacity: style === "arcade" ? 0.5 : 0.32,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      });
 
   if (buildingHeight < WORLD_SCALE.building.minimumStorefrontHeight + 0.55) {
     return;
@@ -384,10 +434,14 @@ function addWindows(group: THREE.Group, width: number, height: number, depth: nu
       if (y + upperWindow.frameHeight / 2 > height - 0.35) {
         continue;
       }
-      const lit = style === "arcade" || ((row * 7 + col * 5 + Math.round(width * 10)) % 9) < 5;
+      const lit = style === "arcade" || ((row * 7 + col * 5 + Math.round(width * 10)) % 9) < 6;
       const windowMaterial = litWindowMaterial(style, lit);
       addPlane(group, upperWindow.frameWidth, upperWindow.frameHeight, frameMaterial, new THREE.Vector3(x, y, -depth / 2 - 0.012), 0);
       addPlane(group, upperWindow.width, upperWindow.height, windowMaterial, new THREE.Vector3(x, y, -depth / 2 - 0.011), 0);
+      if (lit && glowMaterial) {
+        const halo = addPlane(group, upperWindow.frameWidth * 1.85, upperWindow.frameHeight * 1.85, glowMaterial, new THREE.Vector3(x, y, -depth / 2 - 0.02), 0);
+        halo.renderOrder = 3;
+      }
       if (quality !== "low") {
         addPlane(group, 0.028, upperWindow.height, mullionMaterial, new THREE.Vector3(x, y, -depth / 2 - 0.018), 0);
         addPlane(group, upperWindow.width, 0.024, mullionMaterial, new THREE.Vector3(x, y, -depth / 2 - 0.019), 0);
@@ -788,18 +842,44 @@ export function createEnvironmentMapTexture(quality: GraphicsQuality = "medium")
     context.fillStyle = sky;
     context.fillRect(0, 0, width, height);
 
-    const haze = context.createLinearGradient(0, height * 0.42, 0, height * 0.56);
+    const haze = context.createLinearGradient(0, height * 0.4, 0, height * 0.58);
     haze.addColorStop(0, "rgba(251, 191, 120, 0)");
-    haze.addColorStop(0.5, "rgba(251, 146, 60, 0.24)");
+    haze.addColorStop(0.5, "rgba(251, 146, 60, 0.34)");
     haze.addColorStop(1, "rgba(251, 191, 120, 0)");
     context.fillStyle = haze;
-    context.fillRect(0, height * 0.42, width, height * 0.14);
+    context.fillRect(0, height * 0.4, width, height * 0.18);
+
+    // Crisp moon — gives clearcoat paint and glass a sharp reflective highlight.
+    const moonX = width * 0.72;
+    const moonY = height * 0.17;
+    const moonHalo = context.createRadialGradient(moonX, moonY, 0, moonX, moonY, height * 0.16);
+    moonHalo.addColorStop(0, "rgba(226, 240, 255, 0.7)");
+    moonHalo.addColorStop(1, "rgba(226, 240, 255, 0)");
+    context.fillStyle = moonHalo;
+    context.fillRect(moonX - height * 0.16, moonY - height * 0.16, height * 0.32, height * 0.32);
+    context.fillStyle = "rgba(244, 250, 255, 0.95)";
+    context.beginPath();
+    context.arc(moonX, moonY, height * 0.035, 0, Math.PI * 2);
+    context.fill();
+
+    // Distant skyline window-lights — small bright specks that sparkle across reflective surfaces.
+    const lightTints = ["#fde68a", "#fef3c7", "#fdba74", "#bae6fd", "#a7f3d0", "#f9a8d4"];
+    const lightCount = quality === "low" ? 70 : 150;
+    for (let i = 0; i < lightCount; i += 1) {
+      const lx = Math.random() * width;
+      const ly = height * (0.42 + Math.random() * 0.14);
+      const size = 1 + Math.random() * (width / 256);
+      context.globalAlpha = 0.5 + Math.random() * 0.45;
+      context.fillStyle = lightTints[Math.floor(Math.random() * lightTints.length)];
+      context.fillRect(lx, ly, size, size * (1 + Math.random()));
+    }
+    context.globalAlpha = 1;
 
     const glows: Array<[number, number, number, string]> = [
-      [width * 0.18, height * 0.47, height * 0.18, "rgba(253, 230, 138, 0.55)"],
-      [width * 0.46, height * 0.45, height * 0.14, "rgba(248, 250, 252, 0.4)"],
-      [width * 0.64, height * 0.46, height * 0.22, "rgba(103, 232, 249, 0.34)"],
-      [width * 0.86, height * 0.48, height * 0.16, "rgba(244, 114, 182, 0.32)"]
+      [width * 0.18, height * 0.47, height * 0.2, "rgba(253, 230, 138, 0.7)"],
+      [width * 0.46, height * 0.45, height * 0.16, "rgba(248, 250, 252, 0.5)"],
+      [width * 0.64, height * 0.46, height * 0.24, "rgba(103, 232, 249, 0.46)"],
+      [width * 0.86, height * 0.48, height * 0.18, "rgba(244, 114, 182, 0.42)"]
     ];
     for (const [x, y, radius, color] of glows) {
       const glow = context.createRadialGradient(x, y, 0, x, y, radius);
