@@ -45,6 +45,20 @@ export interface MachinePlacementAnchor {
   z: number;
 }
 
+export interface ParkPond {
+  radius: number;
+  x: number;
+  z: number;
+}
+
+export interface WorldPark {
+  bounds: Bounds2;
+  districtId: string;
+  id: string;
+  label: string;
+  pond: ParkPond;
+}
+
 export interface DistrictLabel {
   color: string;
   districtId: string;
@@ -152,6 +166,7 @@ export interface WorldMapLayout {
   buildings: WorldBuilding[];
   decorations: WorldDecoration[];
   interiors: WorldInterior[];
+  parks: WorldPark[];
   patrolZones: PatrolZone[];
   policePatrolPaths: PolicePatrolPath[];
   roads: WorldRoad[];
@@ -1012,7 +1027,7 @@ export const locations: Record<string, Location> = {
 
 export const worldRoads: WorldRoad[] = [
   { id: "main_avenue", districtId: "starter_suburb", x: 0, z: 0, width: 88, depth: 4.8 },
-  { id: "central_cross", districtId: "starter_suburb", x: 0, z: 0, width: 4.8, depth: 68 },
+  { id: "central_cross", districtId: "starter_suburb", x: 0, z: -9, width: 4.8, depth: 50 },
   { id: "west_yard_spur", districtId: "industrial_yards", x: -27, z: 8, width: 4.6, depth: 34 },
   { id: "east_loop_spur", districtId: "downtown_loop", x: 26, z: 2, width: 4.6, depth: 34 },
   { id: "neon_lane", districtId: "neon_quarter", x: 18, z: -22, width: 36, depth: 4.6 },
@@ -1054,6 +1069,19 @@ export const worldRoads: WorldRoad[] = [
   { id: "old_town_north_spine", districtId: "old_town", x: 76, z: 55, width: 4.4, depth: 30 },
   { id: "old_town_north_row", districtId: "old_town", x: 86, z: 68, width: 56, depth: 4.4 },
   { id: "old_town_canal_row", districtId: "old_town", x: 96, z: 82, width: 36, depth: 4.4 }
+];
+
+// A large green public park north of the starter suburb, framed by the north
+// ring road. Grass, paths, a pond, trees, benches and lamps are generated from
+// these bounds in the renderer.
+export const worldParks: WorldPark[] = [
+  {
+    id: "central_green",
+    districtId: "starter_suburb",
+    label: "Greenwood Park",
+    bounds: { minX: -16, maxX: 19, minZ: 21, maxZ: 47 },
+    pond: { x: 9.5, z: 37.5, radius: 3.8 }
+  }
 ];
 
 export const worldBuildings: WorldBuilding[] = [
@@ -1331,7 +1359,59 @@ export const cityBackdropBuildings: CityBackdropBuilding[] = [
   { districtId: "old_town", x: 72, z: 74, width: 5.4, depth: 4.8, height: 9.4, color: "#7f1d1d", lit: 0.46 },
   { districtId: "old_town", x: 88, z: 88, width: 6.2, depth: 4.4, height: 10.2, color: "#450a0a", lit: 0.42 },
   { districtId: "old_town", x: 112, z: 70, width: 5.8, depth: 5.0, height: 8.6, color: "#991b1b", lit: 0.48 },
-  { districtId: "old_town", x: 116, z: 84, width: 5.4, depth: 4.2, height: 9.2, color: "#7f1d1d", lit: 0.44 }
+  { districtId: "old_town", x: 116, z: 84, width: 5.4, depth: 4.2, height: 9.2, color: "#7f1d1d", lit: 0.44 },
+  // --- Filler skyline buildings to densify empty blocks (generated, deterministic) ---
+  { districtId: "campus_strip", x: -119.6, z: -86.7, width: 4.3, depth: 6.4, height: 22.7, color: "#115e59", lit: 0.46 },
+  { districtId: "campus_strip", x: -121, z: -73.4, width: 7.2, depth: 6.1, height: 16.6, color: "#155e75", lit: 0.35 },
+  { districtId: "campus_strip", x: -121, z: -33.3, width: 5.5, depth: 4.8, height: 17.4, color: "#155e75", lit: 0.38 },
+  { districtId: "campus_strip", x: -121.2, z: -20, width: 6.1, depth: 5.9, height: 18.2, color: "#134e4a", lit: 0.54 },
+  { districtId: "industrial_yards", x: -120, z: 3, width: 4.4, depth: 4.6, height: 13.3, color: "#334155", lit: 0.16 },
+  { districtId: "industrial_yards", x: -121.4, z: 11.9, width: 7.1, depth: 5, height: 15.1, color: "#3f3f46", lit: 0.24 },
+  { districtId: "industrial_yards", x: -121.6, z: 25.6, width: 6.9, depth: 5.9, height: 13.3, color: "#334155", lit: 0.29 },
+  { districtId: "industrial_yards", x: -121.2, z: 75.1, width: 5.9, depth: 4.5, height: 19.4, color: "#27272a", lit: 0.27 },
+  { districtId: "industrial_yards", x: -120.8, z: 83.7, width: 4.4, depth: 5.2, height: 16.7, color: "#334155", lit: 0.17 },
+  { districtId: "industrial_yards", x: -100.6, z: 24.3, width: 5.4, depth: 6.3, height: 15.5, color: "#52525b", lit: 0.25 },
+  { districtId: "campus_strip", x: -95, z: -59.1, width: 4.8, depth: 6, height: 16, color: "#134e4a", lit: 0.49 },
+  { districtId: "campus_strip", x: -85.9, z: -8.4, width: 7.1, depth: 4.2, height: 12.4, color: "#0f766e", lit: 0.51 },
+  { districtId: "industrial_yards", x: -82, z: 17.3, width: 6.3, depth: 6.4, height: 8.7, color: "#334155", lit: 0.13 },
+  { districtId: "industrial_yards", x: -61.8, z: 31.8, width: 5.8, depth: 4, height: 11.4, color: "#3f3f46", lit: 0.21 },
+  { districtId: "industrial_yards", x: -61.8, z: 64.6, width: 4.6, depth: 5.2, height: 8.5, color: "#3f3f46", lit: 0.17 },
+  { districtId: "campus_strip", x: -55.6, z: -61.3, width: 4.6, depth: 4.2, height: 8.9, color: "#0f766e", lit: 0.5 },
+  { districtId: "industrial_yards", x: -53.7, z: -7.7, width: 7.3, depth: 6.1, height: 11.7, color: "#3f3f46", lit: 0.16 },
+  { districtId: "industrial_yards", x: -56.1, z: 5.8, width: 4.3, depth: 5, height: 11.9, color: "#27272a", lit: 0.16 },
+  { districtId: "industrial_yards", x: -53.2, z: 62.4, width: 6.9, depth: 4.2, height: 10.3, color: "#52525b", lit: 0.17 },
+  { districtId: "campus_strip", x: -48.3, z: -73.4, width: 6.8, depth: 4.1, height: 8.4, color: "#155e75", lit: 0.43 },
+  { districtId: "industrial_yards", x: -49.9, z: 71.4, width: 6.8, depth: 4.8, height: 10.4, color: "#27272a", lit: 0.14 },
+  { districtId: "campus_strip", x: -41.7, z: -61.9, width: 7.2, depth: 6.1, height: 7.3, color: "#134e4a", lit: 0.43 },
+  { districtId: "starter_suburb", x: -41.2, z: -15.1, width: 5.5, depth: 4.8, height: 11.3, color: "#3b475a", lit: 0.35 },
+  { districtId: "industrial_yards", x: -40.4, z: 38.8, width: 7.4, depth: 6.2, height: 9.6, color: "#334155", lit: 0.19 },
+  { districtId: "campus_strip", x: -36, z: -72.3, width: 5.4, depth: 6.5, height: 7.6, color: "#115e59", lit: 0.38 },
+  { districtId: "industrial_yards", x: -36, z: 63.4, width: 6.8, depth: 5.2, height: 12.1, color: "#3f3f46", lit: 0.19 },
+  { districtId: "campus_strip", x: -29.7, z: -61.3, width: 6.2, depth: 4.7, height: 12.1, color: "#0f766e", lit: 0.4 },
+  { districtId: "starter_suburb", x: -27.7, z: -41, width: 6.1, depth: 6, height: 10.6, color: "#1e293b", lit: 0.33 },
+  { districtId: "starter_suburb", x: -29.7, z: -16.3, width: 5.2, depth: 6.7, height: 10.8, color: "#1e293b", lit: 0.29 },
+  { districtId: "industrial_yards", x: -29, z: 31.5, width: 4.8, depth: 5.2, height: 12.2, color: "#27272a", lit: 0.2 },
+  { districtId: "campus_strip", x: -20.6, z: -72.8, width: 5.8, depth: 5.4, height: 10, color: "#155e75", lit: 0.35 },
+  { districtId: "industrial_yards", x: -22.6, z: 63.2, width: 6.1, depth: 6.7, height: 8, color: "#52525b", lit: 0.14 },
+  { districtId: "starter_suburb", x: -17.3, z: -60.4, width: 4.7, depth: 4.4, height: 9.1, color: "#3b475a", lit: 0.37 },
+  { districtId: "starter_suburb", x: -16.2, z: -39.6, width: 4.5, depth: 6.1, height: 6.8, color: "#334155", lit: 0.25 },
+  { districtId: "starter_suburb", x: -11.2, z: -29.1, width: 5.3, depth: 4.4, height: 8.9, color: "#475569", lit: 0.37 },
+  { districtId: "starter_suburb", x: -9.5, z: -20.4, width: 7.2, depth: 4.8, height: 6, color: "#3b475a", lit: 0.43 },
+  { districtId: "starter_suburb", x: -11.1, z: 65.3, width: 7.2, depth: 4.1, height: 9.3, color: "#334155", lit: 0.31 },
+  { districtId: "neon_quarter", x: 8.3, z: -68.2, width: 4.4, depth: 6.4, height: 14, color: "#9d174d", lit: 0.85 },
+  { districtId: "starter_suburb", x: 10.2, z: 70.3, width: 6.4, depth: 5.7, height: 6.8, color: "#475569", lit: 0.25 },
+  { districtId: "starter_suburb", x: 15.9, z: 58.9, width: 5, depth: 6.3, height: 11, color: "#1e293b", lit: 0.28 },
+  { districtId: "neon_quarter", x: 21.5, z: -61.3, width: 6.3, depth: 5.3, height: 10.5, color: "#831843", lit: 0.87 },
+  { districtId: "old_town", x: 23.2, z: 70.5, width: 4.6, depth: 5.4, height: 7.1, color: "#7f1d1d", lit: 0.43 },
+  { districtId: "neon_quarter", x: 30.9, z: -61.1, width: 4.5, depth: 6.4, height: 14.4, color: "#9d174d", lit: 0.85 },
+  { districtId: "old_town", x: 35.9, z: 68.1, width: 5.9, depth: 4.5, height: 12.3, color: "#450a0a", lit: 0.4 },
+  { districtId: "old_town", x: 47.4, z: 69.6, width: 4.4, depth: 5.2, height: 10.5, color: "#450a0a", lit: 0.49 },
+  { districtId: "old_town", x: 92.8, z: 52.4, width: 5.7, depth: 5.7, height: 11.7, color: "#450a0a", lit: 0.47 },
+  { districtId: "neon_quarter", x: 100.5, z: -61.3, width: 5.2, depth: 4.8, height: 18.1, color: "#9d174d", lit: 0.77 },
+  { districtId: "neon_quarter", x: 99.6, z: -39.9, width: 6.1, depth: 6.4, height: 17.3, color: "#701a75", lit: 0.9 },
+  { districtId: "neon_quarter", x: 101.2, z: -27, width: 6, depth: 4.1, height: 16.6, color: "#701a75", lit: 0.85 },
+  { districtId: "downtown_loop", x: 101.9, z: -15.2, width: 5.3, depth: 6, height: 20, color: "#0f172a", lit: 0.72 },
+  { districtId: "downtown_loop", x: 102.8, z: 49.9, width: 5, depth: 6.6, height: 17.5, color: "#0f172a", lit: 0.7 },
 ];
 
 export const worldDecorations: WorldDecoration[] = [
@@ -1727,6 +1807,7 @@ export const defaultWorldMapLayout: WorldMapLayout = {
   buildings: worldBuildings,
   decorations: worldDecorations,
   interiors: worldInteriors,
+  parks: worldParks,
   patrolZones,
   policePatrolPaths,
   roads: worldRoads,

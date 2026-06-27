@@ -4913,22 +4913,6 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     renderer.domElement.addEventListener("click", onCanvasClick);
     const animationId = requestAnimationFrame(animate);
 
-    // Dev-only camera teleport for visual verification (stripped from production builds).
-    if ((import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV) {
-      (window as unknown as { __vendettaTeleport?: (x: number, z: number, facing?: number, look?: number) => void }).__vendettaTeleport = (x, z, facing, look) => {
-        yaw.position.x = x;
-        yaw.position.z = z;
-        if (typeof facing === "number") {
-          yaw.rotation.y = facing;
-        }
-        if (typeof look === "number") {
-          pitch = look;
-        }
-        applyCameraMode(camera, playerAvatar, carriedCrateMount, cameraMode, pitch);
-        enqueueWorldChunksNear(staticChunkSpecs, staticChunks, staticChunkQueue, queuedStaticChunks, yaw.position, preloadChunkRadius);
-      };
-    }
-
     return () => {
       disposed = true;
       cancelAnimationFrame(animationId);
@@ -4937,9 +4921,6 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("resize", onResize);
       renderer.domElement.removeEventListener("click", onCanvasClick);
-      if ((import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV) {
-        delete (window as unknown as { __vendettaTeleport?: unknown }).__vendettaTeleport;
-      }
       clearGroup(dynamicGroup);
       disposeObject(scene);
       envTarget.dispose();

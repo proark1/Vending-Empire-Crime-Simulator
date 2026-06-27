@@ -20,7 +20,9 @@ import { WORLD_SCALE } from "./scale";
 import { sidewalkFootprintBounds, sidewalkFootprintsForRoads } from "./sidewalks";
 
 const MAP_LAYOUT_KEY = "vendetta-vending.map-layout.v1";
-const MAP_LAYOUT_VERSION = 3;
+// Bump when authored world content changes structurally (roads, buildings, parks)
+// so stale persisted layouts are discarded in favour of the fresh default.
+const MAP_LAYOUT_VERSION = 4;
 
 interface StoredWorldMapLayout {
   layout: WorldMapLayout;
@@ -59,6 +61,7 @@ function normalizeLayout(candidate: unknown): WorldMapLayout {
     buildings: mergeArray(input.buildings, fallback.buildings),
     decorations: mergeArray(input.decorations, fallback.decorations),
     interiors: mergeArray(input.interiors, fallback.interiors),
+    parks: mergeArray(input.parks, fallback.parks),
     patrolZones: mergeArray(input.patrolZones, fallback.patrolZones),
     policePatrolPaths: mergeArray(input.policePatrolPaths, fallback.policePatrolPaths),
     roads: mergeArray(input.roads, fallback.roads),

@@ -1,6 +1,6 @@
 import type { GameState, Vec2 } from "../game/core/types";
 import { activeVehicle, districtProgress, machineAtLocation } from "../game/core/selectors";
-import { crimeContacts, worldBounds, worldRoads } from "../game/content/world";
+import { crimeContacts, worldBounds, worldParks, worldRoads } from "../game/content/world";
 import type { SceneTarget } from "../render/three/SceneTargets";
 
 interface MinimapProps {
@@ -74,6 +74,10 @@ export function Minimap({ state, playerPosition, guidanceLocationId, target }: M
           const progress = districtProgress(state, district.id);
           const isRecent = district.id !== "starter_suburb" && state.worldTimeHours - (progress.unlockedHour ?? progress.scoutedHour ?? -100) <= 2;
           return <rect className={`map-district ${progress.access} ${isRecent ? "recent" : ""}`} key={district.id} x={rect.x} y={rect.y} width={rect.width} height={rect.height} rx="2" />;
+        })}
+        {worldParks.map((park) => {
+          const rect = toDistrictRect(park.bounds);
+          return <rect className="map-park" key={park.id} x={rect.x} y={rect.y} width={rect.width} height={rect.height} rx="1.6" />;
         })}
         {worldRoads.map((road) => {
           const rect = toMapRect(road);
