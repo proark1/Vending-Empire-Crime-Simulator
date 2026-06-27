@@ -133,8 +133,9 @@ describe("city regenerator", () => {
     }
   });
 
-  it.each(SEEDS)("keeps every decoration off the road (%s)", (seed) => {
+  it.each(SEEDS)("places street props, all off the road (%s)", (seed) => {
     const layout = regenerateCity(seed);
+    expect(layout.decorations.length, "city should have street props").toBeGreaterThan(0);
     for (const decoration of layout.decorations) {
       expect(
         layout.roads.some((road) => rectsOverlap(
