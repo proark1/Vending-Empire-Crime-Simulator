@@ -68,7 +68,12 @@ export function normalizeLayout(candidate: unknown): WorldMapLayout {
 
   return {
     backdropBuildings: mergeArray(input.backdropBuildings, fallback.backdropBuildings),
-    buildings: mergeArray(input.buildings, fallback.buildings),
+    // Clamp building heights to the human-scale storefront floor so a stale saved
+    // layout still renders tall enough for the door + window the renderer draws.
+    buildings: mergeArray(input.buildings, fallback.buildings).map((building) => ({
+      ...building,
+      height: Math.max(building.height, WORLD_SCALE.building.minimumStorefrontHeight)
+    })),
     decorations: mergeArray(input.decorations, fallback.decorations),
     interiors: mergeArray(input.interiors, fallback.interiors),
     parks: mergeArray(input.parks, fallback.parks),
@@ -275,9 +280,11 @@ export function validateWorldMapLayout(layout: WorldMapLayout): MapValidationIss
 
   const disconnectedRoads = disconnectedRoadIds(layout.roads);
   if (disconnectedRoads.length > 0) {
+    // Soft issue: disconnected streets hurt guidance/pathfinding but don't break
+    // the game, so warn rather than block saving an otherwise-valid map.
     pushIssue(
       issues,
-      "error",
+      "warning",
       "roads",
       `Road network has disconnected streets: ${disconnectedRoads.slice(0, 8).join(", ")}${disconnectedRoads.length > 8 ? ", ..." : ""}.`
     );
@@ -292,7 +299,9 @@ export function validateWorldMapLayout(layout: WorldMapLayout): MapValidationIss
     }
 
     if (building.height < WORLD_SCALE.building.minimumStorefrontHeight) {
-      pushIssue(issues, "error", "buildings", `${label} is too short for human-scale doors and storefront windows.`);
+      // Warn rather than block: loaded layouts are clamped to this floor on render
+      // (see normalizeLayout), so this is guidance for hand-authored heights.
+      pushIssue(issues, "warning", "buildings", `${label} is too short for human-scale doors and storefront windows.`);
     }
 
     const buildingBounds = buildingFootprint(building);
