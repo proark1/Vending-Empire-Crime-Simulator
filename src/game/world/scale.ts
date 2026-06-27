@@ -30,6 +30,23 @@ export const WORLD_SCALE = {
     minimumStreetWidth: 4.2,
     sidewalkWidth: 2
   },
+  // Shared layout thresholds. The procedural generator and the map validator
+  // both read these so they can never disagree about what "navigable" means.
+  layout: {
+    // Clear corridor required between two building footprints so a pedestrian
+    // (radius 0.36, axis-separated sliding) can comfortably walk around them.
+    minBuildingGap: 1.6,
+    // Distance a building face must keep from the nearest sidewalk/road edge.
+    minBuildingSetback: 0.6,
+    // Setback band between the sidewalk and the front wall when placing lots.
+    placementSetback: 0.8,
+    // Walkable gap down the middle of a deep, back-to-back block.
+    alleyWidth: 3,
+    // Near-exact overlap clearance for final integrity checks. Far below the
+    // snap grid (1e-3) so real crossings are caught, but above the float
+    // round-trip noise of center+size geometry so it is not falsely flagged.
+    finalOverlapClearance: 1e-4
+  },
   vehicle: {
     bodyHeight: 0.92,
     clearance: 0.24,

@@ -2,16 +2,78 @@ import type { Bounds2, District, Location, Vec2 } from "../core/types";
 
 export type BuildingVisualStyle = "garage" | "supplier" | "laundromat" | "gym" | "arcade" | "transit" | "rival";
 
+// The world direction a building's storefront (door / sign / display window)
+// points toward — always toward its adjacent street. The renderer authors the
+// facade on the -Z face, so "north" (toward -Z) is the model's native facing.
+export type BuildingFacing = "north" | "south" | "east" | "west";
+
 export interface WorldBuilding {
+  // Procedurally-derived machine anchor for a location building (sits outside the
+  // storefront, facing the street). Present only on generated buildings; legacy
+  // hand-authored buildings omit it and keep using machinePlacementAnchors.
+  anchor?: MachinePlacementAnchor;
   depth: number;
   districtId: string;
+  // Optional facing; absent means "north" (legacy -Z facade), so existing
+  // hand-authored buildings render exactly as before.
+  facing?: BuildingFacing;
   height: number;
+  // Stable identity for id-keyed merge, editor selection and unique-id checks.
+  id?: string;
   locationId?: string;
   signText: string;
   style: BuildingVisualStyle;
   width: number;
   x: number;
   z: number;
+}
+
+// Rotation applied to the building group so the -Z facade turns to face the
+// chosen street. Must stay in lock-step with facingOutwardUnit below.
+export function facingToRotationY(facing: BuildingFacing = "north"): number {
+  switch (facing) {
+    case "south":
+      return Math.PI;
+    case "east":
+      return -Math.PI / 2;
+    case "west":
+      return Math.PI / 2;
+    case "north":
+    default:
+      return 0;
+  }
+}
+
+// Unit vector pointing out of the storefront toward the street. Equals
+// (-sin(rot), -cos(rot)) — the same outward vector the validator uses for the
+// machine front service point — so anchor math and facing math always agree.
+export function facingOutwardUnit(facing: BuildingFacing = "north"): Vec2 {
+  switch (facing) {
+    case "south":
+      return { x: 0, z: 1 };
+    case "east":
+      return { x: 1, z: 0 };
+    case "west":
+      return { x: -1, z: 0 };
+    case "north":
+    default:
+      return { x: 0, z: -1 };
+  }
+}
+
+// World-axis extents of a building footprint. `width` is authored along the
+// street-facing wall and `depth` away from the street, so east/west-facing
+// buildings (storefront on the X axis) swap which dimension maps to X vs Z.
+// This keeps the AABB exact for the four cardinal facings (matching the
+// rotated-box collision math) without introducing arbitrary-angle footprints.
+export function buildingFootprintExtents(
+  building: Pick<WorldBuilding, "depth" | "width"> & { facing?: BuildingFacing }
+): { x: number; z: number } {
+  const swap = building.facing === "east" || building.facing === "west";
+  return {
+    x: swap ? building.depth : building.width,
+    z: swap ? building.width : building.depth
+  };
 }
 
 export interface WorldRoad {

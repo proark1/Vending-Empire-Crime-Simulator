@@ -1,4 +1,4 @@
-import { AlertTriangle, Box, Building2, CircleDot, Copy, Eye, Gauge, History, Map, Music, Plus, Redo2, RotateCcw, RotateCw, Route, Save, Square, Trash2, Trees, Undo2 } from "lucide-react";
+import { AlertTriangle, Box, Building2, CircleDot, Copy, Eye, Gauge, History, Map, Music, Plus, Redo2, RotateCcw, RotateCw, Route, Save, Shuffle, Sparkles, Square, Trash2, Trees, Undo2, Wand2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import * as THREE from "three";
@@ -6,6 +6,7 @@ import type { AudioConfig } from "../game/content/audioConfig";
 import type { ModelConfig } from "../game/content/modelConfig";
 import { districts, machinePlacementAnchors, worldBounds, type BuildingVisualStyle, type WorldDecorationKind, type WorldMapLayout } from "../game/content/world";
 import { createDefaultWorldMapLayout, validateWorldMapLayout } from "../game/world/mapLayoutStorage";
+import { regenerateCity, relaxLayoutBuildings } from "../game/world/cityRegenerator";
 import {
   loadAdminMonitoring,
   loadRemoteMapRevisions,
@@ -989,6 +990,8 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, modelConfig,
   const [viewMode, setViewMode] = useState<AdminViewMode>("2d");
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [snapStep, setSnapStep] = useState(0.5);
+  const [seed, setSeed] = useState("vendetta-1");
+  const [generating, setGenerating] = useState(false);
   const [history, setHistory] = useState<{ future: WorldMapLayout[]; past: WorldMapLayout[] }>({ future: [], past: [] });
   const [revisions, setRevisions] = useState<RemoteMapRevision[]>([]);
   const [monitoring, setMonitoring] = useState<AdminMonitoringSnapshot | null>(null);
@@ -1349,6 +1352,36 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, modelConfig,
       .finally(() => setSaving(false));
   };
 
+  const applyGenerated = useCallback((nextSeed: string) => {
+    setGenerating(true);
+    try {
+      const generated = withEditableLayout(cloneLayout(regenerateCity(nextSeed)));
+      commitLayout(() => generated, { recordHistory: true });
+      setSelection({ layer: "buildings", index: 0 });
+      setActiveLayer("buildings");
+      setStatus(`Generated city for seed "${nextSeed}". Review and Save to publish.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? `Generation failed: ${error.message}. Try another seed.` : "Generation failed; try another seed.");
+    } finally {
+      setGenerating(false);
+    }
+  }, [commitLayout]);
+
+  const handleGenerateCity = useCallback(() => {
+    applyGenerated(seed.trim() || "vendetta-1");
+  }, [applyGenerated, seed]);
+
+  const handleRerollSeed = useCallback(() => {
+    const next = `seed-${Math.floor(Math.random() * 1_000_000).toString(36)}`;
+    setSeed(next);
+    applyGenerated(next);
+  }, [applyGenerated]);
+
+  const handleRelaxSpacing = useCallback(() => {
+    commitLayout((current) => withEditableLayout(relaxLayoutBuildings(current)), { recordHistory: true });
+    setStatus("Re-settled building spacing.");
+  }, [commitLayout]);
+
   const handleReset = () => {
     if (!window.confirm("Reset the editable map layout to the default authored city?")) {
       return;
@@ -1429,6 +1462,28 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, modelConfig,
           </button>
           {activeAdminTab === "map" && (
             <>
+              <input
+                aria-label="City generation seed"
+                className="admin-seed-input"
+                disabled={generating || saving}
+                onChange={(event) => setSeed(event.target.value)}
+                placeholder="seed"
+                title="City generation seed"
+                type="text"
+                value={seed}
+              />
+              <button disabled={generating || saving} onClick={handleGenerateCity} type="button" title="Generate a fresh procedural city from the seed">
+                <Sparkles size={16} aria-hidden="true" />
+                {generating ? "Generating" : "Generate city"}
+              </button>
+              <button disabled={generating || saving} onClick={handleRerollSeed} type="button" title="Generate from a new random seed">
+                <Shuffle size={16} aria-hidden="true" />
+                Re-roll
+              </button>
+              <button disabled={generating || saving} onClick={handleRelaxSpacing} type="button" title="Nudge buildings apart to restore navigable gaps">
+                <Wand2 size={16} aria-hidden="true" />
+                Fix spacing
+              </button>
               <button disabled={history.past.length === 0 || saving} onClick={handleUndo} type="button">
                 <Undo2 size={16} aria-hidden="true" />
                 Undo
