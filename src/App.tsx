@@ -1526,7 +1526,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
           showDebug={showDebugTools}
         />
       )}
-      {entered && <Minimap state={state} playerPosition={playerPosition} guidanceLocationId={guidanceLocationId} target={activeTarget} />}
+      {entered && <Minimap state={state} mapLayout={mapLayout} playerPosition={playerPosition} guidanceLocationId={guidanceLocationId} target={activeTarget} />}
       {entered && <InteractionPanel state={state} target={activeTarget} onCommand={sendCommandAtActiveTarget} onSave={save} onReload={reload} onRestart={handleRestart} />}
       <ToastStack docked={dashboardOpen} messages={toasts} />
     </main>
