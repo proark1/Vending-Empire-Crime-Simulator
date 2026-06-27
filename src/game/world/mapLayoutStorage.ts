@@ -45,14 +45,24 @@ function cloneLayout(layout: WorldMapLayout): WorldMapLayout {
 }
 
 function mergeArray<T extends object>(candidate: unknown, fallback: T[]): T[] {
-  const source = Array.isArray(candidate) ? candidate : fallback;
-  return source.map((item, index) => ({
+  if (!Array.isArray(candidate)) {
+    return fallback.map((item) => ({ ...item }));
+  }
+  const merged = candidate.map((item, index) => ({
     ...(fallback[index] ?? {}),
     ...(item as Partial<T>)
   }) as T);
+  // Additively keep newly-authored default items (e.g. parks, buildings filling
+  // empty blocks) that a previously-saved layout predates.
+  if (fallback.length > candidate.length) {
+    for (let index = candidate.length; index < fallback.length; index += 1) {
+      merged.push({ ...fallback[index] });
+    }
+  }
+  return merged;
 }
 
-function normalizeLayout(candidate: unknown): WorldMapLayout {
+export function normalizeLayout(candidate: unknown): WorldMapLayout {
   const fallback = cloneLayout(defaultWorldMapLayout);
   const input = typeof candidate === "object" && candidate !== null ? candidate as Partial<WorldMapLayout> : {};
 

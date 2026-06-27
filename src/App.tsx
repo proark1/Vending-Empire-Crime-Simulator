@@ -22,7 +22,7 @@ import { clearModelConfig, loadModelConfig, MODEL_CONFIG_KEY, MODEL_CONFIG_UPDAT
 import { crimeContacts, worldBounds, type WorldMapLayout } from "./game/content/world";
 import { endgamePaths, storyMissionArcs } from "./game/content/story";
 import { products } from "./game/content/products";
-import { clearWorldMapLayout, loadWorldMapLayout, saveWorldMapLayout } from "./game/world/mapLayoutStorage";
+import { clearWorldMapLayout, loadWorldMapLayout, normalizeLayout, saveWorldMapLayout } from "./game/world/mapLayoutStorage";
 import { clearStoredGameSession, loadRemoteAudioConfig, loadRemoteGame, loadRemoteMapLayout, loadStoredGameSession, loginGame, registerGame, type GameSession } from "./game/save/api";
 import { loadGame } from "./game/save/storage";
 import { createInitialState } from "./game/content/initialState";
@@ -1810,8 +1810,11 @@ export function App() {
     loadRemoteMapLayout()
       .then((remote) => {
         if (!cancelled && remote.layout) {
-          saveWorldMapLayout(remote.layout);
-          setMapLayout(remote.layout);
+          // Merge the DB layout over the current code defaults so newly-authored
+          // content (parks, buildings filling empty blocks) survives a stale save.
+          const merged = normalizeLayout(remote.layout);
+          saveWorldMapLayout(merged);
+          setMapLayout(merged);
         }
       })
       .catch(() => {
