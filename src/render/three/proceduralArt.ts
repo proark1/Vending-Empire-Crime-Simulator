@@ -307,6 +307,32 @@ function addPlane(group: THREE.Group, width: number, height: number, material: T
   return plane;
 }
 
+// Soft elliptical "blob" shadow that grounds objects even when real shadow maps
+// are disabled (Low/Medium quality). Lies flat in the XZ plane.
+export function createContactShadow(spanX: number, spanZ: number, opacity = 0.46): THREE.Mesh {
+  const texture = textureFromCanvas(128, (context, size) => {
+    context.clearRect(0, 0, size, size);
+    const gradient = context.createRadialGradient(size / 2, size / 2, size * 0.05, size / 2, size / 2, size / 2);
+    gradient.addColorStop(0, "rgba(0, 0, 0, 0.92)");
+    gradient.addColorStop(0.5, "rgba(0, 0, 0, 0.4)");
+    gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, size, size);
+  });
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.repeat.set(1, 1);
+
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(spanX, spanZ),
+    new THREE.MeshBasicMaterial({ map: texture, color: "#000000", transparent: true, opacity, depthWrite: false })
+  );
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.y = 0.02;
+  mesh.renderOrder = 2;
+  return mesh;
+}
+
 function litWindowMaterial(style: BuildingStyle, lit: boolean): THREE.MeshStandardMaterial {
   const color = style === "arcade"
     ? "#f5d0fe"
@@ -739,6 +765,55 @@ export function createSkyDome(quality: GraphicsQuality = "medium"): THREE.Mesh {
   );
   sky.position.y = 6;
   return sky;
+}
+
+// Equirectangular night-city texture used to build a PMREM environment map.
+// Gives clearcoat car paint and glass something believable to reflect: a dark
+// sky, a warm horizon haze, and a few soft neon/streetlight glows.
+export function createEnvironmentMapTexture(quality: GraphicsQuality = "medium"): THREE.CanvasTexture {
+  const width = quality === "low" ? 256 : 512;
+  const height = width / 2;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+
+  if (context) {
+    const sky = context.createLinearGradient(0, 0, 0, height);
+    sky.addColorStop(0, "#050b16");
+    sky.addColorStop(0.4, "#102338");
+    sky.addColorStop(0.5, "#3a5572");
+    sky.addColorStop(0.52, "#1b2940");
+    sky.addColorStop(1, "#070d16");
+    context.fillStyle = sky;
+    context.fillRect(0, 0, width, height);
+
+    const haze = context.createLinearGradient(0, height * 0.42, 0, height * 0.56);
+    haze.addColorStop(0, "rgba(251, 191, 120, 0)");
+    haze.addColorStop(0.5, "rgba(251, 146, 60, 0.24)");
+    haze.addColorStop(1, "rgba(251, 191, 120, 0)");
+    context.fillStyle = haze;
+    context.fillRect(0, height * 0.42, width, height * 0.14);
+
+    const glows: Array<[number, number, number, string]> = [
+      [width * 0.18, height * 0.47, height * 0.18, "rgba(253, 230, 138, 0.55)"],
+      [width * 0.46, height * 0.45, height * 0.14, "rgba(248, 250, 252, 0.4)"],
+      [width * 0.64, height * 0.46, height * 0.22, "rgba(103, 232, 249, 0.34)"],
+      [width * 0.86, height * 0.48, height * 0.16, "rgba(244, 114, 182, 0.32)"]
+    ];
+    for (const [x, y, radius, color] of glows) {
+      const glow = context.createRadialGradient(x, y, 0, x, y, radius);
+      glow.addColorStop(0, color);
+      glow.addColorStop(1, "rgba(0, 0, 0, 0)");
+      context.fillStyle = glow;
+      context.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+    }
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.mapping = THREE.EquirectangularReflectionMapping;
+  return texture;
 }
 
 function createSpriteTexture(kind: "poster" | "trash" | "pallet" | "graffiti"): THREE.CanvasTexture {

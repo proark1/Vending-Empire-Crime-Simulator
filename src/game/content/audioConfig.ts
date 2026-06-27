@@ -148,9 +148,30 @@ const defaultCueAssetByTrigger: Record<string, string> = {
   "event.trend": "synth_sound_cash"
 };
 
+// Authored noir lines + in-fiction speaker names for the voice layer, surfaced as
+// on-screen subtitles when a voice cue fires. (Audio generation specs live in
+// audioProvider.ts; these are the runtime defaults so captions work out of the box.)
+const defaultVoiceLineByTrigger: Record<string, { speaker: string; subtitle: string }> = {
+  "voice.district_entry": { speaker: "Dispatch", subtitle: "New block, new rules. Keep the machines stocked and the locals paid." },
+  "voice.heat_warning": { speaker: "Dispatch", subtitle: "Heat is climbing. Kill the noise before inspectors start knocking." },
+  "voice.rival_attack": { speaker: "Dispatch", subtitle: "Redline is moving on one of our machines. Get there now." },
+  "voice.mission_complete": { speaker: "Dispatch", subtitle: "That route is ours. Bank the win and prep the next block." },
+  "voice.supplier_offer": { speaker: "Supplier", subtitle: "I can get you a clean pallet by midnight. Pay fast, move faster." },
+  "voice.fixer_tip": { speaker: "Fixer", subtitle: "There is a back door on this deal. It costs extra because it works." },
+  "voice.landlord_pressure": { speaker: "Landlord", subtitle: "Rent clears by morning, or your machine finds the sidewalk." },
+  "voice.rival_boss_threat": { speaker: "Rival Boss", subtitle: "That corner was ours before your logo touched it. Pull back, or we pull it down." },
+  "voice.mechanic_unlock": { speaker: "Mechanic", subtitle: "I rebuilt the lock assembly. It is ugly, heavy, and exactly what you need." },
+  "voice.driver_warning": { speaker: "Driver", subtitle: "Route is hot. I can still make the drop, but I am not waiting twice." },
+  "voice.guard_contact": { speaker: "Guard", subtitle: "I have eyes on the block. If Redline tests the machine, they pay for it." },
+  "voice.inspector_notice": { speaker: "Inspector", subtitle: "This placement is flagged for inspection. Keep your paperwork close." },
+  "voice.lawyer_notice": { speaker: "Lawyer", subtitle: "Their contract language is sloppy. Give me one day and I can turn it against them." },
+  "voice.informant_tip": { speaker: "Informant", subtitle: "A scout marked your machine ten minutes ago. They are checking if you are asleep." }
+};
+
 function defaultAudioCues(): AudioCue[] {
   return audioTriggerOptions.map((option, index) => {
     const assetId = defaultCueAssetByTrigger[option.trigger] ?? (option.category === "voice" ? "synth_voice_radio" : "synth_sound_alert");
+    const voiceLine = option.category === "voice" ? defaultVoiceLineByTrigger[option.trigger] : undefined;
     return {
       assetId,
       category: option.category,
@@ -160,8 +181,8 @@ function defaultAudioCues(): AudioCue[] {
       id: `default_${option.trigger.replace(/[^a-z0-9]+/g, "_")}_${index}`,
       label: option.label,
       priority: option.category === "music" ? 10 : option.category === "voice" ? 6 : 4,
-      speaker: option.category === "voice" ? "Radio" : "",
-      subtitle: option.category === "voice" ? option.label : "",
+      speaker: voiceLine?.speaker ?? (option.category === "voice" ? "Radio" : ""),
+      subtitle: voiceLine?.subtitle ?? (option.category === "voice" ? option.label : ""),
       trigger: option.trigger
     };
   });

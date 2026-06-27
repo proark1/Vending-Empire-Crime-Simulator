@@ -698,6 +698,7 @@ export interface GameEvent {
 
 export type StreetActivityKind =
   | "customer_purchase"
+  | "machine_sale"
   | "customer_complaint"
   | "customer_walkaway"
   | "customer_tipoff"

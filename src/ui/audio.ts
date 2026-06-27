@@ -20,6 +20,7 @@ let currentSynthMusicCueId: string | null = null;
 let musicDuckedUntil = 0;
 const activeOneShots = new Set<HTMLAudioElement>();
 const lastCueTimes = new Map<string, number>();
+const MUSIC_CROSSFADE_SECONDS = 0.8;
 
 function getContext(): AudioContext | null {
   if (typeof window === "undefined") {
@@ -133,6 +134,94 @@ function stopAmbience(): void {
   currentSynthMusicCueId = null;
 }
 
+// Ramp the current synth bed down to silence and tear it down after the fade,
+// while detaching the globals so a new bed can be built and faded in over the top.
+function fadeOutAmbience(fadeSeconds: number): void {
+  const context = audioContext;
+  const gain = ambienceGain;
+  const oscillators = ambienceOscillators;
+  ambienceGain = null;
+  ambienceOscillators = [];
+  currentSynthMusicCueId = null;
+
+  if (!context || !gain) {
+    for (const oscillator of oscillators) {
+      try {
+        oscillator.stop();
+      } catch {
+        // already stopped
+      }
+    }
+    gain?.disconnect();
+    return;
+  }
+
+  const now = context.currentTime;
+  try {
+    gain.gain.cancelScheduledValues(now);
+    gain.gain.setValueAtTime(Math.max(0.0001, gain.gain.value), now);
+    gain.gain.linearRampToValueAtTime(0.0001, now + fadeSeconds);
+  } catch {
+    // ignore scheduling failures and fall through to teardown
+  }
+
+  window.setTimeout(() => {
+    for (const oscillator of oscillators) {
+      try {
+        oscillator.stop();
+      } catch {
+        // already stopped
+      }
+    }
+    try {
+      gain.disconnect();
+    } catch {
+      // already disconnected
+    }
+  }, Math.ceil(fadeSeconds * 1000) + 60);
+}
+
+function fadeOutMusicElement(element: HTMLAudioElement, fadeMs: number): void {
+  const startVolume = element.volume;
+  const startTime = Date.now();
+  const step = () => {
+    const t = (Date.now() - startTime) / fadeMs;
+    if (t >= 1) {
+      try {
+        element.pause();
+        element.removeAttribute("src");
+        element.load();
+      } catch {
+        // element may already be torn down
+      }
+      return;
+    }
+    element.volume = Math.max(0, startVolume * (1 - t));
+    window.setTimeout(step, 50);
+  };
+  step();
+}
+
+function fadeInMusicElement(element: HTMLAudioElement, fadeMs: number): void {
+  const startTime = Date.now();
+  const step = () => {
+    if (currentMusicElement !== element) {
+      return;
+    }
+    const t = (Date.now() - startTime) / fadeMs;
+    if (t >= 1) {
+      updateCurrentMusicVolume();
+      return;
+    }
+    const cue = audioConfig.cues.find((candidate) => candidate.id === currentMusicCueId);
+    const asset = cue ? audioConfig.assets.find((candidate) => candidate.id === cue.assetId) : null;
+    const ducking = Date.now() < musicDuckedUntil ? audioConfig.mixer.voiceDucking : 1;
+    element.volume = clampVolume(channelVolume("music", asset?.volume ?? 1) * ducking * t);
+    window.setTimeout(step, 50);
+  };
+  step();
+}
+
 function isSynthAsset(asset: AudioAsset): boolean {
   return asset.url.startsWith("synth://");
 }
@@ -176,14 +265,18 @@ function playSynthMusicCue(cue: AudioCue, asset: AudioAsset): boolean {
   }
 
   stopCurrentMusic();
-  stopAmbience();
+  fadeOutAmbience(MUSIC_CROSSFADE_SECONDS);
 
   const preset = synthPreset(asset);
   const base = preset.includes("conflict") ? 72 : preset.includes("heat") ? 61 : 54;
   const shimmer = preset.includes("conflict") ? 168 : preset.includes("heat") ? 136 : 118;
   const pulse = preset.includes("conflict") ? 94 : preset.includes("heat") ? 82 : 0;
   ambienceGain = context.createGain();
-  ambienceGain.gain.setValueAtTime(0.02 * channelVolume("music", asset.volume), context.currentTime);
+  // Fade the new bed up from near-silence so escalations crossfade with the
+  // outgoing bed instead of cutting to silence and restarting.
+  const targetGain = 0.02 * channelVolume("music", asset.volume);
+  ambienceGain.gain.setValueAtTime(0.0001, context.currentTime);
+  ambienceGain.gain.linearRampToValueAtTime(Math.max(0.0001, targetGain), context.currentTime + MUSIC_CROSSFADE_SECONDS);
   ambienceGain.connect(context.destination);
 
   const lowDrone = context.createOscillator();
@@ -383,20 +476,28 @@ function playMusicCue(trigger: string): boolean {
     return false;
   }
 
-  stopAmbience();
+  fadeOutAmbience(MUSIC_CROSSFADE_SECONDS);
 
   if (currentMusicCueId === cue.id && currentMusicElement) {
     updateCurrentMusicVolume();
     return true;
   }
 
-  stopCurrentMusic();
+  // Keep the outgoing bed alive and fade it down while the new one fades up.
+  const outgoing = currentMusicElement;
+  currentMusicElement = null;
+  currentMusicCueId = null;
+  if (outgoing) {
+    fadeOutMusicElement(outgoing, MUSIC_CROSSFADE_SECONDS * 1000);
+  }
+
   const element = new Audio(asset.url);
   element.loop = true;
+  element.volume = 0;
   currentMusicElement = element;
   currentMusicCueId = cue.id;
   lastCueTimes.set(cue.id, Date.now());
-  updateCurrentMusicVolume();
+  fadeInMusicElement(element, MUSIC_CROSSFADE_SECONDS * 1000);
   void element.play().catch(() => {
     if (currentMusicElement === element) {
       stopCurrentMusic();
@@ -572,4 +673,30 @@ export function playEventCue(toneName: GameEventTone): void {
       tone(960, now + 0.07, 0.08, 0.02, "triangle");
     }
   });
+}
+
+// Play a voiced line for a "voice.*" trigger and surface its subtitle. Voice cues
+// duck the music bed automatically (see playAsset). The findCue cooldown throttles
+// repeats. The subtitle is dispatched even when muted so captions still work.
+export function playVoiceCue(trigger: string): void {
+  const cue = findCue(trigger, "voice");
+  if (!cue) {
+    return;
+  }
+
+  const asset = cueAsset(cue);
+  if (asset) {
+    playAsset(cue, asset);
+  } else {
+    lastCueTimes.set(cue.id, Date.now());
+  }
+
+  if (typeof window !== "undefined" && (cue.speaker || cue.subtitle)) {
+    const durationMs = Math.min(7000, Math.max(2600, cue.subtitle.length * 55));
+    window.dispatchEvent(
+      new CustomEvent("vv:voice-cue", {
+        detail: { speaker: cue.speaker, subtitle: cue.subtitle, durationMs }
+      })
+    );
+  }
 }

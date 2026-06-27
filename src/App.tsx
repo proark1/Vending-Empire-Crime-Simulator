@@ -9,7 +9,7 @@ import { LandingCinematicScene } from "./ui/LandingCinematicScene";
 import { Minimap } from "./ui/Minimap";
 import { MissionTracker } from "./ui/MissionTracker";
 import { GuidanceArrow } from "./ui/GuidanceArrow";
-import { ClipboardList, Copy, DollarSign, Flame, LogOut, Map, Menu, Network, Package, Play, RotateCcw, Save, ShieldAlert, Sparkles, Truck, Users, Wrench, X, Zap, type LucideIcon } from "lucide-react";
+import { ClipboardList, Copy, DollarSign, Flame, LogOut, Map, Menu, Network, Package, Play, RotateCcw, Save, ShieldAlert, Sparkles, Truck, Users, Volume2, VolumeX, Wrench, X, Zap, type LucideIcon } from "lucide-react";
 import { AdminMapEditor } from "./ui/AdminMapEditor";
 import { getStarterMissionStep } from "./game/core/mission";
 import { activeConflictEvents, activeMachineAlarms, latestDayReport, selectedRouteTask } from "./game/core/selectors";
@@ -26,7 +26,7 @@ import { clearWorldMapLayout, loadWorldMapLayout, saveWorldMapLayout } from "./g
 import { clearStoredGameSession, loadRemoteAudioConfig, loadRemoteGame, loadRemoteMapLayout, loadStoredGameSession, loginGame, registerGame, type GameSession } from "./game/save/api";
 import { loadGame } from "./game/save/storage";
 import { createInitialState } from "./game/content/initialState";
-import { configureGameAudio, playEventCue, playFeedbackCue, startGameAmbience, unlockGameAudio, updateGameAmbience } from "./ui/audio";
+import { configureGameAudio, playEventCue, playFeedbackCue, playVoiceCue, startGameAmbience, unlockGameAudio, updateGameAmbience } from "./ui/audio";
 import { MultiplayerClient } from "./game/network/multiplayerClient";
 import type { MultiplayerStatus } from "./game/network/protocol";
 
@@ -627,6 +627,8 @@ function LandingWorldPreview({ mapLayout, state }: { mapLayout: WorldMapLayout; 
   );
 }
 
+const PLAYER_SPAWN: Vec2 = { x: -9, z: 5.9 };
+
 function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: GameAppProps) {
   const multiplayerClient = useMemo(() => new MultiplayerClient(session.token), [session.token]);
   const [multiplayerStatus, setMultiplayerStatus] = useState<MultiplayerStatus>(() => multiplayerClient.getStatus());
@@ -636,8 +638,12 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
   const [dashboardOpen, setDashboardOpen] = useState(false);
   const [gameMenuOpen, setGameMenuOpen] = useState(false);
   const [roomCodeInput, setRoomCodeInput] = useState("");
-  const [playerPosition, setPlayerPosition] = useState<Vec2>({ x: -9, z: 5.9 });
+  const [playerPosition, setPlayerPosition] = useState<Vec2>(() => ({ ...PLAYER_SPAWN }));
   const [playerHeadingDegrees, setPlayerHeadingDegrees] = useState(-180);
+  const [showControls, setShowControls] = useState(false);
+  const [hasMoved, setHasMoved] = useState(false);
+  const [voiceLine, setVoiceLine] = useState<{ speaker: string; subtitle: string } | null>(null);
+  const heatVoiceTierRef = useRef(0);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [sceneFeedback, setSceneFeedback] = useState<SceneFeedbackEvent | null>(null);
   const [serviceHold, setServiceHold] = useState<ServiceHoldState | null>(null);
@@ -789,6 +795,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
     playEventCue(newestEvent.tone);
     if (newestEvent.tone === "danger" && activeAlarm) {
       playFeedbackCue("sabotage");
+      playVoiceCue("voice.rival_attack");
       setSceneFeedback({
         id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
         kind: "sabotage",
@@ -814,6 +821,9 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
     }
 
     lastMissionStepIdRef.current = missionStep.id;
+    if (missionStep.id === "completed") {
+      playVoiceCue("voice.mission_complete");
+    }
     addToast({
       title: "Objective updated",
       message: missionStep.objective,
@@ -881,6 +891,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
     unlockGameAudio();
     startGameAmbience();
     setEntered(true);
+    window.setTimeout(() => playVoiceCue("voice.district_entry"), 900);
   }, []);
 
   const sendCommandAtActiveTarget = useCallback(
@@ -1031,6 +1042,38 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
     updateGameAmbience(state.factions[state.playerFactionId].heat, conflicts.length > 0);
   }, [conflicts.length, entered, state.factions, state.playerFactionId]);
 
+  // Voiced heat warning on the rising edge of each heat tier (30, 60).
+  useEffect(() => {
+    if (!entered) {
+      return;
+    }
+    const heat = state.factions[state.playerFactionId]?.heat ?? 0;
+    const tier = heat >= 60 ? 2 : heat >= 30 ? 1 : 0;
+    if (tier > heatVoiceTierRef.current) {
+      playVoiceCue("voice.heat_warning");
+    }
+    heatVoiceTierRef.current = tier;
+  }, [entered, state.factions, state.playerFactionId]);
+
+  // Surface voiced lines as a lower-third subtitle (works even when muted).
+  useEffect(() => {
+    let clearTimer = 0;
+    const onVoiceCue = (event: Event) => {
+      const detail = (event as CustomEvent<{ speaker: string; subtitle: string; durationMs: number }>).detail;
+      if (!detail) {
+        return;
+      }
+      setVoiceLine({ speaker: detail.speaker, subtitle: detail.subtitle });
+      window.clearTimeout(clearTimer);
+      clearTimer = window.setTimeout(() => setVoiceLine(null), detail.durationMs);
+    };
+    window.addEventListener("vv:voice-cue", onVoiceCue);
+    return () => {
+      window.removeEventListener("vv:voice-cue", onVoiceCue);
+      window.clearTimeout(clearTimer);
+    };
+  }, []);
+
   useEffect(() => () => clearServiceHoldTimers(), [clearServiceHoldTimers]);
 
   useEffect(() => {
@@ -1086,6 +1129,44 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
     };
   }, [cancelServiceHold, entered, handlePrimaryInteraction]);
 
+  // First-run controls legend: auto-show once after entering the district, then
+  // remember it so returning players aren't nagged (still recallable via the ? button).
+  useEffect(() => {
+    if (!entered) {
+      return;
+    }
+    let alreadySeen = false;
+    try {
+      alreadySeen = window.localStorage.getItem("vv:seen-controls") === "1";
+    } catch {
+      alreadySeen = false;
+    }
+    if (alreadySeen) {
+      return;
+    }
+    setShowControls(true);
+    try {
+      window.localStorage.setItem("vv:seen-controls", "1");
+    } catch {
+      // ignore storage failures (private mode etc.)
+    }
+    const timer = window.setTimeout(() => setShowControls(false), 30000);
+    return () => window.clearTimeout(timer);
+  }, [entered]);
+
+  // Learn-to-move beat: clears the movement coach once the player actually walks
+  // a short distance from the fixed spawn point.
+  useEffect(() => {
+    if (hasMoved) {
+      return;
+    }
+    const dx = playerPosition.x - PLAYER_SPAWN.x;
+    const dz = playerPosition.z - PLAYER_SPAWN.z;
+    if (dx * dx + dz * dz > 2.25) {
+      setHasMoved(true);
+    }
+  }, [hasMoved, playerPosition]);
+
   return (
     <main className={serviceHold ? "game-shell servicing" : "game-shell"}>
       <ThreeScene
@@ -1104,6 +1185,53 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
       {entered && <Hud feedbackEvent={sceneFeedback} nextActionLabel={nextActionLabel} state={state} />}
       {entered && <MissionTracker compact={dashboardOpen} state={state} playerPosition={playerPosition} />}
       {entered && <div className="crosshair" aria-hidden="true" />}
+      {entered && voiceLine && (
+        <div className="voice-subtitle" aria-live="polite">
+          {voiceLine.speaker && <span className="voice-subtitle-speaker">{voiceLine.speaker}</span>}
+          <span className="voice-subtitle-line">{voiceLine.subtitle}</span>
+        </div>
+      )}
+      {entered && !hasMoved && !showControls && (
+        <div className="move-coach" aria-live="polite">
+          Use <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> to move · <kbd>Mouse</kbd> to look · <kbd>Click</kbd> to lock the cursor
+        </div>
+      )}
+      {entered && showControls && (
+        <div className="controls-legend" role="dialog" aria-label="Controls">
+          <header>
+            <span>Controls</span>
+            <button
+              aria-label="Close controls"
+              className="controls-legend-close"
+              onClick={() => setShowControls(false)}
+              type="button"
+            >
+              <X size={16} aria-hidden="true" />
+            </button>
+          </header>
+          <ul>
+            <li><span className="controls-legend-keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span><span>Move</span></li>
+            <li><span className="controls-legend-keys"><kbd>Mouse</kbd></span><span>Look around</span></li>
+            <li><span className="controls-legend-keys"><kbd>Click</kbd></span><span>Lock cursor · <kbd>Esc</kbd> frees it</span></li>
+            <li><span className="controls-legend-keys"><kbd>Shift</kbd></span><span>Sprint</span></li>
+            <li><span className="controls-legend-keys"><kbd>Space</kbd></span><span>Jump</span></li>
+            <li><span className="controls-legend-keys"><kbd>E</kbd></span><span>Interact</span></li>
+            <li><span className="controls-legend-keys"><kbd>F</kbd></span><span>Drive / exit vehicle</span></li>
+            <li><span className="controls-legend-keys"><kbd>M</kbd></span><span>Dashboard &amp; map</span></li>
+          </ul>
+        </div>
+      )}
+      {entered && (
+        <button
+          aria-label={showControls ? "Hide controls" : "Show controls"}
+          aria-pressed={showControls}
+          className="controls-help-toggle"
+          onClick={() => setShowControls((current) => !current)}
+          type="button"
+        >
+          ?
+        </button>
+      )}
       <div className="game-menu" ref={gameMenuRef}>
         <button
           aria-expanded={gameMenuOpen}
@@ -1550,9 +1678,69 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
   );
 }
 
+interface PlayerAudioPrefs {
+  muted: boolean;
+  volume: number;
+}
+
+const AUDIO_PREFS_KEY = "vv:audio-prefs";
+
+function loadAudioPrefs(): PlayerAudioPrefs {
+  try {
+    const raw = window.localStorage.getItem(AUDIO_PREFS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<PlayerAudioPrefs>;
+      return {
+        muted: Boolean(parsed.muted),
+        volume: typeof parsed.volume === "number" ? Math.max(0, Math.min(1, parsed.volume)) : 1
+      };
+    }
+  } catch {
+    // ignore unreadable/private-mode storage
+  }
+  return { muted: false, volume: 1 };
+}
+
+function AudioControl({
+  muted,
+  volume,
+  onToggleMute,
+  onVolumeChange
+}: {
+  muted: boolean;
+  volume: number;
+  onToggleMute: () => void;
+  onVolumeChange: (volume: number) => void;
+}) {
+  return (
+    <div className="audio-control">
+      <button
+        aria-label={muted ? "Unmute audio" : "Mute audio"}
+        aria-pressed={muted}
+        className={muted ? "audio-control-button muted" : "audio-control-button"}
+        onClick={onToggleMute}
+        type="button"
+      >
+        {muted ? <VolumeX size={18} aria-hidden="true" /> : <Volume2 size={18} aria-hidden="true" />}
+      </button>
+      <input
+        aria-label="Master volume"
+        className="audio-control-slider"
+        max={1}
+        min={0}
+        onChange={(event) => onVolumeChange(Number(event.target.value))}
+        step={0.05}
+        type="range"
+        value={muted ? 0 : volume}
+      />
+    </div>
+  );
+}
+
 export function App() {
   const [mapLayout, setMapLayout] = useState<WorldMapLayout>(() => loadWorldMapLayout());
   const [audioConfig, setAudioConfig] = useState<AudioConfig>(() => createDefaultAudioConfig());
+  const [audioPrefs, setAudioPrefs] = useState<PlayerAudioPrefs>(() => loadAudioPrefs());
   const [modelConfig, setModelConfig] = useState<ModelConfig>(() => loadModelConfig());
   const isAdminRoute = window.location.pathname === "/admin";
 
@@ -1592,8 +1780,36 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    configureGameAudio(audioConfig);
-  }, [audioConfig]);
+    // Player master settings overlay the admin-authored mixer rather than replacing it.
+    const masterVolume = Math.max(0, Math.min(1, audioConfig.mixer.masterVolume * audioPrefs.volume));
+    configureGameAudio({
+      ...audioConfig,
+      mixer: {
+        ...audioConfig.mixer,
+        muted: audioConfig.mixer.muted || audioPrefs.muted,
+        masterVolume
+      }
+    });
+  }, [audioConfig, audioPrefs]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(AUDIO_PREFS_KEY, JSON.stringify(audioPrefs));
+    } catch {
+      // ignore unwritable/private-mode storage
+    }
+  }, [audioPrefs]);
+
+  const handleToggleMute = useCallback(() => {
+    setAudioPrefs((prefs) => {
+      const muted = !prefs.muted;
+      return { muted, volume: !muted && prefs.volume <= 0 ? 0.8 : prefs.volume };
+    });
+  }, []);
+
+  const handleVolumeChange = useCallback((volume: number) => {
+    setAudioPrefs(() => ({ muted: volume <= 0, volume }));
+  }, []);
 
   useEffect(() => {
     const refreshModelConfig = () => setModelConfig(loadModelConfig());
@@ -1647,5 +1863,10 @@ export function App() {
     );
   }
 
-  return <GameAccessGate mapLayout={mapLayout} modelConfig={modelConfig} />;
+  return (
+    <>
+      <GameAccessGate mapLayout={mapLayout} modelConfig={modelConfig} />
+      <AudioControl muted={audioPrefs.muted} onToggleMute={handleToggleMute} onVolumeChange={handleVolumeChange} volume={audioPrefs.volume} />
+    </>
+  );
 }

@@ -25,7 +25,7 @@ import { WORLD_SCALE } from "../../game/world/scale";
 import { sidewalkFootprintsForRoads } from "../../game/world/sidewalks";
 import type { SceneFeedbackEvent, SceneTarget } from "./SceneTargets";
 import { resolveGraphicsProfile, type GraphicsQuality } from "./graphicsQuality";
-import { createAsphaltMaterial, createAtmosphere, createBuilding, createNpcCharacter, createRoadMaterial, createSidewalkMaterial, createSkyDome, createStreetProps } from "./proceduralArt";
+import { createAsphaltMaterial, createAtmosphere, createBuilding, createContactShadow, createEnvironmentMapTexture, createNpcCharacter, createRoadMaterial, createSidewalkMaterial, createSkyDome, createStreetProps } from "./proceduralArt";
 
 interface ThreeSceneProps {
   feedbackEvent?: SceneFeedbackEvent | null;
@@ -1817,7 +1817,7 @@ function colorForTone(tone: GameEventTone): string {
 }
 
 function activityLabel(activity: StreetActivity): string {
-  if (activity.kind === "customer_purchase") {
+  if (activity.kind === "customer_purchase" || activity.kind === "machine_sale") {
     return activity.amount ? `SALE +$${Math.round(activity.amount)}` : "SALE";
   }
 
@@ -1887,7 +1887,7 @@ function createActivityPulse(activity: StreetActivity): THREE.Group {
   ring.position.y = 0.08;
   group.add(ring);
 
-  if (activity.kind === "customer_purchase") {
+  if (activity.kind === "customer_purchase" || activity.kind === "machine_sale") {
     const coin = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.018, 16), new THREE.MeshBasicMaterial({ color: "#facc15" }));
     coin.position.set(0.22, 0.72, -0.12);
     coin.rotation.x = Math.PI / 2;
@@ -2406,6 +2406,34 @@ function createSceneFeedbackEffect(event: SceneFeedbackEvent, currentState: Game
   return group;
 }
 
+// Anticipation-style overshoot: 0 -> ~1.15 -> 1. Used so feedback effects "pop"
+// into existence instead of appearing at full size on frame one.
+function easeOutBack(t: number): number {
+  const c1 = 1.70158;
+  const c3 = c1 + 1;
+  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+}
+
+function easeOutQuad(t: number): number {
+  return 1 - (1 - t) * (1 - t);
+}
+
+// 0 = full daylight, 1 = deep night, with smooth dawn/dusk ramps.
+// Day 7-18, dusk 18-21, night 21-5, dawn 5-7.
+function nightFactorForHour(hourInDay: number): number {
+  const hour = ((hourInDay % 24) + 24) % 24;
+  if (hour >= 7 && hour <= 18) {
+    return 0;
+  }
+  if (hour > 18 && hour < 21) {
+    return (hour - 18) / 3;
+  }
+  if (hour >= 21 || hour < 5) {
+    return 1;
+  }
+  return 1 - (hour - 5) / 2;
+}
+
 function updateFeedbackEffects(group: THREE.Group, time: number): void {
   for (const child of [...group.children]) {
     const runtime = child.userData.feedbackRuntime as FeedbackRuntime | undefined;
@@ -2417,14 +2445,24 @@ function updateFeedbackEffects(group: THREE.Group, time: number): void {
     const lift = Math.sin(progress * Math.PI) * 0.38 + progress * 0.42;
     child.position.y = runtime.startY + lift;
     child.rotation.y = progress * Math.PI * 1.2;
-    child.scale.setScalar(runtime.baseScale * (1 + Math.sin(progress * Math.PI) * 0.16));
+    // Snappy pop-in over the first ~12% of life, then a gentle breathe.
+    const popIn = progress < 0.12 ? easeOutBack(progress / 0.12) : 1;
+    const breathe = 1 + Math.sin(progress * Math.PI) * 0.12;
+    child.scale.setScalar(runtime.baseScale * popIn * breathe);
 
     child.traverse((object) => {
       if (object.userData.feedbackRing) {
-        object.scale.set(1 + progress * 1.4, 1 + progress * 1.4, 1 + progress * 1.4);
+        // Ease-out expansion: fast at first, settling at the edge.
+        const ringScale = 1 + easeOutQuad(progress) * 1.4;
+        object.scale.set(ringScale, ringScale, ringScale);
       }
 
-      if (object.userData.feedbackCoin || object.userData.feedbackSpark) {
+      if (object.userData.feedbackCoin) {
+        // Cash coins arc upward and spin with accelerating energy.
+        const baseY = (object.userData.baseY ??= object.position.y) as number;
+        object.position.y = baseY + Math.sin(progress * Math.PI) * 0.4;
+        object.rotation.y += 0.04 + progress * 0.12;
+      } else if (object.userData.feedbackSpark) {
         const phase = typeof object.userData.phase === "number" ? object.userData.phase : 0;
         object.position.y += Math.sin(time * 0.012 + phase) * 0.003;
         object.rotation.y += 0.04;
@@ -2434,7 +2472,12 @@ function updateFeedbackEffects(group: THREE.Group, time: number): void {
         const materials = object instanceof THREE.Sprite ? [object.material] : Array.isArray(object.material) ? object.material : [object.material];
         for (const material of materials) {
           material.transparent = true;
-          material.opacity = Math.min(material.opacity, Math.max(0, 1 - Math.max(0, progress - 0.65) / 0.35));
+          // Envelope toward each material's authored base opacity: quick ease-in,
+          // hold, then ease-out — instead of a single hard tail fade.
+          const base = (material.userData.feedbackBaseOpacity ??= material.opacity) as number;
+          const fadeIn = THREE.MathUtils.clamp(progress / 0.08, 0, 1);
+          const fadeOut = THREE.MathUtils.clamp(1 - (progress - 0.65) / 0.35, 0, 1);
+          material.opacity = base * fadeIn * fadeOut;
         }
       }
     });
@@ -3873,9 +3916,13 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
         pulse.userData.phase = index * 0.7;
         group.add(pulse);
 
-        const actor = createActivityActor(activity, placement, servicePoint, currentState.worldTimeHours, quality, modelConfig, index);
-        actor.userData.phase = index * 0.9 + activity.hour;
-        group.add(actor);
+        // Passive machine sales are a coin pop over the machine, not a customer
+        // walking up — so skip the NPC actor for that kind.
+        if (activity.kind !== "machine_sale") {
+          const actor = createActivityActor(activity, placement, servicePoint, currentState.worldTimeHours, quality, modelConfig, index);
+          actor.userData.phase = index * 0.9 + activity.hour;
+          group.add(actor);
+        }
       }
     });
 
@@ -4038,6 +4085,11 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     const renderer = new THREE.WebGLRenderer({ antialias: !renderProfile.lowPower, powerPreference: renderProfile.lowPower ? "default" : "high-performance" });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, renderProfile.maxPixelRatio));
     renderer.setSize(mount.clientWidth, mount.clientHeight);
+    // Filmic tone mapping so the scene's heavy emissive neon rolls off into a moody
+    // night grade instead of clipping flat to white. Exposure compensates for the
+    // mid-tone darkening ACES introduces relative to the previous NoToneMapping look.
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.2;
     renderer.shadowMap.enabled = renderProfile.enableShadows;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     mount.appendChild(renderer.domElement);
@@ -4046,16 +4098,32 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     const atmosphere = createAtmosphere(renderProfile.detail, renderProfile.atmosphereParticles);
     scene.add(atmosphere);
 
-    const hemi = new THREE.HemisphereLight("#dbeafe", "#172554", 1.05);
+    const hemi = new THREE.HemisphereLight("#dbeafe", "#172554", 1.2);
     scene.add(hemi);
 
-    const keyLight = new THREE.DirectionalLight("#bfdbfe", 1.45);
+    const keyLight = new THREE.DirectionalLight("#bfdbfe", 1.6);
     keyLight.position.set(-8, 13, 7);
     keyLight.castShadow = renderProfile.enableShadows;
     if (renderProfile.shadowMapSize > 0) {
       keyLight.shadow.mapSize.set(renderProfile.shadowMapSize, renderProfile.shadowMapSize);
     }
     scene.add(keyLight);
+
+    // Day/night palette endpoints, lerped each frame in the animate loop by the
+    // night factor derived from state.worldTimeHours. Working color objects are
+    // reused to avoid per-frame allocation.
+    const dayHemiSky = new THREE.Color("#dbeafe");
+    const nightHemiSky = new THREE.Color("#162033");
+    const dayHemiGround = new THREE.Color("#33475f");
+    const nightHemiGround = new THREE.Color("#0a1020");
+    const dayKeyColor = new THREE.Color("#ffedd0");
+    const nightKeyColor = new THREE.Color("#5878b4");
+    const dayFogColor = new THREE.Color("#26374f");
+    const nightFogColor = new THREE.Color("#080f1d");
+    const dayBgColor = new THREE.Color("#1a2740");
+    const nightBgColor = new THREE.Color("#05090f");
+    const sceneFog = scene.fog as THREE.Fog;
+    const sceneBackground = scene.background as THREE.Color;
 
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(worldWidth + 10, worldDepth + 10), createAsphaltMaterial(renderProfile.detail));
     ground.rotation.x = -Math.PI / 2;
@@ -4446,6 +4514,19 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       lastTime = time;
 
       const currentState = stateRef.current;
+
+      // Day/night cycle: drive the cheap global lights, fog and background from
+      // the world clock so the city visibly shifts from daylight to a moody night.
+      const night = nightFactorForHour(currentState.worldTimeHours);
+      hemi.color.copy(dayHemiSky).lerp(nightHemiSky, night);
+      hemi.groundColor.copy(dayHemiGround).lerp(nightHemiGround, night);
+      hemi.intensity = THREE.MathUtils.lerp(1.35, 0.5, night);
+      keyLight.color.copy(dayKeyColor).lerp(nightKeyColor, night);
+      keyLight.intensity = THREE.MathUtils.lerp(1.95, 0.45, night);
+      keyLight.position.set(-8, THREE.MathUtils.lerp(15, 6, night), 7);
+      sceneFog.color.copy(dayFogColor).lerp(nightFogColor, night);
+      sceneBackground.copy(dayBgColor).lerp(nightBgColor, night);
+
       const carriedUnits = carriedCrateUnits(currentState);
       const carryLoadRatio = currentState.player.carriedCrate ? carriedUnits / Math.max(1, currentState.player.cargoCapacity) : 0;
       const carryPenalty = currentState.player.carriedCrate ? Math.min(0.38, 0.08 + carryLoadRatio * 0.3) : 0;

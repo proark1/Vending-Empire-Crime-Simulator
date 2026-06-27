@@ -183,6 +183,75 @@ function ensureConflictEncounter(event: ConflictEvent): ConflictEncounterState {
   return event.encounter;
 }
 
+type RivalTauntAction = "sabotage" | "undercut" | "expand";
+
+// Boss trash-talk, keyed by rival archetype + action. Turns colorless action logs
+// ("X leaned on Y") into quoted threats attributed to the org's named boss.
+const RIVAL_TAUNTS: Record<string, Record<RivalTauntAction, string[]>> = {
+  corporate: {
+    sabotage: [
+      "Consider this a formal notice. Your machine is now a liability.",
+      "We don't break things. We optimize them out of service.",
+      "Our compliance team flagged your operation. This is the remedy."
+    ],
+    undercut: [
+      "We can sell at a loss longer than you can stay in business.",
+      "Enjoy those margins while they last. They won't.",
+      "Our legal department sends regards to your permit office."
+    ],
+    expand: [
+      "That corner tested well in our projections. It's ours now.",
+      "Market share isn't taken. It's acquired."
+    ]
+  },
+  black_market: {
+    sabotage: [
+      "Nice machine. Shame about the accident it's about to have.",
+      "You're playing in my alley now. Mind the broken glass.",
+      "Tell your crew the street has a new tax."
+    ],
+    undercut: [
+      "I move product cheaper because I don't ask permission.",
+      "Your prices are cute. Mine come with no questions.",
+      "Heat's rising on your block. Funny how that works."
+    ],
+    expand: [
+      "Every corner I touch stops being yours.",
+      "Plant your flag. I'll plant mine on top of it."
+    ]
+  },
+  former_partner: {
+    sabotage: [
+      "You taught me this trick. Now hold still.",
+      "We built this together. I'm just taking my half.",
+      "Nothing personal. Actually — it's entirely personal."
+    ],
+    undercut: [
+      "I know your costs. I know exactly where to cut you.",
+      "You always overpriced. I'm just correcting your mistake.",
+      "Should've kept me close. Now I keep your customers."
+    ],
+    expand: [
+      "I memorized every corner you wanted. I'm taking them first.",
+      "Your old map? I still have it. Watch."
+    ]
+  }
+};
+
+const DEFAULT_RIVAL_TAUNTS: Record<RivalTauntAction, string[]> = {
+  sabotage: ["You're in our way. Not for long.", "Pack it up. This block is spoken for."],
+  undercut: ["We'll bleed your prices dry.", "Your customers have a new favorite."],
+  expand: ["This territory is changing hands.", "Make room. We're moving in."]
+};
+
+function rivalBossTaunt(state: GameState, actorId: FactionId, archetype: string | undefined, fallbackName: string, action: RivalTauntAction): string {
+  const table = (archetype ? RIVAL_TAUNTS[archetype] : undefined) ?? DEFAULT_RIVAL_TAUNTS;
+  const lines = table[action] ?? DEFAULT_RIVAL_TAUNTS[action];
+  const seed = Math.abs(Math.trunc(state.progression.rivalActionsToday));
+  const boss = state.rivalOrganizations[actorId]?.bossName ?? fallbackName;
+  return `“${lines[seed % lines.length]}” — ${boss}`;
+}
+
 function ensureRivalOrganizationState(state: GameState): void {
   state.rivalOrganizations ??= {};
   for (const faction of Object.values(state.factions)) {
@@ -3541,6 +3610,8 @@ function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number):
   applySpoilage(state, events);
 
   let playerEarned = 0;
+  let topSaleMachine: VendingMachine | null = null;
+  let topSaleEarned = 0;
   for (const machine of Object.values(state.machines)) {
     if (!isMachineInstalled(machine)) {
       continue;
@@ -3552,9 +3623,28 @@ function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number):
     if (machine.ownerFactionId === state.playerFactionId) {
       playerEarned += earned;
       state.progression.stockSoldToday += stockSold;
+      if (earned > topSaleEarned) {
+        topSaleEarned = earned;
+        topSaleMachine = machine;
+      }
     } else {
       state.factions[machine.ownerFactionId].money += earned * 0.75;
     }
+  }
+
+  // Surface the tick's best passive earner as a floating coin pop over the machine
+  // (log-free so it doesn't flood the event feed). Confirms the business is working,
+  // especially in the fragile early game where small earnings otherwise register nothing.
+  if (topSaleMachine && topSaleEarned > 0) {
+    recordStreetActivity(state, {
+      actor: "customer",
+      amount: topSaleEarned,
+      kind: "machine_sale",
+      locationId: topSaleMachine.locationId,
+      machineId: topSaleMachine.id,
+      message: `${topSaleMachine.name} sold $${Math.round(topSaleEarned)}.`,
+      tone: "good"
+    });
   }
 
   for (const location of Object.values(state.locations)) {
@@ -3564,7 +3654,7 @@ function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number):
   const player = state.factions[state.playerFactionId];
   player.heat = Math.max(0, player.heat - hours * 0.12);
 
-  if (playerEarned >= 18) {
+  if (playerEarned >= 8) {
     log(state, events, `Machines generated $${Math.round(playerEarned)} in stored revenue.`, "good");
   }
 
@@ -5508,6 +5598,7 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
           const baseDamage = Math.max(8, 18 + Math.round((controller?.aggression ?? 0) * 8) + profile.sabotageBonus);
           if (target.ownerFactionId === state.playerFactionId) {
             createMachineAlarm(state, events, target, actor.id, "sabotage", baseDamage);
+            log(state, events, rivalBossTaunt(state, actor.id, actor.archetype, actor.name, "sabotage"), "danger");
             break;
           }
 
@@ -5534,6 +5625,9 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
             createMachineAlarm(state, events, target, actor.id, "undercut", 12);
           }
           log(state, events, `${actor.name} is ${actor.archetype === "corporate" ? "pressuring permits" : "undercutting prices"} near ${location.name}.`, "warning");
+          if (target.ownerFactionId === state.playerFactionId) {
+            log(state, events, rivalBossTaunt(state, actor.id, actor.archetype, actor.name, "undercut"), "warning");
+          }
         }
       }
 
@@ -5545,6 +5639,7 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
             rights.corporatePressure = Math.min(100, rights.corporatePressure + 5);
             rights.legalPressure = Math.min(100, rights.legalPressure + 3);
             log(state, events, `${actor.name} could not expand into ${location.name}; your exclusive contract held.`, "warning");
+            log(state, events, rivalBossTaunt(state, actor.id, actor.archetype, actor.name, "expand"), "warning");
             break;
           }
 

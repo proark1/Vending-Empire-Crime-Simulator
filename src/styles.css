@@ -5455,3 +5455,295 @@ kbd {
     justify-content: space-between;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Interaction polish: transitions, press feedback, animated meters,  */
+/* and a reduced-motion baseline. Appended last so it layers cleanly  */
+/* over the rules above without disturbing them.                      */
+/* ------------------------------------------------------------------ */
+
+.mini-button,
+.action-button,
+.tab,
+.quality-button,
+.dashboard-toggle,
+.entry-button,
+.stat-pill {
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease,
+    transform 120ms ease, box-shadow 120ms ease, filter 120ms ease;
+}
+
+/* Tactile "press down" on click for every interactive control. */
+.mini-button:active:not(:disabled),
+.action-button:active:not(:disabled),
+.tab:active:not(:disabled),
+.quality-button:active:not(:disabled),
+.dashboard-toggle:active:not(:disabled),
+.entry-button:active:not(:disabled) {
+  transform: translateY(1px) scale(0.98);
+  filter: brightness(0.95);
+}
+
+/* Meter fills slide to their new width instead of snapping. */
+.mission-progress span,
+.vehicle-meter span,
+.contract-meter span,
+.operation-meter span,
+.encounter-meter i b {
+  transition: width 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Accessibility baseline: respect the user's reduced-motion preference. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* First-run onboarding: controls legend, learn-to-move coach, recall. */
+/* ------------------------------------------------------------------ */
+
+.move-coach {
+  position: absolute;
+  top: 88px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 28;
+  padding: 9px 16px;
+  border: 1px solid rgba(125, 211, 252, 0.38);
+  border-radius: 999px;
+  background: rgba(8, 13, 26, 0.88);
+  color: #e2e8f0;
+  font-size: 13px;
+  white-space: nowrap;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  animation: guidance-pulse 1.7s ease-in-out infinite;
+}
+
+.move-coach kbd {
+  margin: 0 1px;
+}
+
+.controls-legend {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 32;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(440px, calc(100vw - 32px));
+  padding: 18px 20px;
+  border: 1px solid rgba(226, 232, 240, 0.18);
+  border-radius: 16px;
+  background: rgba(8, 13, 26, 0.92);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(10px);
+  animation: controls-legend-in 220ms ease-out;
+}
+
+.controls-legend header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #cbd5f5;
+}
+
+.controls-legend-close {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgba(226, 232, 240, 0.2);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.85);
+  color: #e2e8f0;
+  cursor: pointer;
+}
+
+.controls-legend ul {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.controls-legend li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  color: #e2e8f0;
+}
+
+.controls-legend-keys {
+  display: inline-flex;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.controls-legend li > span:last-child {
+  color: #94a3b8;
+}
+
+.controls-help-toggle {
+  position: absolute;
+  top: 16px;
+  right: 64px;
+  z-index: 12;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(226, 232, 240, 0.22);
+  border-radius: 50%;
+  background: rgba(8, 13, 26, 0.85);
+  color: #e2e8f0;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.controls-help-toggle:hover,
+.controls-help-toggle[aria-pressed="true"] {
+  border-color: rgba(125, 211, 252, 0.55);
+  color: #f8fafc;
+}
+
+@keyframes controls-legend-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 12px));
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+  }
+}
+
+@media (max-width: 640px) {
+  .controls-legend ul {
+    grid-template-columns: 1fr;
+  }
+
+  .move-coach {
+    white-space: normal;
+    max-width: calc(100vw - 32px);
+    text-align: center;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Player audio control: master mute + volume, collapses to an icon.  */
+/* ------------------------------------------------------------------ */
+
+.audio-control {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px 5px 5px;
+  border: 1px solid rgba(226, 232, 240, 0.18);
+  border-radius: 999px;
+  background: rgba(8, 13, 26, 0.78);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(8px);
+}
+
+.audio-control-button {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #e2e8f0;
+  cursor: pointer;
+}
+
+.audio-control-button.muted {
+  color: #fb7185;
+}
+
+.audio-control-slider {
+  width: 0;
+  opacity: 0;
+  height: 4px;
+  accent-color: #5eead4;
+  cursor: pointer;
+  transition: width 160ms ease, opacity 160ms ease;
+}
+
+.audio-control:hover .audio-control-slider,
+.audio-control:focus-within .audio-control-slider {
+  width: 88px;
+  opacity: 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* Voiced-line lower-third subtitle.                                   */
+/* ------------------------------------------------------------------ */
+
+.voice-subtitle {
+  position: fixed;
+  bottom: 92px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 36;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  max-width: min(620px, calc(100vw - 48px));
+  padding: 12px 22px;
+  border: 1px solid rgba(226, 232, 240, 0.16);
+  border-left: 3px solid #5eead4;
+  border-radius: 12px;
+  background: rgba(6, 10, 20, 0.88);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  text-align: center;
+  pointer-events: none;
+  animation: voice-subtitle-in 200ms ease-out;
+}
+
+.voice-subtitle-speaker {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #5eead4;
+}
+
+.voice-subtitle-line {
+  font-size: 15px;
+  line-height: 1.35;
+  color: #f1f5f9;
+}
+
+@keyframes voice-subtitle-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
