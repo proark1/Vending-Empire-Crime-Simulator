@@ -24,7 +24,7 @@ import { createBuilding } from "../render/three/proceduralArt";
 import { AdminAudioEditor } from "./AdminAudioEditor";
 import { AdminModelEditor } from "./AdminModelEditor";
 
-type EditableLayer = "roads" | "buildings" | "backdropBuildings" | "decorations" | "patrolZones";
+type EditableLayer = "roads" | "buildings" | "backdropBuildings" | "decorations" | "patrolZones" | "parks";
 type AdminViewMode = "2d" | "3d";
 type AdminTab = "map" | "models" | "audio";
 
@@ -66,6 +66,7 @@ const editableLayers: Array<{ description: string; icon: ReactNode; id: Editable
   { id: "buildings", label: "Buildings", description: "Playable storefronts and landmarks with collision and signs.", icon: <Building2 size={16} aria-hidden="true" /> },
   { id: "decorations", label: "Props", description: "Street detail such as lights, planters, dumpsters, and bollards.", icon: <Trees size={16} aria-hidden="true" /> },
   { id: "patrolZones", label: "Patrols", description: "Police/rival area markers used to place patrol activity.", icon: <CircleDot size={16} aria-hidden="true" /> },
+  { id: "parks", label: "Parks", description: "Green public spaces with grass, paths, trees, and a pond. Bounds + pond.", icon: <Trees size={16} aria-hidden="true" /> },
   { id: "backdropBuildings", label: "Backdrops", description: "Non-playable skyline blocks used to fill distant city space.", icon: <Square size={16} aria-hidden="true" /> }
 ];
 
@@ -76,8 +77,46 @@ const layerColors: Record<EditableLayer, string> = {
   buildings: "#2dd4bf",
   decorations: "#f59e0b",
   patrolZones: "#93c5fd",
+  parks: "#22c55e",
   backdropBuildings: "#94a3b8"
 };
+
+// Parks are stored as bounds + pond in the data model; the editor works with a
+// center x/z + width/depth so they reuse the standard drag/inspector/3D machinery.
+function toEditablePark(park: Record<string, unknown>): Record<string, unknown> {
+  const bounds = (park.bounds ?? {}) as { minX?: number; maxX?: number; minZ?: number; maxZ?: number };
+  const minX = bounds.minX ?? 0;
+  const maxX = bounds.maxX ?? 0;
+  const minZ = bounds.minZ ?? 0;
+  const maxZ = bounds.maxZ ?? 0;
+  return {
+    ...park,
+    x: (minX + maxX) / 2,
+    z: (minZ + maxZ) / 2,
+    width: Math.max(1, maxX - minX),
+    depth: Math.max(1, maxZ - minZ)
+  };
+}
+
+// Recompute the stored bounds from the editor's center x/z + width/depth so the
+// renderer (which reads bounds) always matches what the editor shows.
+function withParkBounds(park: Record<string, unknown>): Record<string, unknown> {
+  const x = typeof park.x === "number" ? park.x : 0;
+  const z = typeof park.z === "number" ? park.z : 0;
+  const width = typeof park.width === "number" && park.width > 0 ? park.width : 1;
+  const depth = typeof park.depth === "number" && park.depth > 0 ? park.depth : 1;
+  return {
+    ...park,
+    bounds: { minX: x - width / 2, maxX: x + width / 2, minZ: z - depth / 2, maxZ: z + depth / 2 }
+  };
+}
+
+function withEditableLayout(layout: WorldMapLayout): WorldMapLayout {
+  return {
+    ...layout,
+    parks: ((layout.parks ?? []) as unknown as Array<Record<string, unknown>>).map(toEditablePark)
+  } as unknown as WorldMapLayout;
+}
 const buildingStyleColors: Record<BuildingVisualStyle, string> = {
   arcade: "#7c3aed",
   garage: "#64748b",
@@ -132,6 +171,10 @@ function itemName(layer: EditableLayer, item: Record<string, unknown>, index: nu
     return String(item.label ?? item.id ?? `Patrol ${index + 1}`);
   }
 
+  if (layer === "parks") {
+    return String(item.label ?? item.id ?? `Park ${index + 1}`);
+  }
+
   return `${String(item.districtId ?? "Backdrop")} ${index + 1}`;
 }
 
@@ -144,6 +187,11 @@ function itemPosition(item: Record<string, unknown>): { x: number; z: number } {
 
 function numericValue(item: Record<string, unknown>, key: string, fallback = 0): number {
   return typeof item[key] === "number" ? item[key] as number : fallback;
+}
+
+function pondNumber(item: Record<string, unknown>, key: "x" | "z" | "radius"): number {
+  const pond = item.pond as Record<string, unknown> | undefined;
+  return pond && typeof pond[key] === "number" ? (pond[key] as number) : 0;
 }
 
 function layerMeta(layer: EditableLayer): (typeof editableLayers)[number] {
@@ -170,6 +218,10 @@ function itemMetrics(layer: EditableLayer, item: Record<string, unknown>): strin
 
   if (layer === "decorations") {
     return `${String(item.kind ?? "prop").replace("_", " ")} / scale ${numericValue(item, "scale", 1).toFixed(2)}`;
+  }
+
+  if (layer === "parks") {
+    return `${numericValue(item, "width", 1).toFixed(1)}w x ${numericValue(item, "depth", 1).toFixed(1)}d park`;
   }
 
   return `radius ${numericValue(item, "radius", 1).toFixed(1)}`;
@@ -266,6 +318,21 @@ function defaultItemForLayer(layer: EditableLayer, layout: WorldMapLayout, selec
     };
   }
 
+  if (layer === "parks") {
+    const width = 18;
+    const depth = 14;
+    return withParkBounds({
+      id: uniqueId("park", layout.parks as unknown as Array<Record<string, unknown>>),
+      districtId,
+      label: "New Park",
+      x,
+      z,
+      width,
+      depth,
+      pond: { x, z, radius: 3 }
+    });
+  }
+
   return {
     id: uniqueId("prop", layout.decorations as unknown as Array<Record<string, unknown>>),
     color: "#f59e0b",
@@ -291,6 +358,17 @@ function cloneItemForLayer(layer: EditableLayer, item: Record<string, unknown>, 
   if (layer === "buildings") {
     clone.signText = `${String(clone.signText ?? "BUILDING")} COPY`;
     delete clone.locationId;
+  }
+
+  if (layer === "parks") {
+    // Carry the pond along with the shifted park and resync the stored bounds.
+    const oldPosition = itemPosition(item);
+    const pond = item.pond as { x: number; z: number; radius: number } | undefined;
+    if (pond) {
+      clone.pond = { ...pond, x: pond.x + (Number(clone.x) - oldPosition.x), z: pond.z + (Number(clone.z) - oldPosition.z) };
+    }
+    clone.label = `${String(clone.label ?? "Park")} copy`;
+    return withParkBounds(clone);
   }
 
   return clone;
@@ -460,6 +538,30 @@ function createAdminObject(layer: EditableLayer, item: Record<string, unknown>, 
     ring.position.set(x, 0.09, z);
     ring.rotation.x = -Math.PI / 2;
     return ring;
+  }
+
+  if (layer === "parks") {
+    const group = new THREE.Group();
+    const width = numericValue(item, "width", 1);
+    const depth = numericValue(item, "depth", 1);
+    const grass = new THREE.Mesh(
+      new THREE.BoxGeometry(width, 0.05, depth),
+      createAdminMaterial("#15803d", opacity, selected ? "#22c55e" : "#000000")
+    );
+    grass.position.y = 0.025;
+    group.add(grass);
+
+    const pond = item.pond as { x: number; z: number; radius: number } | undefined;
+    if (pond && pond.radius > 0) {
+      const water = new THREE.Mesh(
+        new THREE.CylinderGeometry(pond.radius, pond.radius, 0.06, 28),
+        createAdminMaterial("#0ea5e9", opacity, "#0ea5e9")
+      );
+      water.position.set(pond.x - x, 0.06, pond.z - z);
+      group.add(water);
+    }
+    group.position.set(x, 0, z);
+    return group;
   }
 
   return createDecorationObject(item, opacity, selected);
@@ -830,6 +932,7 @@ function AdminThreeMapEditor({ activeLayer, layout, onEditStart, onMove, onSelec
 
     addLayer("roads");
     addLayer("backdropBuildings");
+    addLayer("parks");
     addLayer("patrolZones");
     addLayer("buildings");
     addLayer("decorations");
@@ -879,7 +982,7 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, modelConfig,
   const [credentials, setCredentials] = useState({ username: "", password: "" });
   const [loginError, setLoginError] = useState("");
   const [saving, setSaving] = useState(false);
-  const [layout, setLayout] = useState<WorldMapLayout>(() => cloneLayout(initialLayout));
+  const [layout, setLayout] = useState<WorldMapLayout>(() => withEditableLayout(cloneLayout(initialLayout)));
   const [activeLayer, setActiveLayer] = useState<EditableLayer>("buildings");
   const [activeAdminTab, setActiveAdminTab] = useState<AdminTab>("map");
   const [selection, setSelection] = useState<Selection>({ layer: "buildings", index: 0 });
@@ -950,7 +1053,23 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, modelConfig,
       const items = layerItems(current, target.layer);
       return {
         ...current,
-        [target.layer]: items.map((item, index) => (index === target.index ? { ...item, ...patch } : item))
+        [target.layer]: items.map((item, index) => {
+          if (index !== target.index) {
+            return item;
+          }
+          const merged = { ...item, ...patch };
+          if (target.layer === "parks") {
+            // Moving the park center carries its pond; then resync stored bounds.
+            const pond = item.pond as { x: number; z: number; radius: number } | undefined;
+            if (pond && ("x" in patch || "z" in patch)) {
+              const dx = (typeof merged.x === "number" ? merged.x : 0) - (typeof item.x === "number" ? item.x : 0);
+              const dz = (typeof merged.z === "number" ? merged.z : 0) - (typeof item.z === "number" ? item.z : 0);
+              merged.pond = { ...pond, x: pond.x + dx, z: pond.z + dz };
+            }
+            return withParkBounds(merged);
+          }
+          return merged;
+        })
       } as WorldMapLayout;
     }, options);
   }, [commitLayout]);
@@ -1473,6 +1592,26 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, modelConfig,
                     onPointerDown={(event) => startDrag(event, { layer: "decorations", index }, decoration.x, decoration.z)}
                   />
                 ))}
+                {layout.parks.map((park, index) => {
+                  const centerX = (park.bounds.minX + park.bounds.maxX) / 2;
+                  const centerZ = (park.bounds.minZ + park.bounds.maxZ) / 2;
+                  return (
+                    <g key={`park-${park.id ?? index}`}>
+                      <rect
+                        className={layerClass("parks")}
+                        data-selected={selection.layer === "parks" && selection.index === index}
+                        height={park.bounds.maxZ - park.bounds.minZ}
+                        width={park.bounds.maxX - park.bounds.minX}
+                        x={mapX(park.bounds.minX)}
+                        y={mapY(park.bounds.maxZ)}
+                        onPointerDown={(event) => startDrag(event, { layer: "parks", index }, centerX, centerZ)}
+                      />
+                      {park.pond && (
+                        <circle className="admin-map-pond" cx={mapX(park.pond.x)} cy={mapY(park.pond.z)} r={park.pond.radius} />
+                      )}
+                    </g>
+                  );
+                })}
                 <g className="admin-map-labels">
                   {activeItems.map((item, index) => {
                     const position = itemPosition(item);
@@ -1569,7 +1708,7 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, modelConfig,
                   </label>
                 )}
 
-                {(selection.layer === "roads" || selection.layer === "decorations" || selection.layer === "patrolZones") && (
+                {(selection.layer === "roads" || selection.layer === "decorations" || selection.layer === "patrolZones" || selection.layer === "parks") && (
                   <label className="wide">
                     ID
                     <input type="text" value={String(selectedItem.id ?? "")} onChange={(event) => updateSelected({ id: event.target.value })} />
@@ -1590,7 +1729,7 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, modelConfig,
                   </label>
                 )}
 
-                {(selection.layer === "roads" || selection.layer === "buildings" || selection.layer === "backdropBuildings") && (
+                {(selection.layer === "roads" || selection.layer === "buildings" || selection.layer === "backdropBuildings" || selection.layer === "parks") && (
                   <>
                     <label>
                       Width
@@ -1599,6 +1738,27 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, modelConfig,
                     <label>
                       Depth
                       <input type="number" min="0.2" step="0.1" value={numericValue(selectedItem, "depth", 1)} onChange={(event) => updateSelected({ depth: Number(event.target.value) })} />
+                    </label>
+                  </>
+                )}
+
+                {selection.layer === "parks" && (
+                  <>
+                    <label className="wide">
+                      Label
+                      <input type="text" value={String(selectedItem.label ?? "")} onChange={(event) => updateSelected({ label: event.target.value })} />
+                    </label>
+                    <label>
+                      Pond X
+                      <input type="number" step="0.1" value={pondNumber(selectedItem, "x")} onChange={(event) => updateSelected({ pond: { ...(selectedItem.pond as Record<string, unknown>), x: Number(event.target.value) } })} />
+                    </label>
+                    <label>
+                      Pond Z
+                      <input type="number" step="0.1" value={pondNumber(selectedItem, "z")} onChange={(event) => updateSelected({ pond: { ...(selectedItem.pond as Record<string, unknown>), z: Number(event.target.value) } })} />
+                    </label>
+                    <label>
+                      Pond radius
+                      <input type="number" min="0" step="0.1" value={pondNumber(selectedItem, "radius")} onChange={(event) => updateSelected({ pond: { ...(selectedItem.pond as Record<string, unknown>), radius: Number(event.target.value) } })} />
                     </label>
                   </>
                 )}
