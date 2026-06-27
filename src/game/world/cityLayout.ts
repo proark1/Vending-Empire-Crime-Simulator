@@ -74,8 +74,11 @@ const AVENUE_WIDTH = WORLD_SCALE.road.laneWidth * 2; // 6.2 — two-lane arteria
 const LOCAL_WIDTH = WORLD_SCALE.road.minimumStreetWidth + 0.4; // 4.6 — local street
 const EDGE_MARGIN = 8; // keep arterials off the very rim of the world
 const MIN_ARTERIAL_GAP = 16; // closest two parallel arterials may sit (keeps blocks buildable)
-const SIDEWALK = WORLD_SCALE.road.sidewalkWidth;
-const MIN_BUILDABLE = 4; // a block thinner than this (after setback) gets no buildings
+// Inset from a block edge to a building face: the full sidewalk plus a small
+// margin so buildings clear the pavement (incl. perpendicular sidewalks) without
+// the heavy old setback that left long-thin blocks empty.
+const PLACEMENT_INSET = WORLD_SCALE.road.sidewalkWidth + 0.4;
+const MIN_BUILDABLE = 3; // a block thinner than this (after the inset) gets no buildings
 const MIN_ROW_DEPTH = 3.5;
 const MIN_ALLEY = 2; // tightest navigable alley between back-to-back rows
 const ROW_DEPTH: [number, number] = [5, 9];
@@ -481,20 +484,18 @@ function edgeHasRoad(block: CityBlock, side: BuildingFacing, roadFootprints: Bou
 }
 
 function placeBuildingsInBlock(block: CityBlock, rng: Rng, options: CityPlanOptions, idCounter: { value: number }, roadFootprints: Bounds2[]): WorldBuilding[] {
-  const buildable = snapBounds(inflate(block.bounds, -(SIDEWALK + options.setback)));
+  // Inset by the sidewalk plus a small setback: buildings sit just behind the
+  // pavement (a thinner inset than before, so long-thin blocks still hold a row).
+  const buildable = snapBounds(inflate(block.bounds, -PLACEMENT_INSET));
   const width = boundsWidth(buildable);
   const depth = boundsDepth(buildable);
   if (Math.min(width, depth) < MIN_BUILDABLE) {
     return [];
   }
 
-  const buildings: WorldBuilding[] = [];
-  const idPrefix = `${block.districtId}_lot`;
-
-  // Only edges that actually border a road are frontages — buildings line up
-  // against those, facing the street. Edges that are district/world boundaries
-  // (no road) become the block's back, so no storefront is ever stranded far
-  // from its street.
+  // Frontages are edges that actually border a road; buildings line up against
+  // them facing the street. Edges that are district/world boundaries (no road)
+  // become the block's back. A block with no frontage gets no buildings.
   const hasN = edgeHasRoad(block, "north", roadFootprints);
   const hasS = edgeHasRoad(block, "south", roadFootprints);
   const hasW = edgeHasRoad(block, "west", roadFootprints);
@@ -502,23 +503,31 @@ function placeBuildingsInBlock(block: CityBlock, rng: Rng, options: CityPlanOpti
   const xFront = [hasN ? "north" : null, hasS ? "south" : null].filter(Boolean) as BuildingFacing[];
   const zFront = [hasW ? "west" : null, hasE ? "east" : null].filter(Boolean) as BuildingFacing[];
   if (xFront.length === 0 && zFront.length === 0) {
-    return []; // landlocked block — no street access, no buildings
+    return [];
   }
 
+  const buildings: WorldBuilding[] = [];
+  const idPrefix = `${block.districtId}_lot`;
   const runAlongX = xFront.length !== zFront.length ? xFront.length > zFront.length : width >= depth;
   const frontages = runAlongX ? xFront : zFront;
   const spanDepth = runAlongX ? depth : width;
 
   const makeRow = (depthCenter: number, rowDepth: number, facing: BuildingFacing) => {
-    const spec: RowSpec = {
-      alongStart: runAlongX ? buildable.minX : buildable.minZ,
-      alongEnd: runAlongX ? buildable.maxX : buildable.maxZ,
-      depthCenter,
-      rowDepth,
-      facing,
-      axis: runAlongX ? "x" : "z"
-    };
-    const placed = placeRow(spec, rng, options, block.districtId, idPrefix, idCounter.value);
+    const placed = placeRow(
+      {
+        alongStart: runAlongX ? buildable.minX : buildable.minZ,
+        alongEnd: runAlongX ? buildable.maxX : buildable.maxZ,
+        depthCenter,
+        rowDepth,
+        facing,
+        axis: runAlongX ? "x" : "z"
+      },
+      rng,
+      options,
+      block.districtId,
+      idPrefix,
+      idCounter.value
+    );
     idCounter.value += placed.length;
     buildings.push(...placed);
   };
@@ -534,7 +543,6 @@ function placeBuildingsInBlock(block: CityBlock, rng: Rng, options: CityPlanOpti
     makeRow(snap(min + rowDepth / 2), rowDepth, nearFacing);
     makeRow(snap(max - rowDepth / 2), rowDepth, farFacing);
   } else {
-    // One row hugging an edge that has a road.
     const rowDepth = Math.min(rng.range(ROW_DEPTH[0], ROW_DEPTH[1]), spanDepth);
     const hugNear = frontages.includes(nearFacing);
     makeRow(hugNear ? snap(min + rowDepth / 2) : snap(max - rowDepth / 2), rowDepth, hugNear ? nearFacing : farFacing);

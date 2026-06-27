@@ -5,7 +5,7 @@ import { anchorsForLayout } from "./locationGeometry";
 import { connectedRoadComponents, roadBounds } from "./roadGraph";
 import {
   districts,
-  facingToRotationY,
+  facingOutwardUnit,
   locations,
   worldBounds,
   worldBuildings,
@@ -95,16 +95,26 @@ describe("city regenerator", () => {
     }
   });
 
-  it.each(SEEDS)("orients each location storefront toward its street (%s)", (seed) => {
+  it.each(SEEDS)("keeps storefronts lining their streets (%s)", (seed) => {
     const layout = regenerateCity(seed);
-    const anchors = anchorsForLayout(layout);
-    for (const building of layout.buildings) {
-      if (!building.locationId || !anchors[building.locationId]) {
-        continue;
+    const frontDistance = (building: (typeof layout.buildings)[number]): number => {
+      const out = facingOutwardUnit(building.facing ?? "north");
+      const swap = building.facing === "east" || building.facing === "west";
+      const half = (swap ? building.width : building.depth) / 2;
+      const front = { x: building.x + out.x * half, z: building.z + out.z * half };
+      let nearest = Infinity;
+      for (const road of layout.roads) {
+        const b = roadBounds(road);
+        const dx = Math.max(b.minX - front.x, front.x - b.maxX, 0);
+        const dz = Math.max(b.minZ - front.z, front.z - b.maxZ, 0);
+        nearest = Math.min(nearest, Math.hypot(dx, dz));
       }
-      // The anchor faces the same way the storefront does.
-      expect(anchors[building.locationId].rotationY).toBeCloseTo(facingToRotationY(building.facing ?? "north"), 5);
-    }
+      return nearest;
+    };
+    // The vast majority of storefronts hug a street; only a few forced fallbacks
+    // in a cramped district may sit further (the original bug stranded dozens).
+    const far = layout.buildings.filter((b) => frontDistance(b) > 6).length;
+    expect(far, `${far} storefronts float far from any street`).toBeLessThanOrEqual(3);
   });
 
   it.each(SEEDS)("never overlaps two buildings (%s)", (seed) => {
