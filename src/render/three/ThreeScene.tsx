@@ -1349,6 +1349,73 @@ function createDistrictTintOverlay(currentState: GameState): THREE.Group {
   return group;
 }
 
+// A solid wall ringing the whole map at worldBounds. The player is already
+// clamped to worldBounds (clampToWorld), so this is the visible boundary that
+// caps the edge instead of leaving the player staring into the void.
+function createPerimeterWalls(): THREE.Group {
+  const group = new THREE.Group();
+  const height = 8.5;
+  const thickness = 1.8;
+  const capHeight = 0.45;
+
+  // Lit concrete body (a faint emissive keeps it from going pure-black at the
+  // unlit map edge), a lighter coping, and an unlit neon trim along the inner top
+  // so the boundary clearly reads as a built wall rather than the void.
+  const bodyMaterial = new THREE.MeshStandardMaterial({
+    color: "#27324c",
+    roughness: 0.86,
+    metalness: 0.18,
+    emissive: "#0d1626",
+    emissiveIntensity: 0.55
+  });
+  const capMaterial = new THREE.MeshStandardMaterial({
+    color: "#3a4768",
+    roughness: 0.5,
+    metalness: 0.34,
+    emissive: "#1e293b",
+    emissiveIntensity: 0.4
+  });
+  const trimMaterial = new THREE.MeshBasicMaterial({ color: "#38bdf8" });
+
+  // innerNormal points from the wall toward the city interior (along the wall's
+  // perpendicular axis), so the neon trim sits on the inward-facing side.
+  const addWall = (centerX: number, centerZ: number, length: number, horizontal: boolean, innerNormal: number) => {
+    const wallWidth = horizontal ? length : thickness;
+    const wallDepth = horizontal ? thickness : length;
+
+    const body = new THREE.Mesh(new THREE.BoxGeometry(wallWidth, height, wallDepth), bodyMaterial);
+    body.position.set(centerX, height / 2, centerZ);
+    body.receiveShadow = true;
+    group.add(body);
+
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(wallWidth + 0.3, capHeight, wallDepth + 0.3), capMaterial);
+    cap.position.set(centerX, height + capHeight / 2, centerZ);
+    group.add(cap);
+
+    const inset = thickness / 2 + 0.07;
+    const trim = new THREE.Mesh(
+      new THREE.BoxGeometry(horizontal ? length : 0.14, 0.2, horizontal ? 0.14 : length),
+      trimMaterial
+    );
+    trim.position.set(
+      horizontal ? centerX : centerX + innerNormal * inset,
+      height - 0.85,
+      horizontal ? centerZ + innerNormal * inset : centerZ
+    );
+    group.add(trim);
+  };
+
+  // Inner faces land exactly on worldBounds. North/South span the full width plus
+  // both corners; East/West fill the remaining depth between them — no gaps.
+  const t = thickness;
+  addWall(worldCenterX, worldBounds.minZ - t / 2, worldWidth + 2 * t, true, 1); // north (interior is +z)
+  addWall(worldCenterX, worldBounds.maxZ + t / 2, worldWidth + 2 * t, true, -1); // south (interior is -z)
+  addWall(worldBounds.minX - t / 2, worldCenterZ, worldDepth, false, 1); // west (interior is +x)
+  addWall(worldBounds.maxX + t / 2, worldCenterZ, worldDepth, false, -1); // east (interior is -x)
+
+  return group;
+}
+
 function createMachinePlacementDressing(placement: { position: THREE.Vector3; rotationY: number }, color: string, occupied: boolean): THREE.Group {
   const group = new THREE.Group();
   const padMaterial = new THREE.MeshStandardMaterial({ color: occupied ? "#253142" : "#2d3748", roughness: 0.86, metalness: 0.03 });
@@ -4324,6 +4391,8 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     ground.position.set(worldCenterX, 0, worldCenterZ);
     ground.receiveShadow = true;
     scene.add(ground);
+
+    scene.add(createPerimeterWalls());
 
     scene.add(createDistrictTintOverlay(stateRef.current));
 
