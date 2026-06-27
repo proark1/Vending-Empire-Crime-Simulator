@@ -1,10 +1,13 @@
+import { useMemo } from "react";
 import type { GameState, Vec2 } from "../game/core/types";
 import { activeVehicle, districtProgress, machineAtLocation } from "../game/core/selectors";
-import { crimeContacts, worldBounds, worldParks, worldRoads } from "../game/content/world";
+import { crimeContacts, worldBounds, type WorldMapLayout } from "../game/content/world";
+import { locationPositionOverrides } from "../game/world/locationGeometry";
 import type { SceneTarget } from "../render/three/SceneTargets";
 
 interface MinimapProps {
   state: GameState;
+  mapLayout: WorldMapLayout;
   playerPosition: Vec2;
   guidanceLocationId?: string;
   target: SceneTarget | null;
@@ -44,7 +47,8 @@ function toDistrictRect(bounds: { maxX: number; maxZ: number; minX: number; minZ
   };
 }
 
-export function Minimap({ state, playerPosition, guidanceLocationId, target }: MinimapProps) {
+export function Minimap({ state, mapLayout, playerPosition, guidanceLocationId, target }: MinimapProps) {
+  const locationOverrides = useMemo(() => locationPositionOverrides(mapLayout), [mapLayout]);
   const targetOperation = target?.type === "rival_operation"
     ? Object.values(state.rivalOrganizations ?? {})
         .flatMap((organization) => organization.operations)
@@ -75,16 +79,16 @@ export function Minimap({ state, playerPosition, guidanceLocationId, target }: M
           const isRecent = district.id !== "starter_suburb" && state.worldTimeHours - (progress.unlockedHour ?? progress.scoutedHour ?? -100) <= 2;
           return <rect className={`map-district ${progress.access} ${isRecent ? "recent" : ""}`} key={district.id} x={rect.x} y={rect.y} width={rect.width} height={rect.height} rx="2" />;
         })}
-        {worldParks.map((park) => {
+        {mapLayout.parks.map((park) => {
           const rect = toDistrictRect(park.bounds);
           return <rect className="map-park" key={park.id} x={rect.x} y={rect.y} width={rect.width} height={rect.height} rx="1.6" />;
         })}
-        {worldRoads.map((road) => {
+        {mapLayout.roads.map((road) => {
           const rect = toMapRect(road);
           return <rect className="map-road-area" key={road.id} x={rect.x} y={rect.y} width={rect.width} height={rect.height} rx="1.2" />;
         })}
         {Object.values(state.locations).map((location) => {
-          const point = toMapPoint(location.position);
+          const point = toMapPoint(locationOverrides[location.id] ?? location.position);
           const machine = machineAtLocation(state, location.id);
           const isTarget = targetLocationId === location.id;
           const isGuidance = guidanceLocationId === location.id;
@@ -110,7 +114,7 @@ export function Minimap({ state, playerPosition, guidanceLocationId, target }: M
           if (!location) {
             return null;
           }
-          const point = toMapPoint(location.position);
+          const point = toMapPoint(locationOverrides[operation.locationId] ?? location.position);
           return (
             <g className={`map-operation ${target?.type === "rival_operation" && target.id === operation.id ? "target" : ""}`} key={operation.id}>
               <path d={`M ${point.x} ${point.y - 3.2} L ${point.x + 3.2} ${point.y + 3.2} L ${point.x - 3.2} ${point.y + 3.2} Z`} />
