@@ -1349,6 +1349,73 @@ function createDistrictTintOverlay(currentState: GameState): THREE.Group {
   return group;
 }
 
+// A solid wall ringing the whole map at worldBounds. The player is already
+// clamped to worldBounds (clampToWorld), so this is the visible boundary that
+// caps the edge instead of leaving the player staring into the void.
+function createPerimeterWalls(): THREE.Group {
+  const group = new THREE.Group();
+  const height = 8.5;
+  const thickness = 1.8;
+  const capHeight = 0.45;
+
+  // Lit concrete body (a faint emissive keeps it from going pure-black at the
+  // unlit map edge), a lighter coping, and an unlit neon trim along the inner top
+  // so the boundary clearly reads as a built wall rather than the void.
+  const bodyMaterial = new THREE.MeshStandardMaterial({
+    color: "#27324c",
+    roughness: 0.86,
+    metalness: 0.18,
+    emissive: "#0d1626",
+    emissiveIntensity: 0.55
+  });
+  const capMaterial = new THREE.MeshStandardMaterial({
+    color: "#3a4768",
+    roughness: 0.5,
+    metalness: 0.34,
+    emissive: "#1e293b",
+    emissiveIntensity: 0.4
+  });
+  const trimMaterial = new THREE.MeshBasicMaterial({ color: "#38bdf8" });
+
+  // innerNormal points from the wall toward the city interior (along the wall's
+  // perpendicular axis), so the neon trim sits on the inward-facing side.
+  const addWall = (centerX: number, centerZ: number, length: number, horizontal: boolean, innerNormal: number) => {
+    const wallWidth = horizontal ? length : thickness;
+    const wallDepth = horizontal ? thickness : length;
+
+    const body = new THREE.Mesh(new THREE.BoxGeometry(wallWidth, height, wallDepth), bodyMaterial);
+    body.position.set(centerX, height / 2, centerZ);
+    body.receiveShadow = true;
+    group.add(body);
+
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(wallWidth + 0.3, capHeight, wallDepth + 0.3), capMaterial);
+    cap.position.set(centerX, height + capHeight / 2, centerZ);
+    group.add(cap);
+
+    const inset = thickness / 2 + 0.07;
+    const trim = new THREE.Mesh(
+      new THREE.BoxGeometry(horizontal ? length : 0.14, 0.2, horizontal ? 0.14 : length),
+      trimMaterial
+    );
+    trim.position.set(
+      horizontal ? centerX : centerX + innerNormal * inset,
+      height - 0.85,
+      horizontal ? centerZ + innerNormal * inset : centerZ
+    );
+    group.add(trim);
+  };
+
+  // Inner faces land exactly on worldBounds. North/South span the full width plus
+  // both corners; East/West fill the remaining depth between them — no gaps.
+  const t = thickness;
+  addWall(worldCenterX, worldBounds.minZ - t / 2, worldWidth + 2 * t, true, 1); // north (interior is +z)
+  addWall(worldCenterX, worldBounds.maxZ + t / 2, worldWidth + 2 * t, true, -1); // south (interior is -z)
+  addWall(worldBounds.minX - t / 2, worldCenterZ, worldDepth, false, 1); // west (interior is +x)
+  addWall(worldBounds.maxX + t / 2, worldCenterZ, worldDepth, false, -1); // east (interior is -x)
+
+  return group;
+}
+
 function createMachinePlacementDressing(placement: { position: THREE.Vector3; rotationY: number }, color: string, occupied: boolean): THREE.Group {
   const group = new THREE.Group();
   const padMaterial = new THREE.MeshStandardMaterial({ color: occupied ? "#253142" : "#2d3748", roughness: 0.86, metalness: 0.03 });
@@ -3605,6 +3672,122 @@ function addRoadMarkingBuildJobsToChunks(specs: Map<string, WorldChunkBuildSpec>
   }
 }
 
+interface RoadCrossing {
+  box: RectBounds;
+  hBounds: RectBounds;
+  vBounds: RectBounds;
+  lengthH: number;
+  lengthV: number;
+}
+
+// Every place a horizontal road overlaps a vertical road is a crossing. The
+// overlap box is the intersection square; the road bounds give each approach arm.
+function roadCrossings(roads: WorldRoad[]): RoadCrossing[] {
+  const horizontals = roads.filter((road) => road.width >= road.depth);
+  const verticals = roads.filter((road) => road.width < road.depth);
+  const crossings: RoadCrossing[] = [];
+  for (const h of horizontals) {
+    const hBounds = roadBounds(h);
+    for (const v of verticals) {
+      const vBounds = roadBounds(v);
+      const minX = Math.max(hBounds.minX, vBounds.minX);
+      const maxX = Math.min(hBounds.maxX, vBounds.maxX);
+      const minZ = Math.max(hBounds.minZ, vBounds.minZ);
+      const maxZ = Math.min(hBounds.maxZ, vBounds.maxZ);
+      if (maxX - minX > 0.6 && maxZ - minZ > 0.6) {
+        crossings.push({
+          box: { minX, maxX, minZ, maxZ },
+          hBounds,
+          vBounds,
+          lengthH: hBounds.maxX - hBounds.minX,
+          lengthV: vBounds.maxZ - vBounds.minZ
+        });
+      }
+    }
+  }
+  return crossings;
+}
+
+// Zebra stripes across one approach of a crossing. Stripes run parallel to that
+// approach's traffic (stripeAxis), arrayed across the road width.
+function addZebraBandBuildJobs(specs: Map<string, WorldChunkBuildSpec>, bounds: RectBounds, stripeAxis: "x" | "z", material: THREE.Material): void {
+  const y = 0.1;
+  const thickness = 0.016;
+  const stripeWidth = 0.46;
+  const stripeGap = 0.5;
+  if (stripeAxis === "x") {
+    for (let z = bounds.minZ + stripeGap * 0.5; z + stripeWidth <= bounds.maxZ; z += stripeWidth + stripeGap) {
+      addRectMeshBuildJobsToWorldChunks(specs, { minX: bounds.minX, maxX: bounds.maxX, minZ: z, maxZ: z + stripeWidth }, y, thickness, material);
+    }
+  } else {
+    for (let x = bounds.minX + stripeGap * 0.5; x + stripeWidth <= bounds.maxX; x += stripeWidth + stripeGap) {
+      addRectMeshBuildJobsToWorldChunks(specs, { minX: x, maxX: x + stripeWidth, minZ: bounds.minZ, maxZ: bounds.maxZ }, y, thickness, material);
+    }
+  }
+}
+
+function addCrossingMarkingsBuildJobs(specs: Map<string, WorldChunkBuildSpec>, crossing: RoadCrossing, material: THREE.Material): void {
+  const { box, hBounds, vBounds } = crossing;
+  const bandDepth = 2.0;
+  // Horizontal road: crosswalks on the west/east approaches (stripes run along X).
+  const westArm = Math.min(bandDepth, box.minX - hBounds.minX - 0.2);
+  if (westArm > 1.0) {
+    addZebraBandBuildJobs(specs, { minX: box.minX - westArm, maxX: box.minX, minZ: box.minZ, maxZ: box.maxZ }, "x", material);
+  }
+  const eastArm = Math.min(bandDepth, hBounds.maxX - box.maxX - 0.2);
+  if (eastArm > 1.0) {
+    addZebraBandBuildJobs(specs, { minX: box.maxX, maxX: box.maxX + eastArm, minZ: box.minZ, maxZ: box.maxZ }, "x", material);
+  }
+  // Vertical road: crosswalks on the north/south approaches (stripes run along Z).
+  const northArm = Math.min(bandDepth, box.minZ - vBounds.minZ - 0.2);
+  if (northArm > 1.0) {
+    addZebraBandBuildJobs(specs, { minX: box.minX, maxX: box.maxX, minZ: box.minZ - northArm, maxZ: box.minZ }, "z", material);
+  }
+  const southArm = Math.min(bandDepth, vBounds.maxZ - box.maxZ - 0.2);
+  if (southArm > 1.0) {
+    addZebraBandBuildJobs(specs, { minX: box.minX, maxX: box.maxX, minZ: box.maxZ, maxZ: box.maxZ + southArm }, "z", material);
+  }
+}
+
+// A signal head on a pole. The lit lamp (red or green) reads as a working stop light.
+function createTrafficLight(headRotationY: number, phase: "go" | "stop", quality: GraphicsQuality): THREE.Group {
+  const group = new THREE.Group();
+  const segments = quality === "low" ? 6 : 10;
+  const metalMaterial = new THREE.MeshStandardMaterial({ color: "#0b1322", roughness: 0.5, metalness: 0.55 });
+
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.1, 3.6, segments), metalMaterial);
+  pole.position.y = 1.8;
+  pole.castShadow = true;
+  group.add(pole);
+
+  const head = new THREE.Group();
+  head.add(new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.94, 0.28), metalMaterial));
+
+  // Two heads back-to-back so the signal reads from both approach directions.
+  const lampGeometry = new THREE.CircleGeometry(0.11, 16);
+  const addLamp = (lampY: number, faceZ: number, color: string, lit: boolean) => {
+    // Lit lamp uses an unlit basic material so the colour stays fully saturated
+    // and visible at night; a dark lamp sits flush otherwise.
+    const lampMaterial = lit
+      ? new THREE.MeshBasicMaterial({ color })
+      : new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.06, roughness: 0.5 });
+    const lamp = new THREE.Mesh(lampGeometry, lampMaterial);
+    lamp.position.set(0, lampY, faceZ);
+    lamp.rotation.y = faceZ < 0 ? Math.PI : 0;
+    head.add(lamp);
+  };
+  for (const faceZ of [0.15, -0.15]) {
+    addLamp(0.28, faceZ, "#ef4444", phase === "stop");
+    addLamp(0, faceZ, "#f59e0b", false);
+    addLamp(-0.28, faceZ, "#22c55e", phase === "go");
+  }
+
+  head.position.y = 3.15;
+  head.rotation.y = headRotationY;
+  group.add(head);
+  return group;
+}
+
 function createWorldDecoration(decoration: WorldDecoration, enableLocalLights: boolean, quality: GraphicsQuality): THREE.Group {
   const group = new THREE.Group();
   const color = decoration.color ?? "#94a3b8";
@@ -4325,6 +4508,8 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     ground.receiveShadow = true;
     scene.add(ground);
 
+    scene.add(createPerimeterWalls());
+
     scene.add(createDistrictTintOverlay(stateRef.current));
 
     const staticChunkSpecs = new Map<string, WorldChunkBuildSpec>();
@@ -4364,6 +4549,39 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
           mesh.receiveShadow = true;
         }
       );
+    }
+
+    // Crosswalk markings on every intersection, plus signalised stop lights at the
+    // major (long through-road) crossings.
+    if (renderProfile.detail !== "low") {
+      const crossings = roadCrossings(mapLayout.roads);
+      const crosswalkMaterial = new THREE.MeshBasicMaterial({ color: "#dbe4ef", transparent: true, opacity: 0.8 });
+      for (const crossing of crossings) {
+        addCrossingMarkingsBuildJobs(staticChunkSpecs, crossing, crosswalkMaterial);
+      }
+
+      const throughCrossings = crossings.filter((crossing) => Math.min(crossing.lengthH, crossing.lengthV) >= 24);
+      const lightCap = renderProfile.detail === "high" ? 22 : 12;
+      const step = Math.max(1, Math.floor(throughCrossings.length / lightCap));
+      for (let index = 0; index < throughCrossings.length; index += step) {
+        const { box } = throughCrossings[index];
+        const centerX = (box.minX + box.maxX) / 2;
+        const centerZ = (box.minZ + box.maxZ) / 2;
+        const corners: Array<{ x: number; z: number; phase: "go" | "stop" }> = [
+          { x: box.minX, z: box.minZ, phase: "stop" },
+          { x: box.maxX, z: box.minZ, phase: "go" },
+          { x: box.maxX, z: box.maxZ, phase: "stop" },
+          { x: box.minX, z: box.maxZ, phase: "go" }
+        ];
+        for (const corner of corners) {
+          const dirX = Math.sign(corner.x - centerX) || 1;
+          const dirZ = Math.sign(corner.z - centerZ) || 1;
+          const poleX = corner.x + dirX * 1.2;
+          const poleZ = corner.z + dirZ * 1.2;
+          const headRotationY = Math.atan2(centerX - poleX, centerZ - poleZ);
+          addStaticObject(() => createTrafficLight(headRotationY, corner.phase, renderProfile.detail), poleX, poleZ);
+        }
+      }
     }
 
     const walkableInteriorLocationIds = walkableInteriorLocationIdsForLayout(mapLayout);
