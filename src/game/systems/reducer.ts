@@ -3177,6 +3177,47 @@ function failExpiredContracts(state: GameState, events: GameEvent[]): void {
   }
 }
 
+// Build the end-of-day recap from the day's actual numbers so it reads as a
+// response to how the player played, not a canned line.
+function summarizeDayReport(stats: {
+  netCashflow: number;
+  contractsCompleted: number;
+  contractsFailed: number;
+  stockSold: number;
+  rivalActions: number;
+}): string {
+  if (stats.contractsFailed > 1) {
+    return `${stats.contractsFailed} contracts collapsed and rivals gained ground.`;
+  }
+  if (stats.contractsFailed === 1) {
+    return "A contract slipped and rivals gained leverage.";
+  }
+
+  let headline: string;
+  if (stats.netCashflow >= 400) {
+    headline = "Banner day — the route printed money.";
+  } else if (stats.netCashflow >= 120) {
+    headline = "A profitable day; the empire grew richer.";
+  } else if (stats.netCashflow >= 0) {
+    headline = stats.stockSold > 0 ? "Steady grind — the lights stayed on." : "A quiet day on the route.";
+  } else {
+    headline = `Costs outran sales, down $${Math.abs(Math.round(stats.netCashflow))} on the day.`;
+  }
+
+  const clauses: string[] = [];
+  if (stats.contractsCompleted > 0) {
+    clauses.push(`${stats.contractsCompleted} contract${stats.contractsCompleted > 1 ? "s" : ""} paid out`);
+  }
+  if (stats.stockSold > 0) {
+    clauses.push(`${stats.stockSold} units moved`);
+  }
+  if (stats.rivalActions >= 3) {
+    clauses.push("rivals stayed aggressive");
+  }
+
+  return clauses.length > 0 ? `${headline} ${clauses.join(", ")}.` : headline;
+}
+
 function createDayReport(state: GameState, day: number): void {
   const machineRevenueStored = installedMachines(state, state.playerFactionId).reduce((sum, machine) => sum + machine.revenueStored, 0);
   const operatingRevenue = state.economy?.finance?.revenueToday ?? 0;
@@ -3197,12 +3238,13 @@ function createDayReport(state: GameState, day: number): void {
     contractsFailed: state.progression.contractsFailedToday,
     stockSold: state.progression.stockSoldToday,
     rivalActions: state.progression.rivalActionsToday,
-    summary:
-      state.progression.contractsFailedToday > 0
-        ? "Contracts slipped and rivals gained leverage."
-        : state.progression.contractsCompletedToday > 0
-          ? "Route promises paid out and the district noticed."
-          : "Machines stayed active, but no contract bonuses landed."
+    summary: summarizeDayReport({
+      netCashflow: operatingRevenue - operatingExpenses,
+      contractsCompleted: state.progression.contractsCompletedToday,
+      contractsFailed: state.progression.contractsFailedToday,
+      stockSold: state.progression.stockSoldToday,
+      rivalActions: state.progression.rivalActionsToday
+    })
   };
 
   state.dayReports = [report, ...state.dayReports].slice(0, 5);

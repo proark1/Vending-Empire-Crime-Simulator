@@ -6,6 +6,7 @@ export interface ToastMessage {
   message: string;
   tone: GameEventTone;
   title: string;
+  leaving?: boolean;
 }
 
 function iconForTone(tone: GameEventTone) {
@@ -37,7 +38,7 @@ export function ToastStack({ docked = false, messages }: ToastStackProps) {
   return (
     <section className={docked ? "toast-stack docked" : "toast-stack"} aria-label="Notifications">
       {messages.map((message) => (
-        <article className={`toast-message ${message.tone}`} key={message.id}>
+        <article className={`toast-message ${message.tone}${message.leaving ? " toast-leaving" : ""}`} key={message.id}>
           {iconForTone(message.tone)}
           <div>
             <strong>{message.title}</strong>

@@ -16,6 +16,8 @@ export interface UseGameOptions {
   session?: GameSession | null;
 }
 
+export type SaveStatus = "idle" | "saving" | "saved" | "offline" | "conflict";
+
 export interface UseGameResult {
   state: GameState;
   transport: LocalTransport;
@@ -24,10 +26,12 @@ export interface UseGameResult {
   save: () => void;
   reload: () => void;
   restart: () => void;
+  saveStatus: SaveStatus;
 }
 
 export function useGame(options: UseGameOptions = {}): UseGameResult {
   const [state, setState] = useState<GameState>(() => options.initialState ?? loadGame());
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const stateRef = useRef(state);
   const sessionRef = useRef<GameSession | null>(options.session ?? null);
   const remoteSaveRevisionRef = useRef<number | null>(options.session?.saveRevision ?? null);
@@ -90,6 +94,7 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
       return;
     }
 
+    setSaveStatus("saving");
     void saveRemoteGame(session, currentState, remoteSaveRevisionRef.current)
       .then((result) => {
         remoteSaveRevisionRef.current = result.revision;
@@ -98,15 +103,21 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
           saveRevision: result.revision,
           saveUpdatedAt: result.updatedAt
         };
+        setSaveStatus("saved");
+        window.setTimeout(() => setSaveStatus((current) => (current === "saved" ? "idle" : current)), 1600);
       })
       .catch((error) => {
         if (error instanceof ApiError && error.code === "SAVE_CONFLICT") {
           console.warn("Remote save conflict; loading latest database save");
+          setSaveStatus("conflict");
           loadLatestRemoteSave(session);
+          window.setTimeout(() => setSaveStatus((current) => (current === "conflict" ? "idle" : current)), 2500);
           return;
         }
 
+        // Don't lie that it saved: the cloud write failed, though local save persisted.
         console.warn("Remote save failed", error);
+        setSaveStatus("offline");
       });
   }, [loadLatestRemoteSave]);
 
@@ -318,6 +329,7 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
     advanceWorld,
     save,
     reload,
-    restart
+    restart,
+    saveStatus
   };
 }

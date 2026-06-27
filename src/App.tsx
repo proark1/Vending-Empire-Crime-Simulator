@@ -12,7 +12,7 @@ import { GuidanceArrow } from "./ui/GuidanceArrow";
 import { ClipboardList, Copy, DollarSign, Flame, LogOut, Map, Menu, Network, Package, Play, RotateCcw, Save, ShieldAlert, Sparkles, Truck, Users, Volume2, VolumeX, Wrench, X, Zap, type LucideIcon } from "lucide-react";
 import { AdminMapEditor } from "./ui/AdminMapEditor";
 import { getStarterMissionStep } from "./game/core/mission";
-import { activeConflictEvents, activeMachineAlarms, latestDayReport, selectedRouteTask } from "./game/core/selectors";
+import { activeConflictEvents, activeMachineAlarms, heatTierFor, latestDayReport, selectedRouteTask } from "./game/core/selectors";
 import { executePrimaryInteraction, getPrimaryInteraction, type PrimaryInteraction, type PrimaryInteractionTone } from "./ui/interactionActions";
 import { useGame } from "./hooks/useGame";
 import { ToastStack, type ToastMessage } from "./ui/ToastStack";
@@ -629,10 +629,25 @@ function LandingWorldPreview({ mapLayout, state }: { mapLayout: WorldMapLayout; 
 
 const PLAYER_SPAWN: Vec2 = { x: -9, z: 5.9 };
 
+// Maps distinctive event-log phrases to voiced lines. First match wins; the voice
+// cue's own cooldown throttles repeats. Phrases are specific enough not to misfire.
+const VOICE_EVENT_PATTERNS: Array<{ test: RegExp; trigger: string }> = [
+  { test: /inspection notice/i, trigger: "voice.inspector_notice" },
+  { test: /permit lapsed into a challenge/i, trigger: "voice.lawyer_notice" },
+  { test: /bought time with local paperwork/i, trigger: "voice.fixer_tip" },
+  { test: /supplier market shifted/i, trigger: "voice.supplier_offer" },
+  { test: /rent was short/i, trigger: "voice.landlord_pressure" },
+  { test: /expansion cell/i, trigger: "voice.rival_boss_threat" },
+  { test: /route ambush/i, trigger: "voice.driver_warning" },
+  { test: /tipped off/i, trigger: "voice.informant_tip" },
+  { test: /joined the route crew/i, trigger: "voice.guard_contact" },
+  { test: /delivered to the garage/i, trigger: "voice.mechanic_unlock" }
+];
+
 function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: GameAppProps) {
   const multiplayerClient = useMemo(() => new MultiplayerClient(session.token), [session.token]);
   const [multiplayerStatus, setMultiplayerStatus] = useState<MultiplayerStatus>(() => multiplayerClient.getStatus());
-  const { state, sendCommand, advanceWorld, save, reload, restart } = useGame({ initialState, multiplayerClient, multiplayerRole: multiplayerStatus.role, session });
+  const { state, sendCommand, advanceWorld, save, reload, restart, saveStatus } = useGame({ initialState, multiplayerClient, multiplayerRole: multiplayerStatus.role, session });
   const [target, setTarget] = useState<SceneTarget | null>(null);
   const [entered, setEntered] = useState(false);
   const [dashboardOpen, setDashboardOpen] = useState(false);
@@ -644,6 +659,8 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
   const [hasMoved, setHasMoved] = useState(false);
   const [voiceLine, setVoiceLine] = useState<{ speaker: string; subtitle: string } | null>(null);
   const heatVoiceTierRef = useRef(0);
+  const [pointerLocked, setPointerLocked] = useState(false);
+  const [hasLockedOnce, setHasLockedOnce] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [sceneFeedback, setSceneFeedback] = useState<SceneFeedbackEvent | null>(null);
   const [serviceHold, setServiceHold] = useState<ServiceHoldState | null>(null);
@@ -688,8 +705,12 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
   const addToast = useCallback((toast: Omit<ToastMessage, "id">) => {
     const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
     setToasts((current) => [{ ...toast, id }, ...current].slice(0, 4));
+    // Two-phase removal: flag as leaving (plays the exit animation), then drop it.
     window.setTimeout(() => {
-      setToasts((current) => current.filter((message) => message.id !== id));
+      setToasts((current) => current.map((message) => (message.id === id ? { ...message, leaving: true } : message)));
+      window.setTimeout(() => {
+        setToasts((current) => current.filter((message) => message.id !== id));
+      }, 240);
     }, 4200);
   }, []);
 
@@ -793,6 +814,10 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
 
     lastEventIdRef.current = newestEvent.id;
     playEventCue(newestEvent.tone);
+    const voiceMatch = VOICE_EVENT_PATTERNS.find((entry) => entry.test.test(newestEvent.message));
+    if (voiceMatch) {
+      playVoiceCue(voiceMatch.trigger);
+    }
     if (newestEvent.tone === "danger" && activeAlarm) {
       playFeedbackCue("sabotage");
       playVoiceCue("voice.rival_attack");
@@ -1042,18 +1067,35 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
     updateGameAmbience(state.factions[state.playerFactionId].heat, conflicts.length > 0);
   }, [conflicts.length, entered, state.factions, state.playerFactionId]);
 
-  // Voiced heat warning on the rising edge of each heat tier (30, 60).
+  // Voiced heat warning when the player escalates into a higher, concerning heat
+  // tier (Watched and above), aligned to the game's own heat tiers.
   useEffect(() => {
     if (!entered) {
       return;
     }
     const heat = state.factions[state.playerFactionId]?.heat ?? 0;
-    const tier = heat >= 60 ? 2 : heat >= 30 ? 1 : 0;
-    if (tier > heatVoiceTierRef.current) {
+    const ranks = ["quiet", "noticed", "watched", "hot", "raid_weather"] as const;
+    const rank = ranks.indexOf(heatTierFor(heat).id);
+    const watchedRank = ranks.indexOf("watched");
+    if (rank > heatVoiceTierRef.current && rank >= watchedRank) {
       playVoiceCue("voice.heat_warning");
     }
-    heatVoiceTierRef.current = tier;
+    heatVoiceTierRef.current = rank;
   }, [entered, state.factions, state.playerFactionId]);
+
+  // Track pointer-lock so we can reassure the player after a reflex Escape press
+  // (which exits look mode and otherwise reads as "the game froze").
+  useEffect(() => {
+    const onChange = () => {
+      const locked = Boolean(document.pointerLockElement);
+      setPointerLocked(locked);
+      if (locked) {
+        setHasLockedOnce(true);
+      }
+    };
+    document.addEventListener("pointerlockchange", onChange);
+    return () => document.removeEventListener("pointerlockchange", onChange);
+  }, []);
 
   // Surface voiced lines as a lower-third subtitle (works even when muted).
   useEffect(() => {
@@ -1184,7 +1226,26 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
       <div className="world-vignette" aria-hidden="true" />
       {entered && <Hud feedbackEvent={sceneFeedback} nextActionLabel={nextActionLabel} state={state} />}
       {entered && <MissionTracker compact={dashboardOpen} state={state} playerPosition={playerPosition} />}
-      {entered && <div className="crosshair" aria-hidden="true" />}
+      {entered && (
+        <div
+          className={`crosshair${primaryInteraction && !primaryInteraction.disabled ? " crosshair-active" : activeTarget ? " crosshair-disabled" : ""}`}
+          aria-hidden="true"
+        />
+      )}
+      {entered && hasLockedOnce && !pointerLocked && !dashboardOpen && !gameMenuOpen && !serviceHold && (
+        <div className="pointer-lock-hint" aria-hidden="true">Click to look around</div>
+      )}
+      {entered && saveStatus !== "idle" && (
+        <div className={`save-indicator save-${saveStatus}`} role="status" aria-live="polite">
+          {saveStatus === "saving"
+            ? "Saving…"
+            : saveStatus === "saved"
+              ? "Saved"
+              : saveStatus === "conflict"
+                ? "Syncing latest save…"
+                : "Offline · saved on this device"}
+        </div>
+      )}
       {entered && voiceLine && (
         <div className="voice-subtitle" aria-live="polite">
           {voiceLine.speaker && <span className="voice-subtitle-speaker">{voiceLine.speaker}</span>}

@@ -177,7 +177,7 @@ export const products: Record<ProductId, Product> = {
     customizable: true,
     demandTags: ["arcade", "night"],
     shelfLifeHours: 72,
-    description: "A fictional grey-market novelty that draws attention."
+    description: "A grey-market novelty that draws the wrong kind of attention."
   },
   mood_fizz: {
     id: "mood_fizz",
@@ -192,7 +192,7 @@ export const products: Record<ProductId, Product> = {
     customizable: true,
     demandTags: ["night", "student", "arcade"],
     shelfLifeHours: 72,
-    description: "Fictional nightlife soda with loyal customers and louder rumors."
+    description: "Nightlife soda with loyal customers and louder rumors."
   },
   glitch_gum: {
     id: "glitch_gum",
@@ -222,7 +222,7 @@ export const products: Record<ProductId, Product> = {
     customizable: true,
     demandTags: ["night", "arcade"],
     shelfLifeHours: 48,
-    description: "A fictional after-hours bottle. Big money, big attention."
+    description: "An after-hours bottle. Big money, bigger attention."
   },
   focus_cubes: {
     id: "focus_cubes",

@@ -18,6 +18,7 @@ import {
   type WorldDecoration,
   type WorldInterior,
   type WorldMapLayout,
+  type WorldPark,
   type WorldRoad
 } from "../../game/content/world";
 import { pathOnRoads, roadBounds } from "../../game/world/roadGraph";
@@ -25,7 +26,7 @@ import { WORLD_SCALE } from "../../game/world/scale";
 import { sidewalkFootprintsForRoads } from "../../game/world/sidewalks";
 import type { SceneFeedbackEvent, SceneTarget } from "./SceneTargets";
 import { resolveGraphicsProfile, type GraphicsQuality } from "./graphicsQuality";
-import { createAsphaltMaterial, createAtmosphere, createBuilding, createContactShadow, createEnvironmentMapTexture, createNpcCharacter, createRoadMaterial, createSidewalkMaterial, createSkyDome, createStreetProps } from "./proceduralArt";
+import { createAsphaltMaterial, createAtmosphere, createBuilding, createBush, createContactShadow, createEnvironmentMapTexture, createGrassMaterial, createNpcCharacter, createParkBench, createParkLamp, createParkPathMaterial, createPondMaterial, createRoadMaterial, createSidewalkMaterial, createSkyDome, createStreetProps, createTree } from "./proceduralArt";
 
 interface ThreeSceneProps {
   feedbackEvent?: SceneFeedbackEvent | null;
@@ -2758,6 +2759,145 @@ function createInteriorCell(interior: WorldInterior, quality: GraphicsQuality): 
   return group;
 }
 
+function buildParkIntoChunks(
+  park: WorldPark,
+  specs: Map<string, WorldChunkBuildSpec>,
+  addStatic: (createObject: () => THREE.Object3D, x: number, z: number) => void,
+  materials: { grass: THREE.Material; path: THREE.Material; pond: THREE.Material },
+  quality: GraphicsQuality,
+  enableLocalLights: boolean
+): void {
+  const { minX, maxX, minZ, maxZ } = park.bounds;
+  const cx = (minX + maxX) / 2;
+  const cz = (minZ + maxZ) / 2;
+
+  // Manicured lawn — a thin grass slab just above the asphalt, split per chunk.
+  addRectMeshBuildJobsToWorldChunks(specs, park.bounds, 0.05, 0.09, materials.grass, (mesh) => {
+    mesh.receiveShadow = true;
+  });
+
+  // Gravel paths: a central cross plus an inset perimeter loop.
+  const pathWidth = 2.1;
+  const inset = 2.0;
+  const xW = minX + inset;
+  const xE = maxX - inset;
+  const zS = minZ + inset;
+  const zN = maxZ - inset;
+  const half = pathWidth / 2;
+  const addPath = (bounds: RectBounds) =>
+    addRectMeshBuildJobsToWorldChunks(specs, bounds, 0.105, 0.03, materials.path, (mesh) => {
+      mesh.receiveShadow = true;
+    });
+  addPath({ minX, maxX, minZ: cz - half, maxZ: cz + half });
+  addPath({ minX: cx - half, maxX: cx + half, minZ, maxZ });
+  addPath({ minX: xW - half, maxX: xE + half, minZ: zN - half, maxZ: zN + half });
+  addPath({ minX: xW - half, maxX: xE + half, minZ: zS - half, maxZ: zS + half });
+  addPath({ minX: xW - half, maxX: xW + half, minZ: zS - half, maxZ: zN + half });
+  addPath({ minX: xE - half, maxX: xE + half, minZ: zS - half, maxZ: zN + half });
+
+  // Pond with a stone rim.
+  addStatic(() => {
+    const group = new THREE.Group();
+    const water = new THREE.Mesh(new THREE.CircleGeometry(park.pond.radius, quality === "low" ? 22 : 44), materials.pond);
+    water.rotation.x = -Math.PI / 2;
+    water.position.y = 0.12;
+    water.receiveShadow = true;
+    group.add(water);
+    const rim = new THREE.Mesh(
+      new THREE.TorusGeometry(park.pond.radius + 0.16, 0.22, 6, quality === "low" ? 20 : 40),
+      new THREE.MeshStandardMaterial({ color: "#8a9099", roughness: 0.85, metalness: 0.05 })
+    );
+    rim.rotation.x = -Math.PI / 2;
+    rim.position.y = 0.13;
+    group.add(rim);
+    group.position.set(park.pond.x, 0, park.pond.z);
+    return group;
+  }, park.pond.x, park.pond.z);
+
+  // Helpers for keeping plantings off the paths, pond and edges.
+  const onPath = (x: number, z: number) =>
+    Math.abs(x - cx) < half + 0.7 ||
+    Math.abs(z - cz) < half + 0.7 ||
+    ((Math.abs(z - zN) < half + 0.6 || Math.abs(z - zS) < half + 0.6) && x > xW - 1 && x < xE + 1) ||
+    ((Math.abs(x - xW) < half + 0.6 || Math.abs(x - xE) < half + 0.6) && z > zS - 1 && z < zN + 1);
+  const inPond = (x: number, z: number) => Math.hypot(x - park.pond.x, z - park.pond.z) < park.pond.radius + 1.3;
+  const seedAt = (x: number, z: number) => Math.abs(Math.round(x * 73.1 + z * 191.7)) + 1;
+
+  // Scattered trees on a jittered grid.
+  const spacing = quality === "low" ? 6 : 4.6;
+  for (let gx = minX + 1.6; gx <= maxX - 1.6; gx += spacing) {
+    for (let gz = minZ + 1.6; gz <= maxZ - 1.6; gz += spacing) {
+      const seed = seedAt(gx, gz);
+      const rng = (n: number) => ((Math.sin(seed * 12.9898 + n * 78.233) * 43758.5453) % 1 + 1) % 1;
+      const x = gx + (rng(1) - 0.5) * spacing * 0.7;
+      const z = gz + (rng(2) - 0.5) * spacing * 0.7;
+      if (x < minX + 1 || x > maxX - 1 || z < minZ + 1 || z > maxZ - 1) {
+        continue;
+      }
+      if (inPond(x, z) || onPath(x, z) || rng(3) > 0.78) {
+        continue;
+      }
+      addStatic(() => {
+        const object = rng(4) > 0.78 ? createBush(quality, seed) : createTree(quality, seed);
+        object.position.set(x, 0, z);
+        return object;
+      }, x, z);
+    }
+  }
+
+  // Border shrubs just inside the perimeter for a planted edge.
+  const borderStep = quality === "low" ? 5.5 : 3.6;
+  for (let x = minX + 2.4; x <= maxX - 2.4; x += borderStep) {
+    for (const z of [minZ + 0.9, maxZ - 0.9]) {
+      const seed = seedAt(x, z);
+      addStatic(() => {
+        const bush = createBush(quality, seed);
+        bush.position.set(x, 0, z);
+        return bush;
+      }, x, z);
+    }
+  }
+  for (let z = minZ + 2.4; z <= maxZ - 2.4; z += borderStep) {
+    for (const x of [minX + 0.9, maxX - 0.9]) {
+      const seed = seedAt(x, z);
+      addStatic(() => {
+        const bush = createBush(quality, seed);
+        bush.position.set(x, 0, z);
+        return bush;
+      }, x, z);
+    }
+  }
+
+  // Benches along the central promenade.
+  for (const x of [minX + 6, maxX - 6]) {
+    for (const dir of [-1, 1] as const) {
+      const z = cz + dir * (half + 1.0);
+      addStatic(() => {
+        const bench = createParkBench();
+        bench.position.set(x, 0, z);
+        bench.rotation.y = dir > 0 ? 0 : Math.PI;
+        return bench;
+      }, x, z);
+    }
+  }
+
+  // Lamps at the inner corners and the central crossing.
+  const lampSpots: Array<[number, number]> = [
+    [xW, zN],
+    [xE, zN],
+    [xW, zS],
+    [xE, zS],
+    [cx, cz]
+  ];
+  for (const [x, z] of lampSpots) {
+    addStatic(() => {
+      const lamp = createParkLamp(enableLocalLights);
+      lamp.position.set(x, 0, z);
+      return lamp;
+    }, x, z);
+  }
+}
+
 function createBackdropBuilding(definition: CityBackdropBuilding, quality: GraphicsQuality): THREE.Group {
   const group = new THREE.Group();
   const bodyMaterial = new THREE.MeshStandardMaterial({ color: definition.color, roughness: 0.84, metalness: 0.05 });
@@ -4154,6 +4294,12 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     const sceneFog = scene.fog as THREE.Fog;
     const sceneBackground = scene.background as THREE.Color;
 
+    // Window/sign emissive materials (tagged in proceduralArt) that brighten at
+    // night. Chunks are built once and only visibility-culled, so this registry is
+    // append-only — no cleanup needed. lastNightApplied throttles bulk updates.
+    const nightEmissiveMaterials: Array<{ material: THREE.Material & { emissiveIntensity: number }; day: number; night: number }> = [];
+    let lastNightApplied = -1;
+
     // Static warm fill + cool rim from the polish pass — these complement the
     // day/night-driven key/hemi and give cars and buildings extra form.
     const fillLight = new THREE.DirectionalLight("#f7b079", 0.55);
@@ -4236,6 +4382,17 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
         return backdrop;
       }, building.x, building.z);
     });
+
+    if (mapLayout.parks && mapLayout.parks.length > 0) {
+      const parkMaterials = {
+        grass: createGrassMaterial(renderProfile.detail),
+        path: createParkPathMaterial(renderProfile.detail),
+        pond: createPondMaterial()
+      };
+      for (const park of mapLayout.parks) {
+        buildParkIntoChunks(park, staticChunkSpecs, addStaticObject, parkMaterials, renderProfile.detail, renderProfile.enableLocalLights);
+      }
+    }
 
     mapLayout.patrolZones.slice(0, renderProfile.maxPatrolZones).forEach((zone) => {
       addStaticObject(() => createPatrolZone(zone), zone.x, zone.z);
@@ -4563,8 +4720,42 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       keyLight.color.copy(dayKeyColor).lerp(nightKeyColor, night);
       keyLight.intensity = THREE.MathUtils.lerp(1.95, 0.45, night);
       keyLight.position.set(-8, THREE.MathUtils.lerp(15, 6, night), 7);
+      // Warm sodium-street fill rises after dark; the cool rim firms up silhouettes.
+      fillLight.intensity = THREE.MathUtils.lerp(0.18, 0.7, night);
+      rimLight.intensity = THREE.MathUtils.lerp(0.4, 0.85, night);
       sceneFog.color.copy(dayFogColor).lerp(nightFogColor, night);
       sceneBackground.copy(dayBgColor).lerp(nightBgColor, night);
+
+      // Register any newly-built chunks' window/sign emissives and set them to the
+      // current night level immediately (so chunks streamed in at night look right).
+      for (const chunk of staticChunks.values()) {
+        if (!chunk.built || chunk.group.userData.nightRegistered) {
+          continue;
+        }
+        chunk.group.userData.nightRegistered = true;
+        chunk.group.traverse((object) => {
+          const mesh = object as THREE.Mesh;
+          if (!mesh.material) {
+            return;
+          }
+          const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+          for (const material of materials) {
+            const tag = material.userData?.nightEmissive as { day: number; night: number } | undefined;
+            if (tag) {
+              const entry = { material: material as THREE.Material & { emissiveIntensity: number }, day: tag.day, night: tag.night };
+              nightEmissiveMaterials.push(entry);
+              entry.material.emissiveIntensity = THREE.MathUtils.lerp(tag.day, tag.night, night);
+            }
+          }
+        });
+      }
+      // Re-lerp all registered emissives only when the night level shifts meaningfully.
+      if (Math.abs(night - lastNightApplied) > 0.02) {
+        for (const entry of nightEmissiveMaterials) {
+          entry.material.emissiveIntensity = THREE.MathUtils.lerp(entry.day, entry.night, night);
+        }
+        lastNightApplied = night;
+      }
 
       const carriedUnits = carriedCrateUnits(currentState);
       const carryLoadRatio = currentState.player.carriedCrate ? carriedUnits / Math.max(1, currentState.player.cargoCapacity) : 0;
@@ -4722,6 +4913,22 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     renderer.domElement.addEventListener("click", onCanvasClick);
     const animationId = requestAnimationFrame(animate);
 
+    // Dev-only camera teleport for visual verification (stripped from production builds).
+    if ((import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV) {
+      (window as unknown as { __vendettaTeleport?: (x: number, z: number, facing?: number, look?: number) => void }).__vendettaTeleport = (x, z, facing, look) => {
+        yaw.position.x = x;
+        yaw.position.z = z;
+        if (typeof facing === "number") {
+          yaw.rotation.y = facing;
+        }
+        if (typeof look === "number") {
+          pitch = look;
+        }
+        applyCameraMode(camera, playerAvatar, carriedCrateMount, cameraMode, pitch);
+        enqueueWorldChunksNear(staticChunkSpecs, staticChunks, staticChunkQueue, queuedStaticChunks, yaw.position, preloadChunkRadius);
+      };
+    }
+
     return () => {
       disposed = true;
       cancelAnimationFrame(animationId);
@@ -4730,6 +4937,9 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("resize", onResize);
       renderer.domElement.removeEventListener("click", onCanvasClick);
+      if ((import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV) {
+        delete (window as unknown as { __vendettaTeleport?: unknown }).__vendettaTeleport;
+      }
       clearGroup(dynamicGroup);
       disposeObject(scene);
       envTarget.dispose();

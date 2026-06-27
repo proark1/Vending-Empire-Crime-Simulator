@@ -172,6 +172,166 @@ export function createSidewalkMaterial(quality: GraphicsQuality = "medium"): THR
   return new THREE.MeshStandardMaterial({ map, ...(bumpMap ? { bumpMap, bumpScale: 0.018 } : {}), color: "#8a94a5", roughness: 0.88 });
 }
 
+export function createGrassMaterial(quality: GraphicsQuality = "medium"): THREE.MeshStandardMaterial {
+  const size = quality === "low" ? 128 : quality === "high" ? 512 : 256;
+  const map = textureFromCanvas(
+    size,
+    (context, size) => {
+      const base = context.createLinearGradient(0, 0, size, size);
+      base.addColorStop(0, "#33632f");
+      base.addColorStop(1, "#274f29");
+      context.fillStyle = base;
+      context.fillRect(0, 0, size, size);
+      const blades = quality === "low" ? 700 : quality === "high" ? 4200 : 2200;
+      for (let i = 0; i < blades; i += 1) {
+        const g = 70 + Math.random() * 95;
+        context.fillStyle = `rgba(${Math.round(g * 0.42)}, ${Math.round(g)}, ${Math.round(g * 0.46)}, ${0.1 + Math.random() * 0.18})`;
+        context.fillRect(Math.random() * size, Math.random() * size, 1, 2 + Math.random() * 3);
+      }
+      // soft mowing stripes for a manicured-lawn read
+      for (let x = 0; x < size; x += 28) {
+        context.fillStyle = (x / 28) % 2 === 0 ? "rgba(255,255,255,0.035)" : "rgba(2,12,2,0.05)";
+        context.fillRect(x, 0, 14, size);
+      }
+    },
+    quality === "low" ? 4 : quality === "high" ? 12 : 8
+  );
+
+  return new THREE.MeshStandardMaterial({ map, color: "#3c6f3a", roughness: 0.97, metalness: 0 });
+}
+
+export function createParkPathMaterial(quality: GraphicsQuality = "medium"): THREE.MeshStandardMaterial {
+  const size = quality === "low" ? 128 : quality === "high" ? 384 : 256;
+  const map = textureFromCanvas(
+    size,
+    (context, size) => {
+      context.fillStyle = "#c2ad80";
+      context.fillRect(0, 0, size, size);
+      const specks = quality === "low" ? 400 : quality === "high" ? 2200 : 1200;
+      for (let i = 0; i < specks; i += 1) {
+        const tone = Math.random() < 0.5 ? 150 + Math.random() * 50 : 90 + Math.random() * 40;
+        context.fillStyle = `rgba(${tone}, ${Math.round(tone * 0.9)}, ${Math.round(tone * 0.62)}, ${0.16 + Math.random() * 0.22})`;
+        context.fillRect(Math.random() * size, Math.random() * size, 1 + Math.random() * 2, 1 + Math.random() * 2);
+      }
+    },
+    quality === "low" ? 2 : 4
+  );
+
+  return new THREE.MeshStandardMaterial({ map, color: "#c4ac7d", roughness: 0.95, metalness: 0 });
+}
+
+export function createPondMaterial(): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({ color: "#2f7da0", roughness: 0.16, metalness: 0.3, transparent: true, opacity: 0.92 });
+}
+
+function parkRandom(seed: number): () => number {
+  let s = Math.floor(seed) % 2147483647;
+  if (s <= 0) {
+    s += 2147483646;
+  }
+  return () => (s = (s * 16807) % 2147483647) / 2147483647;
+}
+
+export function createTree(quality: GraphicsQuality = "medium", seed = 1): THREE.Group {
+  const rng = parkRandom(seed * 911 + 13);
+  const group = new THREE.Group();
+  const segs = quality === "low" ? 5 : quality === "high" ? 8 : 6;
+  const trunkHeight = 1.25 + rng() * 1.0;
+  const trunk = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.1, 0.18, trunkHeight, segs),
+    new THREE.MeshStandardMaterial({ color: "#5b3b22", roughness: 0.92, metalness: 0.02 })
+  );
+  trunk.position.y = trunkHeight / 2;
+  trunk.castShadow = true;
+  group.add(trunk);
+
+  const greens = ["#2f6b34", "#387a3c", "#356b39", "#43824a", "#2c5f31"];
+  const blobCount = quality === "low" ? 1 : 2 + Math.floor(rng() * 2);
+  const baseRadius = 0.95 + rng() * 0.5;
+  const detail = quality === "low" ? 0 : 1;
+  for (let i = 0; i < blobCount; i += 1) {
+    const radius = baseRadius * (1 - i * 0.17);
+    const foliage = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(radius, detail),
+      new THREE.MeshStandardMaterial({ color: greens[Math.floor(rng() * greens.length)], roughness: 0.86, metalness: 0, flatShading: true })
+    );
+    foliage.position.set((rng() - 0.5) * 0.55, trunkHeight + radius * 0.5 + i * baseRadius * 0.48, (rng() - 0.5) * 0.55);
+    foliage.castShadow = true;
+    group.add(foliage);
+  }
+
+  group.scale.setScalar(0.82 + rng() * 0.5);
+  group.rotation.y = rng() * Math.PI * 2;
+  return group;
+}
+
+export function createBush(quality: GraphicsQuality = "medium", seed = 1): THREE.Group {
+  const rng = parkRandom(seed * 547 + 29);
+  const group = new THREE.Group();
+  const greens = ["#3a7a3e", "#2f6b34", "#46894b"];
+  const blobs = quality === "low" ? 1 : 2 + Math.floor(rng() * 2);
+  for (let i = 0; i < blobs; i += 1) {
+    const radius = 0.32 + rng() * 0.26;
+    const blob = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(radius, quality === "low" ? 0 : 1),
+      new THREE.MeshStandardMaterial({ color: greens[Math.floor(rng() * greens.length)], roughness: 0.9, metalness: 0, flatShading: true })
+    );
+    blob.position.set((rng() - 0.5) * 0.6, radius * 0.7, (rng() - 0.5) * 0.6);
+    blob.castShadow = true;
+    group.add(blob);
+  }
+  group.rotation.y = rng() * Math.PI * 2;
+  return group;
+}
+
+export function createParkBench(): THREE.Group {
+  const group = new THREE.Group();
+  const wood = new THREE.MeshStandardMaterial({ color: "#6f4a2c", roughness: 0.78, metalness: 0.05 });
+  const frame = new THREE.MeshStandardMaterial({ color: "#2b3340", roughness: 0.5, metalness: 0.45 });
+  const seat = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.08, 0.5), wood);
+  seat.position.y = 0.45;
+  seat.castShadow = true;
+  group.add(seat);
+  const back = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.42, 0.07), wood);
+  back.position.set(0, 0.7, -0.21);
+  back.castShadow = true;
+  group.add(back);
+  for (const side of [-0.62, 0.62]) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.45, 0.46), frame);
+    leg.position.set(side, 0.225, 0);
+    group.add(leg);
+  }
+  return group;
+}
+
+export function createParkLamp(enableLight = false): THREE.Group {
+  const group = new THREE.Group();
+  const height = 2.6;
+  const pole = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.06, 0.08, height, 8),
+    new THREE.MeshStandardMaterial({ color: "#1f2733", roughness: 0.5, metalness: 0.6 })
+  );
+  pole.position.y = height / 2;
+  pole.castShadow = true;
+  group.add(pole);
+  const glassMat = new THREE.MeshBasicMaterial({ color: "#ffe7ad" });
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), glassMat);
+  head.position.y = height + 0.06;
+  group.add(head);
+  const cap = new THREE.Mesh(
+    new THREE.ConeGeometry(0.26, 0.22, 8),
+    new THREE.MeshStandardMaterial({ color: "#141a24", roughness: 0.5, metalness: 0.6 })
+  );
+  cap.position.y = height + 0.26;
+  group.add(cap);
+  if (enableLight) {
+    const light = new THREE.PointLight("#ffdf9e", 0.9, 11, 2);
+    light.position.y = height + 0.05;
+    group.add(light);
+  }
+  return group;
+}
+
 function createWallMaterial(base: string, mortar: string, quality: GraphicsQuality): THREE.MeshStandardMaterial {
   const size = quality === "low" ? 128 : quality === "high" ? 512 : 256;
   const map = textureFromCanvas(
@@ -388,13 +548,19 @@ function litWindowMaterial(style: BuildingStyle, lit: boolean): THREE.MeshStanda
         ? "#991b1b"
         : "#0f766e";
 
-  return new THREE.MeshStandardMaterial({
+  // Windows are dim in daylight and glow at night; the day/night cycle in
+  // ThreeScene lerps emissiveIntensity between these via userData.nightEmissive.
+  const dayIntensity = lit ? 0.08 : 0.02;
+  const nightIntensity = lit ? (style === "arcade" ? 0.95 : 0.5) : 0.12;
+  const material = new THREE.MeshStandardMaterial({
     color: lit ? color : "#1e293b",
     emissive,
-    emissiveIntensity: lit ? (style === "arcade" ? 0.9 : 0.42) : 0.04,
+    emissiveIntensity: dayIntensity,
     roughness: lit ? 0.16 : 0.38,
     metalness: 0.04
   });
+  material.userData.nightEmissive = { day: dayIntensity, night: nightIntensity };
+  return material;
 }
 
 function addWindows(group: THREE.Group, width: number, height: number, depth: number, buildingHeight: number, style: BuildingStyle, quality: GraphicsQuality): void {
@@ -512,16 +678,18 @@ function addFacadeDetails(group: THREE.Group, width: number, depth: number, heig
   const darkMaterial = new THREE.MeshStandardMaterial({ color: "#0f172a", roughness: 0.55, metalness: 0.12 });
   const trimMaterial = new THREE.MeshStandardMaterial({ color: accent, roughness: 0.58, metalness: 0.08 });
   const concreteMaterial = new THREE.MeshStandardMaterial({ color: "#94a3b8", roughness: 0.82, metalness: 0.02 });
+  const glassNightIntensity = style === "arcade" ? 0.5 : 0.16;
   const glassMaterial = new THREE.MeshPhysicalMaterial({
     color: style === "arcade" ? "#f5d0fe" : "#bfdbfe",
     emissive: style === "arcade" ? "#86198f" : "#075985",
-    emissiveIntensity: style === "arcade" ? 0.5 : 0.16,
+    emissiveIntensity: glassNightIntensity * 0.25,
     roughness: 0.08,
     metalness: 0,
     transparent: true,
     opacity: 0.64,
     transmission: 0.12
   });
+  glassMaterial.userData.nightEmissive = { day: glassNightIntensity * 0.25, night: glassNightIntensity };
 
   const roofCap = new THREE.Mesh(new THREE.BoxGeometry(width + 0.32, 0.24, depth + 0.34), darkMaterial);
   roofCap.position.set(0, height + 0.08, 0);
@@ -753,10 +921,11 @@ export function createBuilding(width: number, depth: number, height: number, sty
   const signMaterial = new THREE.MeshStandardMaterial({
     map: createSignTexture(signText, "rgba(15, 23, 42, 0.96)", signAccent[style]),
     emissive: signAccent[style],
-    emissiveIntensity: 0.22,
+    emissiveIntensity: 0.08,
     transparent: true,
     roughness: 0.35
   });
+  signMaterial.userData.nightEmissive = { day: 0.08, night: 0.42 };
   const signY = Math.min(visualHeight - 0.46, Math.max(2.52, WORLD_SCALE.building.door.frameHeight + 0.34));
   addPlane(group, Math.min(width * 0.72, 3.8), 0.58, signMaterial, new THREE.Vector3(0, signY, -depth / 2 - 0.025), 0);
 

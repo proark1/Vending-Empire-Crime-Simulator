@@ -19,6 +19,15 @@ const sessionDays = Number(process.env.SESSION_DAYS ?? 14);
 const jsonLimitBytes = Number(process.env.JSON_LIMIT_BYTES ?? 8 * 1024 * 1024);
 const startedAt = new Date();
 
+// Last-resort guards so a stray async error can't silently take the whole server
+// (and every connected player) down. These log instead of letting the process die.
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled promise rejection:", reason);
+});
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught exception:", error);
+});
+
 let pool = null;
 let databaseReady = null;
 const recentEvents = [];
@@ -134,6 +143,12 @@ function getPool() {
     pool = new Pool({
       connectionString: databaseUrl,
       ssl: process.env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: false }
+    });
+    // An idle client emitting 'error' (e.g. the DB dropping the connection) throws
+    // on the pool and would crash the process for every connected player. Log and
+    // let the pool recycle the client instead.
+    pool.on("error", (error) => {
+      console.error("Postgres pool error (idle client):", error.message);
     });
   }
 
