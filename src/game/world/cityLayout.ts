@@ -81,7 +81,9 @@ const PLACEMENT_INSET = WORLD_SCALE.road.sidewalkWidth + 0.4;
 const MIN_BUILDABLE = 3; // a block thinner than this (after the inset) gets no buildings
 const MIN_ROW_DEPTH = 3.5;
 const MIN_ALLEY = 2; // tightest navigable alley between back-to-back rows
-const ROW_DEPTH: [number, number] = [5, 9];
+// Rows are made as deep as the block allows up to this cap; a deeper cap shrinks
+// the interior courtyard (denser blocks) while keeping a navigable middle.
+const MAX_ROW_DEPTH = 12;
 const LOT_WIDTH: [number, number] = [4, 8];
 
 const ALL_STYLES: BuildingVisualStyle[] = ["garage", "supplier", "laundromat", "gym", "arcade", "transit", "rival"];
@@ -319,64 +321,28 @@ function generateRoads(options: CityPlanOptions, roadsRng: Rng): WorldRoad[] {
     });
   });
 
-  // Local streets split large grid cells, connecting both bounding arterials.
+  // One local street splits each oversized grid cell, connecting both bounding
+  // arterials. (A finer recursive grid was tried but just added roads while
+  // reducing buildings and crowding named locations — the street-frontage
+  // requirement caps useful density.)
   const localRng = roadsRng.fork("local");
   let localIndex = 0;
   for (let xi = 0; xi < xs.length - 1; xi += 1) {
     for (let zi = 0; zi < zs.length - 1; zi += 1) {
       const cell: Bounds2 = { minX: xs[xi], maxX: xs[xi + 1], minZ: zs[zi], maxZ: zs[zi + 1] };
-      const center = boundsCenter(cell);
-      const owner = districtOwnerAt(center, ordered);
+      const owner = districtOwnerAt(boundsCenter(cell), ordered);
       if (!owner) {
         continue;
       }
       const cellRng = localRng.fork(`${xi}_${zi}`);
-      const width = boundsWidth(cell);
-      const depth = boundsDepth(cell);
-      if (width >= depth && width > options.targetBlockMax) {
-        const x = snap((cell.minX + cell.maxX) / 2);
-        roads.push({
-          id: `local_${localIndex}`,
-          districtId: owner,
-          x,
-          z: snap((cell.minZ + cell.maxZ) / 2),
-          width: LOCAL_WIDTH,
-          depth: snap(cell.maxZ - cell.minZ)
-        });
-        localIndex += 1;
-      } else if (depth > width && depth > options.targetBlockMax) {
-        const z = snap((cell.minZ + cell.maxZ) / 2);
-        roads.push({
-          id: `local_${localIndex}`,
-          districtId: owner,
-          x: snap((cell.minX + cell.maxX) / 2),
-          z,
-          width: snap(cell.maxX - cell.minX),
-          depth: LOCAL_WIDTH
-        });
-        localIndex += 1;
-      } else if (width > options.targetBlockMax && depth > options.targetBlockMax) {
-        // Large square cell: split on the axis chosen by the cell rng.
-        if (cellRng.chance(0.5)) {
-          roads.push({
-            id: `local_${localIndex}`,
-            districtId: owner,
-            x: snap((cell.minX + cell.maxX) / 2),
-            z: snap((cell.minZ + cell.maxZ) / 2),
-            width: LOCAL_WIDTH,
-            depth: snap(cell.maxZ - cell.minZ)
-          });
-        } else {
-          roads.push({
-            id: `local_${localIndex}`,
-            districtId: owner,
-            x: snap((cell.minX + cell.maxX) / 2),
-            z: snap((cell.minZ + cell.maxZ) / 2),
-            width: snap(cell.maxX - cell.minX),
-            depth: LOCAL_WIDTH
-          });
-        }
-        localIndex += 1;
+      const w = boundsWidth(cell);
+      const d = boundsDepth(cell);
+      const splitVertical = w > options.targetBlockMax && (w >= d || d <= options.targetBlockMax || cellRng.chance(0.5));
+      const splitHorizontal = d > options.targetBlockMax && !splitVertical;
+      if (splitVertical) {
+        roads.push({ id: `local_${localIndex++}`, districtId: owner, x: snap((cell.minX + cell.maxX) / 2), z: snap((cell.minZ + cell.maxZ) / 2), width: LOCAL_WIDTH, depth: snap(d) });
+      } else if (splitHorizontal) {
+        roads.push({ id: `local_${localIndex++}`, districtId: owner, x: snap((cell.minX + cell.maxX) / 2), z: snap((cell.minZ + cell.maxZ) / 2), width: snap(w), depth: LOCAL_WIDTH });
       }
     }
   }
@@ -508,44 +474,39 @@ function placeBuildingsInBlock(block: CityBlock, rng: Rng, options: CityPlanOpti
 
   const buildings: WorldBuilding[] = [];
   const idPrefix = `${block.districtId}_lot`;
-  const runAlongX = xFront.length !== zFront.length ? xFront.length > zFront.length : width >= depth;
-  const frontages = runAlongX ? xFront : zFront;
-  const spanDepth = runAlongX ? depth : width;
 
-  const makeRow = (depthCenter: number, rowDepth: number, facing: BuildingFacing) => {
-    const placed = placeRow(
-      {
-        alongStart: runAlongX ? buildable.minX : buildable.minZ,
-        alongEnd: runAlongX ? buildable.maxX : buildable.maxZ,
-        depthCenter,
-        rowDepth,
-        facing,
-        axis: runAlongX ? "x" : "z"
-      },
-      rng,
-      options,
-      block.districtId,
-      idPrefix,
-      idCounter.value
-    );
+  const addRow = (alongStart: number, alongEnd: number, depthCenter: number, rowDepth: number, facing: BuildingFacing, axis: "x" | "z") => {
+    if (alongEnd - alongStart < LOT_WIDTH[0]) {
+      return;
+    }
+    const placed = placeRow({ alongStart, alongEnd, depthCenter, rowDepth, facing, axis }, rng, options, block.districtId, idPrefix, idCounter.value);
     idCounter.value += placed.length;
     buildings.push(...placed);
   };
 
+  // Two rows hug the block's two main frontages, facing their streets, so every
+  // storefront keeps a clear front for its vending machine. Rows are made as deep
+  // as the block allows (up to a cap) to shrink the interior courtyard and pack
+  // more building. A shallow / single-frontage block keeps one street-hugging row.
+  const runAlongX = xFront.length !== zFront.length ? xFront.length > zFront.length : width >= depth;
+  const frontages = runAlongX ? xFront : zFront;
+  const spanDepth = runAlongX ? depth : width;
+  const axis: "x" | "z" = runAlongX ? "x" : "z";
+  const alongStart = runAlongX ? buildable.minX : buildable.minZ;
+  const alongEnd = runAlongX ? buildable.maxX : buildable.maxZ;
   const min = runAlongX ? buildable.minZ : buildable.minX;
   const max = runAlongX ? buildable.maxZ : buildable.maxX;
   const nearFacing: BuildingFacing = runAlongX ? "north" : "west";
   const farFacing: BuildingFacing = runAlongX ? "south" : "east";
-  const twoRows = frontages.length >= 2 && spanDepth >= 2 * MIN_ROW_DEPTH + MIN_ALLEY;
 
-  if (twoRows) {
-    const rowDepth = Math.max(MIN_ROW_DEPTH, Math.min(rng.range(ROW_DEPTH[0], ROW_DEPTH[1]), (spanDepth - MIN_ALLEY) / 2));
-    makeRow(snap(min + rowDepth / 2), rowDepth, nearFacing);
-    makeRow(snap(max - rowDepth / 2), rowDepth, farFacing);
+  if (frontages.length >= 2 && spanDepth >= 2 * MIN_ROW_DEPTH + MIN_ALLEY) {
+    const rowDepth = Math.max(MIN_ROW_DEPTH, Math.min(MAX_ROW_DEPTH, (spanDepth - MIN_ALLEY) / 2));
+    addRow(alongStart, alongEnd, snap(min + rowDepth / 2), rowDepth, nearFacing, axis);
+    addRow(alongStart, alongEnd, snap(max - rowDepth / 2), rowDepth, farFacing, axis);
   } else {
-    const rowDepth = Math.min(rng.range(ROW_DEPTH[0], ROW_DEPTH[1]), spanDepth);
+    const rowDepth = Math.min(MAX_ROW_DEPTH, spanDepth);
     const hugNear = frontages.includes(nearFacing);
-    makeRow(hugNear ? snap(min + rowDepth / 2) : snap(max - rowDepth / 2), rowDepth, hugNear ? nearFacing : farFacing);
+    addRow(alongStart, alongEnd, hugNear ? snap(min + rowDepth / 2) : snap(max - rowDepth / 2), rowDepth, hugNear ? nearFacing : farFacing, axis);
   }
 
   return relaxBuildings(buildings, { gap: options.minGap, bounds: buildable, iterations: 8 });

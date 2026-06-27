@@ -9,6 +9,7 @@
 import type { Bounds2, Vec2 } from "../core/types";
 import {
   districts,
+  facingOutwardUnit,
   patrolZones as defaultPatrolZones,
   policePatrolPaths as defaultPolicePatrolPaths,
   trafficLoops as defaultTrafficLoops,
@@ -394,6 +395,12 @@ function buildBuildings(plan: ReturnType<typeof generateCityPlan>): WorldBuildin
     cleared.push(forced);
   }
 
+  // Dense packing can leave a named location in an interior row with no clear
+  // front for its vending machine. Swap any such location with the nearest
+  // clear-front filler (filler needs no machine), so every storefront keeps a
+  // street/alley-facing front.
+  ensureClearFronts(cleared);
+
   // Derive machine anchors for every location building now that all footprints
   // are known (so the anchor never lands inside a neighbour).
   const allFootprints = cleared.map(footprint);
@@ -402,6 +409,50 @@ function buildBuildings(plan: ReturnType<typeof generateCityPlan>): WorldBuildin
       ? { ...building, anchor: deriveBuildingAnchor(building, allFootprints) }
       : building
   );
+}
+
+// True when a point ~1.1u in front of the storefront wall is inside another
+// building (so a machine placed there would face into a wall).
+function frontBlocked(building: WorldBuilding, others: WorldBuilding[]): boolean {
+  const out = facingOutwardUnit(building.facing ?? "north");
+  const swap = building.facing === "east" || building.facing === "west";
+  const half = (swap ? building.width : building.depth) / 2;
+  const front = { x: building.x + out.x * (half + 1.1), z: building.z + out.z * (half + 1.1) };
+  return others.some((other) => other !== building && pointInRect(front, footprint(other)));
+}
+
+function ensureClearFronts(buildings: WorldBuilding[]): void {
+  for (const named of buildings) {
+    if (!named.locationId || !frontBlocked(named, buildings)) {
+      continue;
+    }
+    let best: WorldBuilding | null = null;
+    let bestDistance = Infinity;
+    for (const filler of buildings) {
+      if (filler.locationId || filler.districtId !== named.districtId || frontBlocked(filler, buildings)) {
+        continue;
+      }
+      const distance = Math.hypot(filler.x - named.x, filler.z - named.z);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = filler;
+      }
+    }
+    if (best) {
+      // Swap footprints/positions; identities (locationId/sign/style) stay put.
+      const swap = { x: named.x, z: named.z, facing: named.facing, width: named.width, depth: named.depth };
+      named.x = best.x;
+      named.z = best.z;
+      named.facing = best.facing;
+      named.width = best.width;
+      named.depth = best.depth;
+      best.x = swap.x;
+      best.z = swap.z;
+      best.facing = swap.facing;
+      best.width = swap.width;
+      best.depth = swap.depth;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
