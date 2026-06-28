@@ -201,6 +201,11 @@ function forcePlaceNamed(
   }
   const region = district.bounds;
   const clear = SETBACK + 0.05;
+  // A spot stays "walkable-between" from every other storefront when no already-
+  // placed named footprint sits within the navigable gap of it. Every gap warning
+  // is location-vs-location, so honouring this in the fallbacks removes them.
+  const keepsNamedGap = (fp: Bounds2): boolean =>
+    !placed.some((other) => other.locationId && rectsOverlap(inflate(fp, MIN_GAP / 2), inflate(footprint(other), MIN_GAP / 2)));
   // Prefer street-facing row slots (clean anchor fronts); fall back to a packed
   // grid scan, with progressively smaller footprints / finer steps so even a
   // crammed starter suburb fits its last named location.
@@ -251,7 +256,12 @@ function forcePlaceNamed(
   // Packed district: take over a SAME-district filler's clean, street-facing slot
   // (never relabel a building from another district — that would strand it
   // outside its district bounds).
-  const stealIndex = placed.findIndex((b) => !b.locationId && b.districtId === template.districtId);
+  // Prefer stealing a filler slot that keeps a clear gap from placed locations;
+  // only take a flush one if no spaced filler is left in the district.
+  let stealIndex = placed.findIndex((b) => !b.locationId && b.districtId === template.districtId && keepsNamedGap(footprint(b)));
+  if (stealIndex < 0) {
+    stealIndex = placed.findIndex((b) => !b.locationId && b.districtId === template.districtId);
+  }
   if (stealIndex >= 0) {
     const filler = placed[stealIndex];
     placed.splice(stealIndex, 1);
@@ -278,6 +288,7 @@ function forcePlaceNamed(
       (a, b) => distanceToNearestRoad({ x: a.x, z: a.z }, roads) - distanceToNearestRoad({ x: b.x, z: b.z }, roads)
     )
   ];
+  let tinyFallback: WorldBuilding | null = null;
   for (const candidate of tinyCandidates) {
     const building: WorldBuilding = {
       id: `${template.locationId}_building`,
@@ -302,9 +313,14 @@ function forcePlaceNamed(
     if (placed.some((other) => rectsOverlap(fp, footprint(other)))) {
       continue;
     }
-    return building;
+    if (keepsNamedGap(fp)) {
+      return building; // a clean, walkable-between spot
+    }
+    if (!tinyFallback) {
+      tinyFallback = building; // remember the first valid spot in case nothing is spaced
+    }
   }
-  return null;
+  return tinyFallback;
 }
 
 function buildBuildings(plan: ReturnType<typeof generateCityPlan>): WorldBuilding[] {
