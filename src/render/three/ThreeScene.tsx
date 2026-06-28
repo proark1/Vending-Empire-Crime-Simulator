@@ -609,8 +609,12 @@ function vehicleCollisionBox(placement: { position: THREE.Vector3; rotationY: nu
   );
 }
 
-function collisionBoxesForState(currentState: GameState, layout: WorldMapLayout, options: { excludeVehicleId?: string } = {}): CollisionBox[] {
+function collisionBoxesForState(currentState: GameState, layout: WorldMapLayout, options: { excludeVehicleId?: string; extraStaticBoxes?: CollisionBox[] } = {}): CollisionBox[] {
   const boxes = [...buildingCollisionBoxesForLayout(layout)];
+
+  if (options.extraStaticBoxes) {
+    boxes.push(...options.extraStaticBoxes);
+  }
 
   for (const location of Object.values(currentState.locations)) {
     if (machineAtLocation(currentState, location.id)) {
@@ -4687,21 +4691,27 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       (mapLayout.parks ?? []).some(
         (park) => bounds.minX < park.bounds.maxX && bounds.maxX > park.bounds.minX && bounds.minZ < park.bounds.maxZ && bounds.maxZ > park.bounds.minZ
       );
-    mapLayout.backdropBuildings
+    const renderedBackdrops = mapLayout.backdropBuildings
       .filter((building) => !overlapsAnyPark({
         minX: building.x - building.width / 2,
         maxX: building.x + building.width / 2,
         minZ: building.z - building.depth / 2,
         maxZ: building.z + building.depth / 2
       }))
-      .slice(0, renderProfile.maxBackdropBuildings)
-      .forEach((building) => {
-        addStaticObject(() => {
-          const backdrop = createBackdropBuilding(building, renderProfile.detail);
-          applyModelTransformById(backdrop, modelConfig, "building.backdrop");
-          return backdrop;
-        }, building.x, building.z);
-      });
+      .slice(0, renderProfile.maxBackdropBuildings);
+    renderedBackdrops.forEach((building) => {
+      addStaticObject(() => {
+        const backdrop = createBackdropBuilding(building, renderProfile.detail);
+        applyModelTransformById(backdrop, modelConfig, "building.backdrop");
+        return backdrop;
+      }, building.x, building.z);
+    });
+    // Skyline towers are solid: without collision the player walks straight
+    // through them and the map "expands" beyond, which reads as a stray wall.
+    // Built from the exact rendered set so collision never outlives the mesh.
+    const backdropCollisionBoxes = renderedBackdrops.map((building) =>
+      collisionBoxFromCenter(building.x, building.z, building.width, building.depth)
+    );
 
     if (mapLayout.parks && mapLayout.parks.length > 0) {
       const parkMaterials = {
@@ -5116,7 +5126,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
         const movement = driveForward.multiplyScalar(vehicleVelocity * delta);
         const before = yaw.position.clone();
         if (movement.lengthSq() > 0.000001) {
-          playerMoved = movePlayerWithCollision(yaw.position, movement, collisionBoxesForState(stateRef.current, mapLayout, { excludeVehicleId: drivingVehicleId }));
+          playerMoved = movePlayerWithCollision(yaw.position, movement, collisionBoxesForState(stateRef.current, mapLayout, { excludeVehicleId: drivingVehicleId, extraStaticBoxes: backdropCollisionBoxes }));
           if (!playerMoved) {
             vehicleVelocity *= -0.16;
           } else {
@@ -5142,7 +5152,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
         if (direction.lengthSq() > 0) {
           direction.normalize().applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw.rotation.y);
           const movement = direction.multiplyScalar(speed * delta);
-          playerMoved = movePlayerWithCollision(yaw.position, movement, collisionBoxesForState(stateRef.current, mapLayout));
+          playerMoved = movePlayerWithCollision(yaw.position, movement, collisionBoxesForState(stateRef.current, mapLayout, { extraStaticBoxes: backdropCollisionBoxes }));
         }
       }
 
