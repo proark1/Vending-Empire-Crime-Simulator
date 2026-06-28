@@ -535,6 +535,60 @@ function buildDecorations(roads: WorldRoad[], sidewalks: Array<{ depth: number; 
   return decorations;
 }
 
+// Empty blocks — thin medians, edge verges and leftover gaps that can't hold a
+// building — would otherwise read as barren ground. Fill them with a jittered
+// grid of leafy planters so they look like landscaped greens instead of voids.
+function buildGreenery(blocks: CityBlock[], buildings: WorldBuilding[], roads: WorldRoad[], parks: WorldPark[], rng: Rng): WorldDecoration[] {
+  const roadFps = roads.map(roadFootprint);
+  const parkBounds = parks.map((park) => park.bounds);
+  const greenColors = ["#4ade80", "#22c55e", "#65a30d", "#16a34a"];
+  const out: WorldDecoration[] = [];
+  let index = 0;
+  for (const block of blocks) {
+    if (out.length >= 220) {
+      break;
+    }
+    const b = block.bounds;
+    const occupied = buildings.some((building) => building.x > b.minX && building.x < b.maxX && building.z > b.minZ && building.z < b.maxZ);
+    if (occupied || parkBounds.some((pb) => rectsOverlap(b, pb))) {
+      continue;
+    }
+    const minX = b.minX + 1;
+    const maxX = b.maxX - 1;
+    const minZ = b.minZ + 1;
+    const maxZ = b.maxZ - 1;
+    if (maxX - minX < 0.5 || maxZ - minZ < 0.5) {
+      continue;
+    }
+    const step = 3.4;
+    for (let x = minX + 0.3; x <= maxX; x += step) {
+      for (let z = minZ + 0.3; z <= maxZ; z += step) {
+        if (!rng.chance(0.72)) {
+          continue;
+        }
+        const px = snap(Math.min(maxX, x + rng.range(-0.4, 0.4)));
+        const pz = snap(Math.min(maxZ, z + rng.range(-0.4, 0.4)));
+        const propBounds: Bounds2 = { minX: px - 0.9, maxX: px + 0.9, minZ: pz - 0.9, maxZ: pz + 0.9 };
+        if (roadFps.some((fp) => rectsOverlap(propBounds, fp))) {
+          continue;
+        }
+        out.push({
+          id: `gen_green_${index}`,
+          districtId: block.districtId,
+          kind: "planter",
+          x: px,
+          z: pz,
+          rotationY: snap(rng.range(0, Math.PI)),
+          scale: snap(rng.range(1.1, 1.6)),
+          color: rng.pick(greenColors)
+        });
+        index += 1;
+      }
+    }
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Patrol zones / paths + traffic loops — re-anchored onto the new network
 // ---------------------------------------------------------------------------
@@ -705,9 +759,11 @@ function districtAt(point: Vec2): string {
   return districtsByArea[districtsByArea.length - 1].id;
 }
 
-function buildBackdrops(roads: WorldRoad[], buildings: WorldBuilding[], rng: Rng): CityBackdropBuilding[] {
+function buildBackdrops(roads: WorldRoad[], buildings: WorldBuilding[], parks: WorldPark[], rng: Rng): CityBackdropBuilding[] {
   const roadBlockers = roads.map((road) => inflate(roadFootprint(road), SIDEWALK + 0.5));
   const buildingBlockers = buildings.map((building) => inflate(footprint(building), 0.5));
+  // Parks are open green space — never drop a skyline tower onto one.
+  const parkBlockers = parks.map((park) => inflate(park.bounds, 1));
   const out: CityBackdropBuilding[] = [];
   const step = 13;
   for (let x = worldBounds.minX + 8; x <= worldBounds.maxX - 8; x += step) {
@@ -725,6 +781,9 @@ function buildBackdrops(roads: WorldRoad[], buildings: WorldBuilding[], rng: Rng
         continue;
       }
       if (buildingBlockers.some((blocker) => rectsOverlap(fp, blocker))) {
+        continue;
+      }
+      if (parkBlockers.some((blocker) => rectsOverlap(fp, blocker))) {
         continue;
       }
       if (out.some((other) => rectsOverlap(fp, { minX: other.x - other.width / 2, maxX: other.x + other.width / 2, minZ: other.z - other.depth / 2, maxZ: other.z + other.depth / 2 }))) {
@@ -765,8 +824,11 @@ export function regenerateCity(seed: string): WorldMapLayout {
 
   // Sidewalks are derived for decoration placement only (not stored).
   const sidewalks = sidewalkFootprintsForRoads(plan.roads, buildingsOffParks);
-  const decorations = buildDecorations(plan.roads, sidewalks, rng.fork("decor"));
-  const backdropBuildings = buildBackdrops(plan.roads, buildingsOffParks, rng.fork("backdrop"));
+  const decorations = [
+    ...buildDecorations(plan.roads, sidewalks, rng.fork("decor")),
+    ...buildGreenery(plan.blocks, buildingsOffParks, plan.roads, parks, rng.fork("green"))
+  ];
+  const backdropBuildings = buildBackdrops(plan.roads, buildingsOffParks, parks, rng.fork("backdrop"));
 
   return {
     backdropBuildings,

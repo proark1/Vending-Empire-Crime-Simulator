@@ -461,16 +461,13 @@ function placeBuildingsInBlock(block: CityBlock, rng: Rng, options: CityPlanOpti
 
   // Frontages are edges that actually border a road; buildings line up against
   // them facing the street. Edges that are district/world boundaries (no road)
-  // become the block's back. A block with no frontage gets no buildings.
+  // become the block's back.
   const hasN = edgeHasRoad(block, "north", roadFootprints);
   const hasS = edgeHasRoad(block, "south", roadFootprints);
   const hasW = edgeHasRoad(block, "west", roadFootprints);
   const hasE = edgeHasRoad(block, "east", roadFootprints);
   const xFront = [hasN ? "north" : null, hasS ? "south" : null].filter(Boolean) as BuildingFacing[];
   const zFront = [hasW ? "west" : null, hasE ? "east" : null].filter(Boolean) as BuildingFacing[];
-  if (xFront.length === 0 && zFront.length === 0) {
-    return [];
-  }
 
   const buildings: WorldBuilding[] = [];
   const idPrefix = `${block.districtId}_lot`;
@@ -484,29 +481,43 @@ function placeBuildingsInBlock(block: CityBlock, rng: Rng, options: CityPlanOpti
     buildings.push(...placed);
   };
 
-  // Two rows hug the block's two main frontages, facing their streets, so every
-  // storefront keeps a clear front for its vending machine. Rows are made as deep
-  // as the block allows (up to a cap) to shrink the interior courtyard and pack
-  // more building. A shallow / single-frontage block keeps one street-hugging row.
   const runAlongX = xFront.length !== zFront.length ? xFront.length > zFront.length : width >= depth;
-  const frontages = runAlongX ? xFront : zFront;
-  const spanDepth = runAlongX ? depth : width;
   const axis: "x" | "z" = runAlongX ? "x" : "z";
   const alongStart = runAlongX ? buildable.minX : buildable.minZ;
   const alongEnd = runAlongX ? buildable.maxX : buildable.maxZ;
   const min = runAlongX ? buildable.minZ : buildable.minX;
   const max = runAlongX ? buildable.maxZ : buildable.maxX;
+  const spanDepth = runAlongX ? depth : width;
   const nearFacing: BuildingFacing = runAlongX ? "north" : "west";
   const farFacing: BuildingFacing = runAlongX ? "south" : "east";
 
-  if (frontages.length >= 2 && spanDepth >= 2 * MIN_ROW_DEPTH + MIN_ALLEY) {
-    const rowDepth = Math.max(MIN_ROW_DEPTH, Math.min(MAX_ROW_DEPTH, (spanDepth - MIN_ALLEY) / 2));
-    addRow(alongStart, alongEnd, snap(min + rowDepth / 2), rowDepth, nearFacing, axis);
-    addRow(alongStart, alongEnd, snap(max - rowDepth / 2), rowDepth, farFacing, axis);
-  } else {
-    const rowDepth = Math.min(MAX_ROW_DEPTH, spanDepth);
-    const hugNear = frontages.includes(nearFacing);
-    addRow(alongStart, alongEnd, hugNear ? snap(min + rowDepth / 2) : snap(max - rowDepth / 2), rowDepth, hugNear ? nearFacing : farFacing, axis);
+  if (xFront.length === 0 && zFront.length === 0) {
+    // Landlocked block (bounded only by district/world edges, no road). Rather
+    // than leave a big barren gap, pack it with back-to-back filler rows. These
+    // carry no machines, so they don't need street frontage; the regenerator
+    // moves any named location that lands here onto a clear-front lot.
+    const cell = MIN_ROW_DEPTH + 1.5 + MIN_ALLEY;
+    const numRows = Math.max(1, Math.floor((spanDepth + MIN_ALLEY) / cell));
+    const rowDepth = numRows === 1 ? Math.min(MAX_ROW_DEPTH, spanDepth) : (spanDepth - (numRows - 1) * MIN_ALLEY) / numRows;
+    for (let i = 0; i < numRows; i += 1) {
+      const center = min + rowDepth / 2 + i * (rowDepth + MIN_ALLEY);
+      addRow(alongStart, alongEnd, snap(center), rowDepth, i % 2 === 0 ? nearFacing : farFacing, axis);
+    }
+  } else if (xFront.length >= 1 || zFront.length >= 1) {
+    // Two rows hug the block's two main frontages, facing their streets, so every
+    // storefront keeps a clear front for its vending machine. Rows are made as deep
+    // as the block allows (up to a cap) to shrink the interior courtyard and pack
+    // more building. A shallow / single-frontage block keeps one street-hugging row.
+    const frontages = runAlongX ? xFront : zFront;
+    if (frontages.length >= 2 && spanDepth >= 2 * MIN_ROW_DEPTH + MIN_ALLEY) {
+      const rowDepth = Math.max(MIN_ROW_DEPTH, Math.min(MAX_ROW_DEPTH, (spanDepth - MIN_ALLEY) / 2));
+      addRow(alongStart, alongEnd, snap(min + rowDepth / 2), rowDepth, nearFacing, axis);
+      addRow(alongStart, alongEnd, snap(max - rowDepth / 2), rowDepth, farFacing, axis);
+    } else {
+      const rowDepth = Math.min(MAX_ROW_DEPTH, spanDepth);
+      const hugNear = frontages.includes(nearFacing);
+      addRow(alongStart, alongEnd, hugNear ? snap(min + rowDepth / 2) : snap(max - rowDepth / 2), rowDepth, hugNear ? nearFacing : farFacing, axis);
+    }
   }
 
   return relaxBuildings(buildings, { gap: options.minGap, bounds: buildable, iterations: 8 });

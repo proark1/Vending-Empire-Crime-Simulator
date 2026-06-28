@@ -1375,7 +1375,9 @@ function createPerimeterWalls(): THREE.Group {
     emissive: "#1e293b",
     emissiveIntensity: 0.4
   });
-  const trimMaterial = new THREE.MeshBasicMaterial({ color: "#38bdf8" });
+  // fog:false keeps the boundary line visible even on far edges, so the wall never
+  // reads as "missing" across the map — the whole rectangle is always traceable.
+  const trimMaterial = new THREE.MeshBasicMaterial({ color: "#38bdf8", fog: false });
 
   // innerNormal points from the wall toward the city interior (along the wall's
   // perpendicular axis), so the neon trim sits on the inward-facing side.
@@ -1412,6 +1414,30 @@ function createPerimeterWalls(): THREE.Group {
   addWall(worldCenterX, worldBounds.maxZ + t / 2, worldWidth + 2 * t, true, -1); // south (interior is -z)
   addWall(worldBounds.minX - t / 2, worldCenterZ, worldDepth, false, 1); // west (interior is +x)
   addWall(worldBounds.maxX + t / 2, worldCenterZ, worldDepth, false, -1); // east (interior is -x)
+
+  // A taller pillar with a glowing beacon anchors each of the 4 map corners, so
+  // the corners read clearly and the wall is obviously a closed rectangle.
+  const pillarHeight = height + 1.8;
+  const corners: Array<[number, number]> = [
+    [worldBounds.minX, worldBounds.minZ],
+    [worldBounds.maxX, worldBounds.minZ],
+    [worldBounds.minX, worldBounds.maxZ],
+    [worldBounds.maxX, worldBounds.maxZ]
+  ];
+  for (const [cornerX, cornerZ] of corners) {
+    const px = cornerX + Math.sign(cornerX - worldCenterX) * (t / 2);
+    const pz = cornerZ + Math.sign(cornerZ - worldCenterZ) * (t / 2);
+    const pillar = new THREE.Mesh(new THREE.BoxGeometry(t + 0.6, pillarHeight, t + 0.6), bodyMaterial);
+    pillar.position.set(px, pillarHeight / 2, pz);
+    pillar.receiveShadow = true;
+    group.add(pillar);
+    const pillarCap = new THREE.Mesh(new THREE.BoxGeometry(t + 1, capHeight, t + 1), capMaterial);
+    pillarCap.position.set(px, pillarHeight + capHeight / 2, pz);
+    group.add(pillarCap);
+    const beacon = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.6, 0.34), trimMaterial);
+    beacon.position.set(px, pillarHeight + capHeight + 0.3, pz);
+    group.add(beacon);
+  }
 
   return group;
 }
@@ -2972,6 +2998,44 @@ function buildParkIntoChunks(
       return lamp;
     }, x, z);
   }
+
+  // Perimeter fence (railings + posts) with two entries, aligned with the central
+  // path so the park reads as an enclosed green with gates rather than open lawn.
+  const fenceMaterial = new THREE.MeshStandardMaterial({ color: "#1f2937", roughness: 0.55, metalness: 0.55 });
+  const fenceHeight = 1.0;
+  const entryHalf = 1.6; // half-width of each gateway gap
+  const addFenceRun = (axis: "x" | "z", fixed: number, from: number, to: number) => {
+    if (to - from < 0.5) {
+      return;
+    }
+    const mid = (from + to) / 2;
+    addStatic(() => {
+      const fence = new THREE.Group();
+      for (const railY of [0.42, 0.9]) {
+        const rail = new THREE.Mesh(
+          new THREE.BoxGeometry(axis === "x" ? to - from : 0.07, 0.07, axis === "x" ? 0.07 : to - from),
+          fenceMaterial
+        );
+        rail.position.set(axis === "x" ? mid : fixed, railY, axis === "x" ? fixed : mid);
+        fence.add(rail);
+      }
+      for (let p = from; p <= to + 0.001; p += 2.6) {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.1, fenceHeight, 0.1), fenceMaterial);
+        post.position.set(axis === "x" ? p : fixed, fenceHeight / 2, axis === "x" ? fixed : p);
+        post.castShadow = true;
+        fence.add(post);
+      }
+      return fence;
+    }, axis === "x" ? mid : fixed, axis === "x" ? fixed : mid);
+  };
+  // West and east edges: continuous fence.
+  addFenceRun("z", minX, minZ, maxZ);
+  addFenceRun("z", maxX, minZ, maxZ);
+  // North and south edges: fence with a centred gateway aligned to the path (x=cx).
+  addFenceRun("x", minZ, minX, cx - entryHalf);
+  addFenceRun("x", minZ, cx + entryHalf, maxX);
+  addFenceRun("x", maxZ, minX, cx - entryHalf);
+  addFenceRun("x", maxZ, cx + entryHalf, maxX);
 }
 
 function createBackdropBuilding(definition: CityBackdropBuilding, quality: GraphicsQuality): THREE.Group {
@@ -3749,42 +3813,55 @@ function addCrossingMarkingsBuildJobs(specs: Map<string, WorldChunkBuildSpec>, c
   }
 }
 
-// A signal head on a pole. The lit lamp (red or green) reads as a working stop light.
-function createTrafficLight(headRotationY: number, phase: "go" | "stop", quality: GraphicsQuality): THREE.Group {
+// A real mast-arm traffic signal: a pole on the corner with a horizontal arm
+// reaching out over the road and a 3-lamp head hanging from its end. The lit lamp
+// (red or green) reads as a working stop light. rotationY aims the arm at the
+// intersection centre. Phase sets which lamp is lit.
+function createTrafficLight(rotationY: number, phase: "go" | "stop", quality: GraphicsQuality): THREE.Group {
   const group = new THREE.Group();
   const segments = quality === "low" ? 6 : 10;
-  const metalMaterial = new THREE.MeshStandardMaterial({ color: "#0b1322", roughness: 0.5, metalness: 0.55 });
+  const metalMaterial = new THREE.MeshStandardMaterial({ color: "#0b1322", roughness: 0.5, metalness: 0.6 });
 
-  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.1, 3.6, segments), metalMaterial);
-  pole.position.y = 1.8;
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 0.32, segments), metalMaterial);
+  base.position.y = 0.16;
+  group.add(base);
+
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.11, 4.6, segments), metalMaterial);
+  pole.position.y = 2.3;
   pole.castShadow = true;
   group.add(pole);
 
-  const head = new THREE.Group();
-  head.add(new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.94, 0.28), metalMaterial));
+  // Horizontal mast arm reaching out over the road (local +Z toward the centre).
+  const armLength = 3.4;
+  const arm = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, armLength), metalMaterial);
+  arm.position.set(0, 4.5, armLength / 2);
+  group.add(arm);
 
-  // Two heads back-to-back so the signal reads from both approach directions.
-  const lampGeometry = new THREE.CircleGeometry(0.11, 16);
-  const addLamp = (lampY: number, faceZ: number, color: string, lit: boolean) => {
-    // Lit lamp uses an unlit basic material so the colour stays fully saturated
-    // and visible at night; a dark lamp sits flush otherwise.
+  // Signal head hanging from the arm end, with a black backboard.
+  const head = new THREE.Group();
+  head.add(new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.2, 0.06), new THREE.MeshStandardMaterial({ color: "#05080f", roughness: 0.7 })));
+  head.add(new THREE.Mesh(new THREE.BoxGeometry(0.34, 1.08, 0.26), metalMaterial));
+
+  const lampGeometry = new THREE.CircleGeometry(0.12, 16);
+  const addLamp = (lampY: number, color: string, lit: boolean) => {
+    // Lit lamp uses an unlit basic material so it stays fully saturated at night.
     const lampMaterial = lit
       ? new THREE.MeshBasicMaterial({ color })
-      : new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.06, roughness: 0.5 });
-    const lamp = new THREE.Mesh(lampGeometry, lampMaterial);
-    lamp.position.set(0, lampY, faceZ);
-    lamp.rotation.y = faceZ < 0 ? Math.PI : 0;
-    head.add(lamp);
+      : new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.05, roughness: 0.5 });
+    for (const faceZ of [0.16, -0.16]) {
+      const lamp = new THREE.Mesh(lampGeometry, lampMaterial);
+      lamp.position.set(0, lampY, faceZ);
+      lamp.rotation.y = faceZ < 0 ? Math.PI : 0;
+      head.add(lamp);
+    }
   };
-  for (const faceZ of [0.15, -0.15]) {
-    addLamp(0.28, faceZ, "#ef4444", phase === "stop");
-    addLamp(0, faceZ, "#f59e0b", false);
-    addLamp(-0.28, faceZ, "#22c55e", phase === "go");
-  }
-
-  head.position.y = 3.15;
-  head.rotation.y = headRotationY;
+  addLamp(0.36, "#ef4444", phase === "stop");
+  addLamp(0, "#f59e0b", false);
+  addLamp(-0.36, "#22c55e", phase === "go");
+  head.position.set(0, 3.95, armLength - 0.3);
   group.add(head);
+
+  group.rotation.y = rotationY;
   return group;
 }
 
@@ -4605,13 +4682,26 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       addStaticObject(() => createInteriorCell(interior, renderProfile.detail), interior.x, interior.z);
     }
 
-    mapLayout.backdropBuildings.slice(0, renderProfile.maxBackdropBuildings).forEach((building) => {
-      addStaticObject(() => {
-        const backdrop = createBackdropBuilding(building, renderProfile.detail);
-        applyModelTransformById(backdrop, modelConfig, "building.backdrop");
-        return backdrop;
-      }, building.x, building.z);
-    });
+    // Never raise a skyline tower inside a park, whatever the layout source.
+    const overlapsAnyPark = (bounds: RectBounds): boolean =>
+      (mapLayout.parks ?? []).some(
+        (park) => bounds.minX < park.bounds.maxX && bounds.maxX > park.bounds.minX && bounds.minZ < park.bounds.maxZ && bounds.maxZ > park.bounds.minZ
+      );
+    mapLayout.backdropBuildings
+      .filter((building) => !overlapsAnyPark({
+        minX: building.x - building.width / 2,
+        maxX: building.x + building.width / 2,
+        minZ: building.z - building.depth / 2,
+        maxZ: building.z + building.depth / 2
+      }))
+      .slice(0, renderProfile.maxBackdropBuildings)
+      .forEach((building) => {
+        addStaticObject(() => {
+          const backdrop = createBackdropBuilding(building, renderProfile.detail);
+          applyModelTransformById(backdrop, modelConfig, "building.backdrop");
+          return backdrop;
+        }, building.x, building.z);
+      });
 
     if (mapLayout.parks && mapLayout.parks.length > 0) {
       const parkMaterials = {
