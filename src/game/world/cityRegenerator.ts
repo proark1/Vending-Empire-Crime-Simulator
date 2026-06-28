@@ -371,28 +371,31 @@ function forcePlaceNamed(
     };
   }
 
-  // Last resort: a tiny in-district footprint. Try road-hugging slots first, then
-  // the remaining free spots ordered by proximity to a road, so the building
-  // still ends up beside a street rather than mid-block. It only has to stay off
-  // the road (exact) and not overlap another building — it may sit closer than
-  // the navigable gap (a non-blocking warning) but never errors or leaves its
-  // district.
+  // Last resort: a tiny in-district footprint beside a road. Prefer a slot that
+  // clears the validator's setback band AND the walkable gap; then one that just
+  // clears the setback; then merely off-road. Only that final tier can still warn,
+  // and it never errors, leaves the district, or throws.
   const tiny = 2;
-  let tinyFallback: WorldBuilding | null = null;
+  const kerbClear = WORLD_SCALE.layout.minBuildingSetback + 0.05;
+  let setbackFallback: WorldBuilding | null = null;
+  let anyFallback: WorldBuilding | null = null;
   for (const candidate of nearRoadGridCandidates(region, context.roadGeometry, tiny, tiny, 0.5)) {
-    const building = tryCandidate(candidate, 0.1, false);
+    const offKerb = tryCandidate(candidate, kerbClear, false);
+    const building = offKerb ?? tryCandidate(candidate, 0.1, false);
     if (!building) {
       continue;
     }
-    const fp = footprint(building);
-    if (keepsNamedGap(fp)) {
-      return building; // a clean, walkable-between spot
+    if (offKerb && keepsNamedGap(footprint(building))) {
+      return building; // clean: clears both the kerb and the walkable gap
     }
-    if (!tinyFallback) {
-      tinyFallback = building; // remember the first valid spot in case nothing is spaced
+    if (offKerb && !setbackFallback) {
+      setbackFallback = building; // clears the kerb at least
+    }
+    if (!anyFallback) {
+      anyFallback = building; // only guaranteed off-road
     }
   }
-  return tinyFallback;
+  return setbackFallback ?? anyFallback;
 }
 
 function buildBuildings(plan: ReturnType<typeof generateCityPlan>): WorldBuilding[] {
