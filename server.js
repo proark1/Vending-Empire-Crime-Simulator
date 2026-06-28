@@ -1103,12 +1103,35 @@ async function generatedAudioSizeFromUrl(urlValue) {
     return null;
   }
 
+  // Fast path: the disk cache for this container still has the file.
   try {
     const fileStat = await stat(filePath);
-    return fileStat.isFile() ? fileStat.size : null;
+    if (fileStat.isFile()) {
+      return fileStat.size;
+    }
   } catch {
-    return null;
+    // Disk cache miss — fall through to the persisted DB copy below.
   }
+
+  // The container filesystem is ephemeral on Railway (wiped on every redeploy), so
+  // the disk cache is empty even though the bytes are safe in Postgres. Mirror the
+  // serveGeneratedAudio() DB fallback here so the admin status reflects the durable
+  // copy instead of reporting a false "Missing file" for audio that still plays.
+  if (databaseUrl) {
+    try {
+      await ensureDatabase();
+      const filename = path.basename(filePath);
+      const result = await getPool().query("SELECT size_bytes FROM generated_audio WHERE filename = $1", [filename]);
+      const sizeBytes = result.rows[0]?.size_bytes;
+      if (typeof sizeBytes === "number" && sizeBytes > 0) {
+        return sizeBytes;
+      }
+    } catch (error) {
+      console.error("generated audio size DB read failed:", error.message);
+    }
+  }
+
+  return null;
 }
 
 async function enrichAudioConfigFileSizes(config) {
