@@ -7,6 +7,7 @@ import type { ModelConfig } from "../game/content/modelConfig";
 import { districts, machinePlacementAnchors, worldBounds, type BuildingVisualStyle, type WorldDecorationKind, type WorldMapLayout } from "../game/content/world";
 import { createDefaultWorldMapLayout, validateWorldMapLayout } from "../game/world/mapLayoutStorage";
 import { regenerateCity, relaxLayoutBuildings } from "../game/world/cityRegenerator";
+import { resyncLocationGeometry } from "../game/world/locationGeometry";
 import {
   loadAdminMonitoring,
   loadRemoteMapRevisions,
@@ -1114,7 +1115,7 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, modelConfig,
   const updateItem = useCallback((target: Selection, patch: Record<string, unknown>, options: { recordHistory?: boolean } = {}) => {
     commitLayout((current) => {
       const items = layerItems(current, target.layer);
-      return {
+      const next = {
         ...current,
         [target.layer]: items.map((item, index) => {
           if (index !== target.index) {
@@ -1134,6 +1135,11 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, modelConfig,
           return merged;
         })
       } as WorldMapLayout;
+      // A hand-edited named building keeps its machine anchor + walk-in interior aligned.
+      if (target.layer === "buildings" && next.buildings[target.index]?.locationId) {
+        return resyncLocationGeometry(next, target.index);
+      }
+      return next;
     }, options);
   }, [commitLayout]);
 

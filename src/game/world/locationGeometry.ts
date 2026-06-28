@@ -154,3 +154,26 @@ export function hotspotPositionOverrides(layout: WorldMapLayout): Record<string,
 export function crimeContactPositionOverrides(layout: WorldMapLayout): Record<string, Vec2> {
   return poiOverrides(layout, crimeContacts);
 }
+
+// When a location building is hand-edited in the map editor, its machine anchor and
+// walk-in interior must follow the new footprint. Re-derives the anchor (clearing
+// neighbours) and snaps the matching interior to the building's box + facing. Setting
+// a derived anchor also marks the building as customised, so the layout saves verbatim.
+export function resyncLocationGeometry(layout: WorldMapLayout, index: number): WorldMapLayout {
+  const building = layout.buildings[index];
+  if (!building?.locationId) {
+    return layout;
+  }
+  const blockers = layout.buildings.filter((_, i) => i !== index).map((other) => footprint(other));
+  const anchor = deriveBuildingAnchor(building, blockers);
+  const openSide = building.facing ?? "north";
+  return {
+    ...layout,
+    buildings: layout.buildings.map((current, i) => (i === index ? { ...current, anchor } : current)),
+    interiors: layout.interiors.map((interior) =>
+      interior.locationId === building.locationId
+        ? { ...interior, x: building.x, z: building.z, width: building.width, depth: building.depth, openSide }
+        : interior
+    )
+  };
+}
