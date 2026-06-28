@@ -540,12 +540,15 @@ function buildDecorations(roads: WorldRoad[], sidewalks: Array<{ depth: number; 
 // grid of leafy planters so they look like landscaped greens instead of voids.
 function buildGreenery(blocks: CityBlock[], buildings: WorldBuilding[], roads: WorldRoad[], parks: WorldPark[], rng: Rng): WorldDecoration[] {
   const roadFps = roads.map(roadFootprint);
+  // Keep planters clear of building footprints — a neighbouring block's building
+  // can overhang an "empty" block, which the centre-only emptiness test misses.
+  const buildingFps = buildings.map((building) => inflate(footprint(building), 0.6));
   const parkBounds = parks.map((park) => park.bounds);
   const greenColors = ["#4ade80", "#22c55e", "#65a30d", "#16a34a"];
   const out: WorldDecoration[] = [];
   let index = 0;
   for (const block of blocks) {
-    if (out.length >= 220) {
+    if (out.length >= 280) {
       break;
     }
     const b = block.bounds;
@@ -560,14 +563,22 @@ function buildGreenery(blocks: CityBlock[], buildings: WorldBuilding[], roads: W
     if (maxX - minX < 0.5 || maxZ - minZ < 0.5) {
       continue;
     }
-    const step = 3.4;
+    // Thin perimeter verges get sparse, evenly-spread planting; roomy interior
+    // empties get a fuller fill. A larger step (not a hard count cap) keeps the
+    // planters spread across the block instead of clustered at one end.
+    const thin = Math.min(maxX - minX, maxZ - minZ) < 4.5;
+    const step = thin ? 12 : 4.4;
+    const chance = thin ? 0.85 : 0.62;
     for (let x = minX + 0.3; x <= maxX; x += step) {
       for (let z = minZ + 0.3; z <= maxZ; z += step) {
-        if (!rng.chance(0.72)) {
+        if (!rng.chance(chance)) {
           continue;
         }
         const px = snap(Math.min(maxX, x + rng.range(-0.4, 0.4)));
         const pz = snap(Math.min(maxZ, z + rng.range(-0.4, 0.4)));
+        if (buildingFps.some((fp) => pointInRect({ x: px, z: pz }, fp))) {
+          continue;
+        }
         const propBounds: Bounds2 = { minX: px - 0.9, maxX: px + 0.9, minZ: pz - 0.9, maxZ: pz + 0.9 };
         if (roadFps.some((fp) => rectsOverlap(propBounds, fp))) {
           continue;
