@@ -1379,9 +1379,11 @@ function createPerimeterWalls(): THREE.Group {
     emissive: "#1e293b",
     emissiveIntensity: 0.4
   });
-  // fog:false keeps the boundary line visible even on far edges, so the wall never
-  // reads as "missing" across the map — the whole rectangle is always traceable.
-  const trimMaterial = new THREE.MeshBasicMaterial({ color: "#38bdf8", fog: false });
+  // The trim respects fog so it fades into the night together with the wall body at
+  // the far map edge. With fog:false the neon stayed fully lit while the concrete
+  // behind it fogged out, so it floated as a bright slab in the void. The closed-
+  // rectangle geometry + corner pillars already keep the boundary readable up close.
+  const trimMaterial = new THREE.MeshBasicMaterial({ color: "#38bdf8" });
 
   // innerNormal points from the wall toward the city interior (along the wall's
   // perpendicular axis), so the neon trim sits on the inward-facing side.
