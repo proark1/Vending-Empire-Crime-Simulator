@@ -640,7 +640,7 @@ function buildGreenery(blocks: CityBlock[], buildings: WorldBuilding[], roads: W
   const out: WorldDecoration[] = [];
   let index = 0;
   for (const block of blocks) {
-    if (out.length >= 280) {
+    if (out.length >= 340) {
       break;
     }
     const b = block.bounds;
@@ -648,19 +648,28 @@ function buildGreenery(blocks: CityBlock[], buildings: WorldBuilding[], roads: W
     if (occupied || parkBounds.some((pb) => rectsOverlap(b, pb))) {
       continue;
     }
-    const minX = b.minX + 1;
-    const maxX = b.maxX - 1;
-    const minZ = b.minZ + 1;
-    const maxZ = b.maxZ - 1;
-    if (maxX - minX < 0.5 || maxZ - minZ < 0.5) {
+    // Adaptive border: roomy blocks keep a 1u edge margin; thin medians shrink it
+    // so the centre strip still plants instead of being skipped as "too small".
+    const shortDim = Math.min(b.maxX - b.minX, b.maxZ - b.minZ);
+    const margin = Math.min(1, Math.max(0.25, (shortDim - 0.8) / 2));
+    const minX = b.minX + margin;
+    const maxX = b.maxX - margin;
+    const minZ = b.minZ + margin;
+    const maxZ = b.maxZ - margin;
+    if (maxX < minX || maxZ < minZ) {
       continue;
     }
-    // Thin perimeter verges get sparse, evenly-spread planting; roomy interior
-    // empties get a fuller fill. A larger step (not a hard count cap) keeps the
-    // planters spread across the block instead of clustered at one end.
-    const thin = Math.min(maxX - minX, maxZ - minZ) < 4.5;
-    const step = thin ? 12 : 4.4;
-    const chance = thin ? 0.85 : 0.62;
+    // Thin medians/verges get a denser line of smaller planters; roomy interior
+    // empties get a fuller grid. A median is legitimately flanked by road, so on
+    // unbuildable strips we only keep the planter's small centre off the kerb —
+    // otherwise every candidate is rejected and the strip reads as a barren gap.
+    const thin = shortDim < 4.5;
+    const unbuildable = shortDim < 7.8;
+    const step = thin ? 5.5 : 4.4;
+    const chance = thin ? 0.9 : 0.62;
+    const roadHalf = unbuildable ? 0.3 : 0.9;
+    const [scaleMin, scaleMax] = thin ? [0.75, 1.05] : [1.1, 1.6];
+    const before = out.length;
     for (let x = minX + 0.3; x <= maxX; x += step) {
       for (let z = minZ + 0.3; z <= maxZ; z += step) {
         if (!rng.chance(chance)) {
@@ -672,7 +681,7 @@ function buildGreenery(blocks: CityBlock[], buildings: WorldBuilding[], roads: W
         if (buildingIndex.some(pointBounds, (entry) => pointInRect({ x: px, z: pz }, entry.bounds))) {
           continue;
         }
-        const propBounds: Bounds2 = { minX: px - 0.9, maxX: px + 0.9, minZ: pz - 0.9, maxZ: pz + 0.9 };
+        const propBounds: Bounds2 = { minX: px - roadHalf, maxX: px + roadHalf, minZ: pz - roadHalf, maxZ: pz + roadHalf };
         if (roadIndex.some(propBounds, (entry) => rectsOverlap(propBounds, entry.bounds))) {
           continue;
         }
@@ -683,7 +692,28 @@ function buildGreenery(blocks: CityBlock[], buildings: WorldBuilding[], roads: W
           x: px,
           z: pz,
           rotationY: snap(rng.range(0, Math.PI)),
-          scale: snap(rng.range(1.1, 1.6)),
+          scale: snap(rng.range(scaleMin, scaleMax)),
+          color: rng.pick(greenColors)
+        });
+        index += 1;
+      }
+    }
+    if (out.length === before && unbuildable) {
+      // Guarantee: an unbuildable strip that rejected every candidate still gets a
+      // single centre planter so it never reads as a barren gap (the centre of a
+      // between-roads median is off the asphalt, so no kerb check is needed).
+      const cx = snap((minX + maxX) / 2);
+      const cz = snap((minZ + maxZ) / 2);
+      const centre: Bounds2 = { minX: cx, maxX: cx, minZ: cz, maxZ: cz };
+      if (!buildingIndex.some(centre, (entry) => pointInRect({ x: cx, z: cz }, entry.bounds))) {
+        out.push({
+          id: `gen_green_${index}`,
+          districtId: block.districtId,
+          kind: "planter",
+          x: cx,
+          z: cz,
+          rotationY: snap(rng.range(0, Math.PI)),
+          scale: snap(rng.range(scaleMin, scaleMax)),
           color: rng.pick(greenColors)
         });
         index += 1;
