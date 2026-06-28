@@ -1908,6 +1908,23 @@ button {
   font-weight: 800;
 }
 
+.mission-expand {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+.mission-expand:hover {
+  color: #f8fafc;
+}
+
 .mission-tracker p {
   margin: 6px 0 0;
   color: #e2e8f0;
