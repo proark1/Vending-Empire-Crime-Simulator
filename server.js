@@ -262,6 +262,14 @@ async function ensureDatabase() {
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           updated_by TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS generated_audio (
+          filename TEXT PRIMARY KEY,
+          content_type TEXT NOT NULL,
+          bytes BYTEA NOT NULL,
+          size_bytes INTEGER NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
       `);
       await db.query("ALTER TABLE game_saves ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1");
       await db.query("ALTER TABLE map_layouts ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1");
@@ -1243,12 +1251,27 @@ async function handleAudioProviderGenerate(request, response, body) {
   const settings = normalizeAudioProviderSettings(body.settings ?? {}, current.rows[0]?.settings ?? null);
   const prompt = normalizeAudioProviderSettings({ generationPrompts: [body.prompt] }).generationPrompts[0];
   const audio = await generateElevenLabsAudio(settings, prompt);
-  await mkdir(generatedAudioDir, { recursive: true });
 
   const generatedAt = new Date().toISOString();
   const filename = `${safeFileSegment(prompt.purpose)}-${safeFileSegment(prompt.id)}-${Date.now()}.mp3`;
   const filePath = path.join(generatedAudioDir, filename);
-  await writeFile(filePath, audio);
+
+  // Persist the bytes in Postgres — the container filesystem is ephemeral on
+  // Railway (wiped on every redeploy), so disk-only files vanish and the saved
+  // prompts play back as "missing". The DB copy survives; the disk copy is just a
+  // best-effort same-container cache that serveGeneratedAudio falls back from.
+  await getPool().query(
+    `INSERT INTO generated_audio (filename, content_type, bytes, size_bytes)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (filename) DO UPDATE SET content_type = EXCLUDED.content_type, bytes = EXCLUDED.bytes, size_bytes = EXCLUDED.size_bytes, created_at = now()`,
+    [filename, "audio/mpeg", audio, audio.length]
+  );
+  try {
+    await mkdir(generatedAudioDir, { recursive: true });
+    await writeFile(filePath, audio);
+  } catch (error) {
+    console.error("generated audio disk cache write failed (serving from DB):", error.message);
+  }
 
   const generatedPrompt = {
     ...prompt,
@@ -1834,19 +1857,47 @@ async function serveGeneratedAudio(response, url) {
     return;
   }
 
+  const ext = path.extname(filePath);
+
+  // Fast path: the disk cache for this container still has the file.
+  let onDisk = true;
   try {
     await stat(filePath);
   } catch {
-    jsonResponse(response, 404, { error: "Generated audio file not found." });
+    onDisk = false;
+  }
+  if (onDisk) {
+    response.writeHead(200, {
+      "content-type": contentTypes[ext] ?? "application/octet-stream",
+      "cache-control": "public, max-age=31536000, immutable"
+    });
+    createReadStream(filePath).pipe(response);
     return;
   }
 
-  const ext = path.extname(filePath);
-  response.writeHead(200, {
-    "content-type": contentTypes[ext] ?? "application/octet-stream",
-    "cache-control": "public, max-age=31536000, immutable"
-  });
-  createReadStream(filePath).pipe(response);
+  // Disk copy is gone (ephemeral container redeployed) — serve the persisted DB
+  // copy and re-cache it to disk for the rest of this container's life.
+  if (databaseUrl) {
+    try {
+      await ensureDatabase();
+      const filename = path.basename(filePath);
+      const result = await getPool().query("SELECT content_type, bytes FROM generated_audio WHERE filename = $1", [filename]);
+      const row = result.rows[0];
+      if (row?.bytes) {
+        void mkdir(generatedAudioDir, { recursive: true }).then(() => writeFile(filePath, row.bytes)).catch(() => {});
+        response.writeHead(200, {
+          "content-type": row.content_type ?? contentTypes[ext] ?? "application/octet-stream",
+          "cache-control": "public, max-age=31536000, immutable"
+        });
+        response.end(row.bytes);
+        return;
+      }
+    } catch (error) {
+      console.error("generated audio DB read failed:", error.message);
+    }
+  }
+
+  jsonResponse(response, 404, { error: "Generated audio file not found." });
 }
 
 async function serveStatic(request, response, url) {

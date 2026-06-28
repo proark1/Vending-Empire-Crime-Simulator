@@ -244,6 +244,7 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
   const [revisions, setRevisions] = useState<RemoteAudioConfigRevision[]>([]);
   const [providerSaving, setProviderSaving] = useState(false);
   const [generatingPromptId, setGeneratingPromptId] = useState<string | null>(null);
+  const [bulkGenerating, setBulkGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
   const [previewingId, setPreviewingId] = useState<string | null>(null);
@@ -625,6 +626,71 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
       .finally(() => setGeneratingPromptId(null));
   }, [config, onSave, providerSettings, refreshRevisions, session]);
 
+  // Regenerate every enabled prompt that has no playable audio, one at a time.
+  // Each generation persists its bytes server-side immediately; the config is
+  // saved once at the end. Lets the operator re-populate audio after a deploy in
+  // a single click instead of pressing Generate on every prompt.
+  const handleGenerateAllMissing = useCallback(() => {
+    let workingSettings = normalizeAudioProviderSettings(providerSettings);
+    let workingConfig = normalizeAudioConfig(config);
+    const targets = workingSettings.generationPrompts
+      .map((prompt, index) => ({ index, prompt }))
+      .filter(({ prompt }) => prompt.enabled && !generatedAudioInfo(workingConfig, prompt).playable);
+    if (targets.length === 0) {
+      setStatus("Every enabled prompt already has playable audio.");
+      return;
+    }
+
+    setBulkGenerating(true);
+    void (async () => {
+      let done = 0;
+      let failed = 0;
+      try {
+        const saved = await saveAdminAudioProviderSettings(session, workingSettings);
+        workingSettings = normalizeAudioProviderSettings(saved.settings ?? workingSettings);
+      } catch {
+        // Keep going with the local snapshot if the pre-save fails.
+      }
+      for (const target of targets) {
+        const prompt = workingSettings.generationPrompts[target.index];
+        if (!prompt) {
+          continue;
+        }
+        setGeneratingPromptId(prompt.id);
+        setStatus(`Generating ${prompt.label} (${done + failed + 1}/${targets.length})...`);
+        try {
+          const result = await generateAdminAudio(session, workingSettings, prompt);
+          workingSettings = normalizeAudioProviderSettings({
+            ...workingSettings,
+            generationPrompts: workingSettings.generationPrompts.map((candidate, index) => index === target.index ? result.prompt : candidate)
+          });
+          workingConfig = normalizeAudioConfig(configWithGeneratedAsset(workingConfig, workingSettings.generationPrompts, result.asset));
+          setProviderSettings(workingSettings);
+          setConfig(workingConfig);
+          done += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+      setGeneratingPromptId(null);
+      try {
+        const [providerResponse, audioResponse] = await Promise.all([
+          saveAdminAudioProviderSettings(session, workingSettings),
+          saveRemoteAudioConfig(session, workingConfig)
+        ]);
+        setProviderSettings(normalizeAudioProviderSettings(providerResponse.settings ?? workingSettings));
+        setConfig(workingConfig);
+        onSave(workingConfig);
+        refreshRevisions();
+        setStatus(`Generated ${done}/${targets.length}${failed ? ` (${failed} failed — run again to retry)` : ""}. Saved audio r${audioResponse.revision}.`);
+      } catch (error) {
+        setStatus(error instanceof Error ? `Generated ${done}/${targets.length} but saving failed: ${error.message}` : "Saving generated audio failed.");
+      } finally {
+        setBulkGenerating(false);
+      }
+    })();
+  }, [config, onSave, providerSettings, refreshRevisions, session]);
+
   const handleSave = useCallback(() => {
     const nextConfig = normalizeAudioConfig(config);
     const nextIssues = validateAudioConfig(nextConfig);
@@ -875,7 +941,7 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
                       <button aria-label={`Preview ${prompt.label}`} disabled={!generated.playable} onClick={() => handlePreview({ category: "voice", id: prompt.id, label: prompt.label, loop: false, sizeBytes: generated.sizeBytes, url: generated.url, volume: 1 })} title={generated.previewTitle} type="button">
                         <Play size={14} aria-hidden="true" />
                       </button>
-                      <button disabled={Boolean(generatingPromptId)} onClick={() => handleGeneratePrompt(index)} type="button">
+                      <button disabled={bulkGenerating || Boolean(generatingPromptId)} onClick={() => handleGeneratePrompt(index)} type="button">
                         {generatingPromptId === prompt.id ? "Generating" : "Generate"}
                       </button>
                       <select aria-label="Voice prompt trigger" value={prompt.trigger} onChange={(event) => updateGenerationPrompt(index, { trigger: event.target.value })}>
@@ -910,6 +976,9 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
               onClick={() => toggleSection("generation")}
             />
             <div className="admin-audio-heading-actions">
+              <button disabled={bulkGenerating || Boolean(generatingPromptId)} onClick={handleGenerateAllMissing} type="button">
+                {bulkGenerating ? "Generating all…" : "Generate all missing"}
+              </button>
               <button onClick={handleResetGenerationPrompts} type="button">
                 <RotateCcw size={14} aria-hidden="true" />
                 Defaults
@@ -944,7 +1013,7 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
                       <button aria-label={`Preview ${prompt.label}`} disabled={!generated.playable} onClick={() => handlePreview({ category: prompt.purpose, id: prompt.id, label: prompt.label, loop: prompt.purpose === "music", sizeBytes: generated.sizeBytes, url: generated.url, volume: 1 })} title={generated.previewTitle} type="button">
                         <Play size={14} aria-hidden="true" />
                       </button>
-                      <button disabled={Boolean(generatingPromptId)} onClick={() => handleGeneratePrompt(index)} type="button">
+                      <button disabled={bulkGenerating || Boolean(generatingPromptId)} onClick={() => handleGeneratePrompt(index)} type="button">
                         {generatingPromptId === prompt.id ? "Generating" : "Generate"}
                       </button>
                       <input aria-label="Prompt id" value={prompt.id} onChange={(event) => updateGenerationPrompt(index, { id: slug(event.target.value, prompt.id || `prompt_${index + 1}`) })} />
