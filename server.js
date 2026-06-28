@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { WebSocket, WebSocketServer } from "ws";
+import { createRoomManager } from "./roomManager.js";
 
 const { Pool } = pg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -56,10 +57,18 @@ const metrics = {
   serverErrors: 0
 };
 
-const multiplayerRooms = new Map();
-const multiplayerPeers = new Map();
 const multiplayerRoomMaxPeers = Number(process.env.MULTIPLAYER_ROOM_MAX_PEERS ?? 4);
-const multiplayerProtocolVersion = 1;
+// Live peer sockets, kept only so the admin "reset player data" path can force
+// them closed; all room/peer/relay state lives in the unit-tested room manager.
+const multiplayerSockets = new Map();
+const multiplayerRoomManager = createRoomManager({
+  maxPeers: multiplayerRoomMaxPeers,
+  maxMessageBytes: jsonLimitBytes,
+  log: recordEvent,
+  onRoomCreated: () => {
+    metrics.multiplayerRoomsCreated += 1;
+  }
+});
 
 function recordEvent(level, type, message, details = {}) {
   const event = {
@@ -1358,8 +1367,8 @@ async function handlePlayerDataReset(request, response) {
     const sessions = await client.query("DELETE FROM player_sessions RETURNING token_hash");
     await client.query("COMMIT");
 
-    for (const peer of multiplayerPeers.values()) {
-      peer.socket.close(4001, "Player data reset");
+    for (const ws of multiplayerSockets.values()) {
+      ws.close(4001, "Player data reset");
     }
 
     metrics.playerDataResets += 1;
@@ -1385,289 +1394,6 @@ async function handlePlayerDataReset(request, response) {
   }
 }
 
-function generateMultiplayerRoomCode() {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    let code = "";
-    const bytes = randomBytes(5);
-    for (const byte of bytes) {
-      code += alphabet[byte % alphabet.length];
-    }
-    if (!multiplayerRooms.has(code)) {
-      return code;
-    }
-  }
-
-  return randomUUID().slice(0, 6).toUpperCase();
-}
-
-function multiplayerPeerPayload(peer) {
-  return {
-    connectedAt: peer.connectedAt,
-    id: peer.id,
-    profile: peer.profile,
-    role: peer.role
-  };
-}
-
-function multiplayerRoomPayload(room) {
-  return {
-    code: room.code,
-    createdAt: room.createdAt,
-    hostPeerId: room.hostPeerId,
-    maxPeers: room.maxPeers,
-    peers: [...room.peers.values()].map(multiplayerPeerPayload)
-  };
-}
-
-function sendMultiplayerMessage(peer, message) {
-  if (!peer || peer.socket.readyState !== WebSocket.OPEN) {
-    return false;
-  }
-
-  peer.socket.send(JSON.stringify(message));
-  return true;
-}
-
-function sendMultiplayerError(peer, code, message) {
-  sendMultiplayerMessage(peer, {
-    code,
-    message,
-    type: "error"
-  });
-}
-
-function broadcastMultiplayerRoom(room, message, excludedPeerId = null) {
-  for (const target of room.peers.values()) {
-    if (target.id !== excludedPeerId) {
-      sendMultiplayerMessage(target, message);
-    }
-  }
-}
-
-function leaveMultiplayerRoom(peer, reason = "left") {
-  if (!peer.roomCode) {
-    return;
-  }
-
-  const room = multiplayerRooms.get(peer.roomCode);
-  peer.roomCode = null;
-  peer.role = "idle";
-
-  if (!room) {
-    return;
-  }
-
-  room.peers.delete(peer.id);
-
-  if (room.hostPeerId === peer.id) {
-    for (const remainingPeer of room.peers.values()) {
-      remainingPeer.roomCode = null;
-      remainingPeer.role = "idle";
-    }
-    broadcastMultiplayerRoom(room, {
-      reason,
-      type: "room:closed"
-    });
-    multiplayerRooms.delete(room.code);
-    recordEvent("info", "multiplayer_room_closed", "Multiplayer room closed.", {
-      reason,
-      roomCode: room.code
-    });
-    return;
-  }
-
-  if (room.peers.size === 0) {
-    multiplayerRooms.delete(room.code);
-    return;
-  }
-
-  broadcastMultiplayerRoom(room, {
-    peerId: peer.id,
-    reason,
-    type: "peer:left"
-  });
-}
-
-function createMultiplayerRoom(peer) {
-  leaveMultiplayerRoom(peer, "switch_room");
-  const code = generateMultiplayerRoomCode();
-  const room = {
-    code,
-    createdAt: new Date().toISOString(),
-    hostPeerId: peer.id,
-    maxPeers: Math.max(2, multiplayerRoomMaxPeers),
-    peers: new Map([[peer.id, peer]])
-  };
-
-  peer.roomCode = code;
-  peer.role = "host";
-  multiplayerRooms.set(code, room);
-  metrics.multiplayerRoomsCreated += 1;
-  recordEvent("info", "multiplayer_room_created", "Multiplayer room created.", {
-    hostProfileId: peer.profile.id,
-    roomCode: code
-  });
-  sendMultiplayerMessage(peer, {
-    peerId: peer.id,
-    room: multiplayerRoomPayload(room),
-    type: "room:created"
-  });
-}
-
-function joinMultiplayerRoom(peer, roomCode) {
-  const code = String(roomCode ?? "").trim().toUpperCase();
-  const room = multiplayerRooms.get(code);
-  if (!room) {
-    sendMultiplayerError(peer, "ROOM_NOT_FOUND", "Room not found.");
-    return;
-  }
-
-  if (room.peers.size >= room.maxPeers && !room.peers.has(peer.id)) {
-    sendMultiplayerError(peer, "ROOM_FULL", "Room is full.");
-    return;
-  }
-
-  leaveMultiplayerRoom(peer, "switch_room");
-  peer.roomCode = room.code;
-  peer.role = room.hostPeerId === peer.id ? "host" : "guest";
-  room.peers.set(peer.id, peer);
-
-  sendMultiplayerMessage(peer, {
-    peerId: peer.id,
-    room: multiplayerRoomPayload(room),
-    type: "room:joined"
-  });
-  broadcastMultiplayerRoom(
-    room,
-    {
-      peer: multiplayerPeerPayload(peer),
-      room: multiplayerRoomPayload(room),
-      type: "peer:joined"
-    },
-    peer.id
-  );
-  recordEvent("info", "multiplayer_room_joined", "Player joined multiplayer room.", {
-    peerId: peer.id,
-    profileId: peer.profile.id,
-    roomCode: room.code
-  });
-}
-
-function forwardMultiplayerSignal(peer, message) {
-  const room = peer.roomCode ? multiplayerRooms.get(peer.roomCode) : null;
-  const target = room?.peers.get(message.targetPeerId);
-  if (!room || !target || target.id === peer.id) {
-    sendMultiplayerError(peer, "PEER_NOT_FOUND", "Peer is not available.");
-    return;
-  }
-
-  sendMultiplayerMessage(target, {
-    data: message.data,
-    fromPeerId: peer.id,
-    type: "signal"
-  });
-}
-
-function relayMultiplayerGameMessage(peer, message) {
-  const room = peer.roomCode ? multiplayerRooms.get(peer.roomCode) : null;
-  if (!room) {
-    sendMultiplayerError(peer, "ROOM_REQUIRED", "Join a room before sending game messages.");
-    return;
-  }
-
-  if (message.targetPeerId) {
-    const target = room.peers.get(message.targetPeerId);
-    if (!target || target.id === peer.id) {
-      sendMultiplayerError(peer, "PEER_NOT_FOUND", "Peer is not available.");
-      return;
-    }
-
-    sendMultiplayerMessage(target, {
-      data: message.data,
-      fromPeerId: peer.id,
-      relayed: true,
-      type: "game:relay"
-    });
-    return;
-  }
-
-  if (room.hostPeerId === peer.id) {
-    broadcastMultiplayerRoom(
-      room,
-      {
-        data: message.data,
-        fromPeerId: peer.id,
-        relayed: true,
-        type: "game:relay"
-      },
-      peer.id
-    );
-    return;
-  }
-
-  const host = room.peers.get(room.hostPeerId);
-  if (!host) {
-    sendMultiplayerError(peer, "HOST_MISSING", "Room host is not connected.");
-    return;
-  }
-
-  sendMultiplayerMessage(host, {
-    data: message.data,
-    fromPeerId: peer.id,
-    relayed: true,
-    type: "game:relay"
-  });
-}
-
-function handleMultiplayerMessage(peer, rawMessage) {
-  const raw = Buffer.isBuffer(rawMessage) ? rawMessage.toString("utf8") : String(rawMessage);
-  if (Buffer.byteLength(raw, "utf8") > jsonLimitBytes) {
-    sendMultiplayerError(peer, "PAYLOAD_TOO_LARGE", "Multiplayer message is too large.");
-    return;
-  }
-
-  let message;
-  try {
-    message = JSON.parse(raw);
-  } catch {
-    sendMultiplayerError(peer, "INVALID_JSON", "Invalid multiplayer message.");
-    return;
-  }
-
-  if (!message || typeof message.type !== "string") {
-    sendMultiplayerError(peer, "INVALID_MESSAGE", "Invalid multiplayer message.");
-    return;
-  }
-
-  metrics.multiplayerMessages += 1;
-
-  switch (message.type) {
-    case "room:create":
-      createMultiplayerRoom(peer);
-      break;
-    case "room:join":
-      joinMultiplayerRoom(peer, message.roomCode);
-      break;
-    case "room:leave":
-      leaveMultiplayerRoom(peer, "left");
-      sendMultiplayerMessage(peer, { type: "room:left" });
-      break;
-    case "signal":
-      forwardMultiplayerSignal(peer, message);
-      break;
-    case "game:relay":
-      relayMultiplayerGameMessage(peer, message);
-      break;
-    case "ping":
-      sendMultiplayerMessage(peer, { at: new Date().toISOString(), type: "pong" });
-      break;
-    default:
-      sendMultiplayerError(peer, "UNKNOWN_MESSAGE", "Unknown multiplayer message.");
-      break;
-  }
-}
-
 async function handleMultiplayerUpgrade(request, socket, head, url, wss) {
   const token = url.searchParams.get("token");
   let profile;
@@ -1681,33 +1407,33 @@ async function handleMultiplayerUpgrade(request, socket, head, url, wss) {
   }
 
   wss.handleUpgrade(request, socket, head, (ws) => {
-    const peer = {
-      connectedAt: new Date().toISOString(),
-      id: `peer_${randomUUID()}`,
-      profile: { id: profile.id, name: profile.name },
-      role: "idle",
-      roomCode: null,
-      socket: ws
-    };
-
-    multiplayerPeers.set(peer.id, peer);
+    const peerId = `peer_${randomUUID()}`;
+    multiplayerSockets.set(peerId, ws);
     metrics.multiplayerConnections += 1;
-    sendMultiplayerMessage(peer, {
-      peer: multiplayerPeerPayload(peer),
-      protocolVersion: multiplayerProtocolVersion,
-      type: "server:hello"
+    multiplayerRoomManager.addPeer({
+      id: peerId,
+      profile: { id: profile.id, name: profile.name },
+      send: (message) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify(message));
+        }
+      }
     });
 
-    ws.on("message", (message) => handleMultiplayerMessage(peer, message));
+    ws.on("message", (message) => {
+      if (multiplayerRoomManager.handleMessage(peerId, message)) {
+        metrics.multiplayerMessages += 1;
+      }
+    });
     ws.on("close", () => {
       metrics.multiplayerDisconnects += 1;
-      leaveMultiplayerRoom(peer, "disconnected");
-      multiplayerPeers.delete(peer.id);
+      multiplayerRoomManager.removePeer(peerId, "disconnected");
+      multiplayerSockets.delete(peerId);
     });
     ws.on("error", (error) => {
       recordEvent("warning", "multiplayer_socket_error", "Multiplayer socket error.", {
         error: error.message,
-        peerId: peer.id
+        peerId
       });
     });
   });
@@ -1720,8 +1446,8 @@ async function routeApi(request, response, url) {
       ok: true,
       database: Boolean(databaseUrl),
       multiplayer: {
-        peers: multiplayerPeers.size,
-        rooms: multiplayerRooms.size
+        peers: multiplayerRoomManager.peerCount,
+        rooms: multiplayerRoomManager.roomCount
       },
       startedAt: startedAt.toISOString(),
       uptimeSeconds: Math.round((Date.now() - startedAt.getTime()) / 1000)
