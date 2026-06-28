@@ -259,27 +259,27 @@ interface LandingFeature {
 const landingFeatures: LandingFeature[] = [
   {
     icon: Truck,
-    tag: "Route work",
-    title: "Drive crates, dodge problems",
-    text: "Buy stock from the backdoor supplier, load the van, and keep your route fed before the city learns your machines are unattended piggy banks."
+    tag: "Route chaos",
+    title: "Drive the dumbest heist van",
+    text: "Load crates, bounce over curbs, and restock cabinets before the route turns into a livestream of your worst business choices."
   },
   {
     icon: Wrench,
-    tag: "Cabinet drama",
-    title: "Repair, upgrade, repeat",
-    text: "Rusty Starter is not a machine. It is a cry for help with coin slots. Patch it up, bolt on locks, cameras, cashless terminals, and neon."
+    tag: "Machine beef",
+    title: "Fix one cabinet, anger a city",
+    text: "Rusty Starter is less a vending machine and more a public cry for snacks. Bolt on locks, cameras, neon, and questionable confidence."
   },
   {
     icon: ShieldAlert,
-    tag: "Street pressure",
+    tag: "Petty danger",
     title: "Every soda has consequences",
-    text: "Rivals tag machines, inspections stack heat, and grey goods make cash faster than your lawyer can say no comment."
+    text: "Rivals tag machines, inspectors develop opinions, and grey-market gum prints cash with the emotional stability of a comment section."
   },
   {
     icon: DollarSign,
-    tag: "Tiny empire",
-    title: "Turn pocket change into turf",
-    text: "Each machine is a store, a billboard, and a territorial insult with a snack tray. Expand district by district until the city blinks first."
+    tag: "Snack empire",
+    title: "Turn quarters into turf",
+    text: "Each cabinet is a store, a billboard, and a tiny act of disrespect. Claim blocks until the whole city knows your terrible logo."
   }
 ];
 
@@ -288,67 +288,67 @@ const landingProductIds: ProductId[] = ["energy", "luxury_snack", "mystery_capsu
 const landingRivals = [
   {
     name: "Redline Snacks",
-    title: "Street crew vending",
-    text: "Undercuts prices, tags cabinets, and treats your route like a free public punching bag."
+    title: "Street crew with coupons",
+    text: "Undercuts prices, tags cabinets, and treats your entire route like a public group chat."
   },
   {
     name: "Glassline VendCo",
-    title: "Corporate menace",
-    text: "Buys contracts, smiles in meetings, and sends inspections with the energy of a printer jam."
+    title: "Corporate snack villains",
+    text: "Buys contracts, smiles too much, and sends inspections with the energy of a printer jam in a suit."
   },
   {
     name: "Night Market Supply",
-    title: "After-hours chaos",
-    text: "Copies hot products, feeds grey demand, and makes neon districts profitable in the worst possible way."
+    title: "After-hours nonsense",
+    text: "Copies hot products, feeds weird demand, and makes neon districts profitable in the least normal way possible."
   }
 ];
 
 const landingLoopSteps = [
   {
     title: "Buy suspiciously cheap stock",
-    text: "Start clean with soda and chips, then decide how spicy the product list should get when the night crowd starts asking questions."
+    text: "Start with soda and chips, then watch the night crowd ask for products with names that sound like legal problems."
   },
   {
-    title: "Claim a corner",
-    text: "Every placement is rent, risk, traffic, visibility, and a tiny public insult to the rival who thought that laundromat was theirs."
+    title: "Claim a corner like it owes you money",
+    text: "Every placement has rent, traffic, risk, and the loud spiritual energy of stealing a rival's favorite parking spot."
   },
   {
     title: "Run the route yourself",
-    text: "Load crates, drive the van, restock cabinets, collect cash, and pretend the rattling sound is absolutely normal."
+    text: "Load crates, drive the van, restock cabinets, collect cash, and pretend the rattling sound means brand personality."
   },
   {
-    title: "Answer alarms before things get expensive",
-    text: "Sabotage, inspections, missed repairs, and rival stunts all turn passive income into active panic."
+    title: "Answer alarms before the cabinet trends",
+    text: "Sabotage, inspections, missed repairs, and rival stunts turn passive income into a tiny urban disaster with receipts."
   },
   {
-    title: "Choose your ending",
-    text: "Go legit, become the snack syndicate, ally with a faction, cash out, or let the route collapse into a beautiful accounting disaster."
+    title: "Choose your extremely normal ending",
+    text: "Go legit, become the snack syndicate, ally with a faction, cash out, or let the route collapse into beautiful accounting confetti."
   }
 ];
 
 const landingScreens = [
   {
     id: "street",
-    title: "Street-view route runs",
+    title: "Street-view snack crimes",
     text: "Walk the block, spot machines, service locations, and sprint toward alarms with the confidence of someone carrying too many cans."
   },
   {
     id: "ops",
-    title: "Operations chaos board",
-    text: "Track stock, route tasks, cash, upgrades, rivals, contracts, crew, and which cabinet is currently being dramatic."
+    title: "Operations board of bad ideas",
+    text: "Track stock, route tasks, cash, upgrades, rivals, contracts, crew, and which cabinet is currently acting famous."
   },
   {
     id: "alarm",
-    title: "Alarm night mode",
-    text: "When Redline pokes a machine, the city stops being a spreadsheet and becomes a vending-flavored emergency."
+    title: "Alarm night meltdown",
+    text: "When Redline pokes a machine, the city stops being a spreadsheet and becomes vending-flavored breaking news."
   }
 ];
 
 const landingFunNotes = [
   "Your first machine is called Rusty Starter because Legal Liability Box tested poorly.",
-  "The van is not fast. It is emotionally committed.",
-  "Grey-market gum: fictional, profitable, and definitely not helping your heat score.",
-  "Corporate rivals weaponize paperwork. Street rivals weaponize crowbars. You weaponize snacks."
+  "The van is not fast. It is emotionally committed to arriving eventually.",
+  "Grey-market gum: fictional, profitable, and absolutely not beating the allegations.",
+  "Corporate rivals weaponize paperwork. Street rivals weaponize bad vibes. You weaponize snacks."
 ];
 
 function LandingQuickFacts({ state }: { state?: GameState }) {
@@ -359,19 +359,19 @@ function LandingQuickFacts({ state }: { state?: GameState }) {
     <div className="landing-fact-strip" aria-label="Game scale">
       <div>
         <strong>{storyMissionArcs.length}</strong>
-        <span>story districts</span>
+        <span>petty districts</span>
       </div>
       <div>
         <strong>{productCount}</strong>
-        <span>stock items</span>
+        <span>stock oddities</span>
       </div>
       <div>
         <strong>{machineCount}</strong>
-        <span>machine claims</span>
+        <span>cabinet claims</span>
       </div>
       <div>
         <strong>{endgamePaths.length}</strong>
-        <span>messy endings</span>
+        <span>bad endings</span>
       </div>
     </div>
   );
@@ -400,7 +400,7 @@ function LandingGameLoop() {
     <section className="landing-loop" aria-label="Game loop">
       <div className="landing-section-title">
         <Zap size={16} aria-hidden="true" />
-        <span>How a snack empire actually spirals</span>
+        <span>Five steps to snack internet fame</span>
       </div>
       <ol className="landing-loop-list">
         {landingLoopSteps.map((step, index) => (
@@ -422,7 +422,7 @@ function LandingScreenshotGallery() {
     <section className="landing-screenshot-gallery" aria-label="Gameplay image gallery">
       <div className="landing-section-title">
         <Sparkles size={16} aria-hidden="true" />
-        <span>Postcards from the route</span>
+        <span>Receipts from a bad idea</span>
       </div>
       <div className="landing-shot-grid">
         {landingScreens.map((screen) => (
@@ -461,7 +461,7 @@ function LandingProductShelf({ state }: { state?: GameState }) {
     <section className="landing-product-shelf" aria-label="Featured vending stock">
       <div className="landing-section-title">
         <Package size={16} aria-hidden="true" />
-        <span>Stock the nonsense</span>
+        <span>Stock the unhinged menu</span>
       </div>
       <div className="landing-product-grid">
         {landingProductIds.map((productId) => {
@@ -489,7 +489,7 @@ function LandingCampaignBoard({ limit, state }: { limit?: number; state?: GameSt
     <section className="landing-campaign-board" aria-label="Campaign districts">
       <div className="landing-section-title">
         <Map size={16} aria-hidden="true" />
-        <span>Campaign route</span>
+        <span>Corner-to-corner chaos</span>
       </div>
       <div className="landing-campaign-grid">
         {arcs.map((arc, index) => (
@@ -521,7 +521,7 @@ function LandingEndgamePaths() {
     <section className="landing-endgame-board" aria-label="Endgame paths">
       <div className="landing-section-title">
         <Flame size={16} aria-hidden="true" />
-        <span>Ways the empire can go wrong</span>
+        <span>Bad ideas with save files</span>
       </div>
       <div className="landing-endgame-grid">
         {endgamePaths.map((path) => (
@@ -541,7 +541,7 @@ function LandingFunBoard() {
     <section className="landing-fun-board" aria-label="Game flavor notes">
       <div className="landing-section-title">
         <ClipboardList size={16} aria-hidden="true" />
-        <span>Totally official vending doctrine</span>
+        <span>Tiny print from the snack lawyer</span>
       </div>
       <div className="landing-fun-list">
         {landingFunNotes.map((note) => (
@@ -557,7 +557,7 @@ function LandingRivalBoard() {
     <section className="landing-rival-board" aria-label="Rival vendors">
       <div className="landing-section-title">
         <Flame size={16} aria-hidden="true" />
-        <span>People taking snacks too seriously</span>
+        <span>People taking snacks too personally</span>
       </div>
       <div className="landing-rival-list">
         {landingRivals.map((rival) => (
@@ -1209,8 +1209,10 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
     }
   }, [hasMoved, playerPosition]);
 
+  const gameShellClassName = `${serviceHold ? "game-shell servicing" : "game-shell"}${entered ? "" : " landing-active"}`;
+
   return (
-    <main className={serviceHold ? "game-shell servicing" : "game-shell"}>
+    <main className={gameShellClassName}>
       <ThreeScene
         graphicsQuality={graphicsQuality}
         guidanceLocationId={guidanceLocationId}
@@ -1433,15 +1435,15 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
         <section className="entry-overlay landing-overlay" aria-label="Vendetta Vending landing page">
           <div className="landing-panel">
             <div className="landing-copy">
-              <span className="landing-kicker">Cinderblock Row is open and suspiciously fizzy</span>
+              <span className="landing-kicker">Vending crime, but make it snack beef</span>
               <h1>Vendetta Vending</h1>
               <p>
-                Build a snack empire so dramatic it probably needs a city council hearing. Fix busted machines, stock questionable beverages, bribe your way into premium corners, and defend every cabinet like it owes you rent.
+                Build the least reasonable snack empire in town. Fix busted machines, sell products with suspicious names, dodge rival nonsense, and defend every cabinet like it just posted about you.
               </p>
               <div className="landing-quip-row" aria-label="Game highlights">
                 <span>
                   <Map size={15} aria-hidden="true" />
-                  6 weird districts
+                  6 petty districts
                 </span>
                 <span>
                   <Zap size={15} aria-hidden="true" />
@@ -1449,12 +1451,17 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
                 </span>
                 <span>
                   <Sparkles size={15} aria-hidden="true" />
-                  Maximum snack beef
+                  Cabinet beef simulator
                 </span>
+              </div>
+              <div className="landing-viral-strip" aria-label="Landing page hooks">
+                <span>one busted machine</span>
+                <span>zero chill</span>
+                <span>infinite sidewalk drama</span>
               </div>
               <button className="entry-button landing-primary" onClick={handleEnterDistrict} type="button">
                 <Play size={18} aria-hidden="true" />
-                Enter District
+                Start Snack Beef
               </button>
               <LandingCinematicScene modelConfig={modelConfig} />
               <LandingQuickFacts state={state} />
@@ -1541,7 +1548,7 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
   >({ status: "loading" });
   const [credentials, setCredentials] = useState({ name: "", pin: "" });
   const [submitting, setSubmitting] = useState(false);
-  const actionLabel = accessMode === "register" ? "Create profile" : "Login";
+  const actionLabel = accessMode === "register" ? "Create profile" : "Load profile";
   const busy = authState.status === "loading" || submitting;
 
   useEffect(() => {
@@ -1646,31 +1653,36 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
     <main className="access-shell">
       <section className="access-landing" aria-label="Vendetta Vending access">
         <div className="access-hero">
-          <span className="landing-kicker">First-person vending crime sim</span>
+          <span className="landing-kicker">First-person vending crime comedy</span>
           <h1>Vendetta Vending</h1>
           <p className="access-story">
-            Hit the street with a clattering route van, a busted snack machine, and a terrible idea: turn pocket change into territory. Stock weird products, answer alarms, outrun rivals, and make every corner of the city smell like profit and bad decisions.
+            Start with a clattering route van, one busted snack machine, and a business plan that should not have survived breakfast. Stock weird products, answer alarms, outplay rivals, and make every corner smell like profit and bad decisions.
           </p>
           <div className="landing-quip-row" aria-label="Game highlights">
             <span>
               <Truck size={15} aria-hidden="true" />
-              Drive the route
+              Drive the chaos van
             </span>
             <span>
               <ShieldAlert size={15} aria-hidden="true" />
-              Defend machines
+              Defend petty cabinets
             </span>
             <span>
               <Sparkles size={15} aria-hidden="true" />
               Sell suspicious gum
             </span>
           </div>
+          <div className="landing-viral-strip" aria-label="Landing page hooks">
+            <span>one busted machine</span>
+            <span>zero chill</span>
+            <span>infinite sidewalk drama</span>
+          </div>
           <LandingCinematicScene modelConfig={modelConfig} />
           <LandingQuickFacts />
         </div>
         <form className="access-panel" onSubmit={handleLogin}>
           <div>
-            <h2>Game Profile</h2>
+            <h2>Start a Route</h2>
             <span>{authState.status === "loading" ? "Loading protected save" : accessMode === "register" ? "Create game profile" : "Load game profile"}</span>
           </div>
           <div className="access-mode-tabs" aria-label="Game access mode">
@@ -1680,7 +1692,7 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
               onClick={() => switchAccessMode("login")}
               type="button"
             >
-              Login
+              Return
             </button>
             <button
               aria-pressed={accessMode === "register"}
@@ -1688,7 +1700,7 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
               onClick={() => switchAccessMode("register")}
               type="button"
             >
-              Register
+              New profile
             </button>
           </div>
           <label>
@@ -1718,9 +1730,9 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
             {submitting ? `${actionLabel}...` : actionLabel}
           </button>
           <button className="access-demo-button" disabled={busy} onClick={handleQuickStart} type="button">
-            Quick Start
+            Quick Start: Cause Problems
           </button>
-          <span className="access-demo-note">Local save only. No database required.</span>
+          <span className="access-demo-note">Instant local save. No database required.</span>
         </form>
         <div className="access-longform">
           <LandingFeatureGrid />

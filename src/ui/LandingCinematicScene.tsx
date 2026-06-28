@@ -37,7 +37,7 @@ function createNeonSignTexture(text: string, color: string): THREE.CanvasTexture
 }
 
 function addBackdrop(scene: THREE.Scene, quality: GraphicsQuality): void {
-  const buildingMaterials = ["#111827", "#1e293b", "#312e81", "#14532d", "#581c87"].map(
+  const buildingMaterials = ["#111827", "#263238", "#4c1d95", "#14532d", "#7f1d1d"].map(
     (color) => new THREE.MeshStandardMaterial({ color, roughness: 0.78, metalness: 0.04 })
   );
 
@@ -66,10 +66,10 @@ function addBackdrop(scene: THREE.Scene, quality: GraphicsQuality): void {
   }
 
   const sign = new THREE.Mesh(
-    new THREE.BoxGeometry(2.1, 0.62, 0.035),
-    new THREE.MeshBasicMaterial({ map: createNeonSignTexture("VEND-X", "#2dd4bf") })
+    new THREE.BoxGeometry(2.74, 0.68, 0.035),
+    new THREE.MeshBasicMaterial({ map: createNeonSignTexture("SNACK BEEF", "#fbbf24") })
   );
-  sign.position.set(-3.6, 2.05, -2.84);
+  sign.position.set(-3.38, 2.08, -2.84);
   scene.add(sign);
 
   if (quality !== "low") {
@@ -92,7 +92,7 @@ export function LandingCinematicScene({ modelConfig }: LandingCinematicSceneProp
 
     const quality: GraphicsQuality = window.matchMedia("(max-width: 760px)").matches ? "medium" : "high";
     const scene = new THREE.Scene();
-    scene.fog = new THREE.Fog("#130f2a", 7, 15);
+    scene.fog = new THREE.Fog("#18081f", 7, 15);
 
     const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 80);
     camera.position.set(4.8, 2.85, 6.4);
@@ -114,13 +114,17 @@ export function LandingCinematicScene({ modelConfig }: LandingCinematicSceneProp
     key.shadow.mapSize.set(1024, 1024);
     scene.add(key);
 
-    const neonLeft = new THREE.PointLight("#2dd4bf", 3.6, 8);
+    const neonLeft = new THREE.PointLight("#34d399", 4.2, 8);
     neonLeft.position.set(-2.4, 1.45, 0.7);
     scene.add(neonLeft);
 
-    const dangerLight = new THREE.PointLight("#fb7185", 2.8, 7);
+    const dangerLight = new THREE.PointLight("#fb7185", 3.35, 7);
     dangerLight.position.set(2.2, 1.2, 0.1);
     scene.add(dangerLight);
+
+    const hotSignLight = new THREE.PointLight("#fbbf24", 2.8, 7);
+    hotSignLight.position.set(-3.6, 2.2, -1.7);
+    scene.add(hotSignLight);
 
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(13, 8),
@@ -150,7 +154,7 @@ export function LandingCinematicScene({ modelConfig }: LandingCinematicSceneProp
       });
     };
 
-    const heroMachine = createMachineMesh("#14b8a6", 2, ["smart_lock", "security_camera", "neon_sign"], quality, 0.95, ["energy", "luxury_snack", "glitch_gum"]);
+    const heroMachine = createMachineMesh("#10b981", 2, ["smart_lock", "security_camera", "neon_sign"], quality, 0.95, ["energy", "luxury_snack", "glitch_gum"]);
     heroMachine.position.set(-1.15, 0, 0.35);
     heroMachine.rotation.y = -0.28;
     heroMachine.scale.setScalar(1.34);
@@ -208,6 +212,28 @@ export function LandingCinematicScene({ modelConfig }: LandingCinematicSceneProp
     alarm.rotation.x = Math.PI / 2;
     scene.add(alarm);
 
+    const coins = Array.from({ length: 18 }, (_, index) => {
+      const coin = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.055 + (index % 3) * 0.012, 0.055 + (index % 3) * 0.012, 0.012, 24),
+        new THREE.MeshBasicMaterial({ color: index % 4 === 0 ? "#fef3c7" : "#facc15", transparent: true, opacity: 0.9 })
+      );
+      coin.position.set(-2.65 + Math.random() * 5.2, 0.64 + Math.random() * 2.2, -1.2 + Math.random() * 2.45);
+      coin.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+      scene.add(coin);
+      return coin;
+    });
+
+    const receipts = Array.from({ length: 10 }, (_, index) => {
+      const receipt = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.14, 0.24),
+        new THREE.MeshBasicMaterial({ color: index % 2 === 0 ? "#f8fafc" : "#fde68a", transparent: true, opacity: 0.72, side: THREE.DoubleSide })
+      );
+      receipt.position.set(-1.9 + Math.random() * 4.2, 0.7 + Math.random() * 2.5, -1.15 + Math.random() * 2.2);
+      receipt.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+      scene.add(receipt);
+      return receipt;
+    });
+
     const sparks = Array.from({ length: 28 }, (_, index) => {
       const spark = new THREE.Mesh(
         new THREE.SphereGeometry(0.018 + (index % 4) * 0.006, 8, 6),
@@ -238,6 +264,14 @@ export function LandingCinematicScene({ modelConfig }: LandingCinematicSceneProp
       van.position.y = Math.sin(time * 1.4) * 0.015;
       alarm.scale.setScalar(1 + Math.sin(time * 3.8) * 0.08);
       alarm.material.opacity = 0.52 + Math.sin(time * 4.5) * 0.2;
+      coins.forEach((coin, index) => {
+        coin.rotation.y += 0.018 + (index % 4) * 0.004;
+        coin.position.y += Math.sin(time * 1.9 + index) * 0.0009;
+      });
+      receipts.forEach((receipt, index) => {
+        receipt.rotation.z += 0.004 + (index % 3) * 0.002;
+        receipt.position.y += Math.sin(time * 1.35 + index * 0.7) * 0.0007;
+      });
       sparks.forEach((spark, index) => {
         spark.position.y += Math.sin(time * 1.8 + index) * 0.0008;
       });
@@ -256,8 +290,10 @@ export function LandingCinematicScene({ modelConfig }: LandingCinematicSceneProp
 
   return (
     <div className="landing-cinematic-scene" ref={mountRef} role="img" aria-label="In-game vending machine, delivery van, stock crates, and rival confrontation rendered as cinematic key art">
-      <div className="landing-scene-badge top">Route alarm live</div>
-      <div className="landing-scene-badge bottom">Stock, drive, fight for the corner</div>
+      <div className="landing-scene-badge top">Cabinet beef live</div>
+      <div className="landing-scene-badge bottom">Stock, drive, start problems</div>
+      <div className="landing-scene-sticker one" aria-hidden="true">snack beef speedrun</div>
+      <div className="landing-scene-sticker two" aria-hidden="true">bad idea: profitable</div>
     </div>
   );
 }

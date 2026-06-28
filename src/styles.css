@@ -47,12 +47,13 @@ button {
   width: 100%;
   height: 100%;
   overflow: auto;
-  padding: 0 24px 36px;
+  padding: 0 24px 42px;
   background:
-    linear-gradient(180deg, rgba(2, 6, 23, 0.28), rgba(2, 6, 23, 0.96) 64%),
-    linear-gradient(115deg, rgba(7, 89, 133, 0.58), transparent 34%),
-    linear-gradient(245deg, rgba(190, 24, 93, 0.42), transparent 38%),
-    linear-gradient(135deg, #130f2a 0%, #050816 48%, #071a18 100%),
+    linear-gradient(180deg, rgba(2, 6, 23, 0.14), rgba(2, 6, 23, 0.96) 68%),
+    repeating-linear-gradient(135deg, rgba(251, 191, 36, 0.1) 0 2px, transparent 2px 24px),
+    linear-gradient(118deg, rgba(13, 148, 136, 0.52), transparent 34%),
+    linear-gradient(248deg, rgba(225, 29, 72, 0.42), transparent 39%),
+    linear-gradient(135deg, #07131b 0%, #1a1028 46%, #1b1406 100%),
     #020617;
 }
 
@@ -65,7 +66,7 @@ button {
   gap: 28px;
   width: min(1320px, 100%);
   min-height: 100vh;
-  padding: 42px 0 0;
+  padding: 38px 0 0;
 }
 
 .access-hero {
@@ -116,32 +117,40 @@ button {
 .landing-copy h1 {
   margin: 0;
   color: #f8fafc;
-  font-size: 82px;
-  line-height: 0.9;
+  max-width: 850px;
+  font-size: 86px;
+  line-height: 0.88;
   letter-spacing: 0;
-  text-shadow: 0 6px 0 rgba(2, 6, 23, 0.92), 0 0 44px rgba(45, 212, 191, 0.34), 0 0 80px rgba(251, 191, 36, 0.18);
+  text-shadow:
+    0 7px 0 rgba(2, 6, 23, 0.96),
+    0 0 34px rgba(251, 191, 36, 0.26),
+    0 0 62px rgba(45, 212, 191, 0.24);
 }
 
 .landing-kicker {
   width: fit-content;
-  padding: 7px 10px;
-  border: 1px solid rgba(251, 191, 36, 0.48);
+  max-width: 100%;
+  padding: 8px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
   border-radius: 7px;
-  background: rgba(69, 26, 3, 0.54);
-  color: #fde68a;
+  background: #fbbf24;
+  color: #1f1300;
   font-size: 12px;
   font-weight: 900;
+  line-height: 1.12;
   text-transform: uppercase;
-  box-shadow: 0 0 28px rgba(251, 191, 36, 0.12);
+  box-shadow: 5px 5px 0 rgba(2, 6, 23, 0.72), 0 0 28px rgba(251, 191, 36, 0.18);
+  transform: rotate(-1deg);
 }
 
 .access-story,
 .landing-copy p {
   max-width: 760px;
   margin: 0;
-  color: #dbeafe;
+  color: #e0f2fe;
   font-size: 19px;
   line-height: 1.5;
+  text-shadow: 0 2px 18px rgba(2, 6, 23, 0.66);
 }
 
 .landing-quip-row {
@@ -157,14 +166,53 @@ button {
   gap: 6px;
   min-height: 32px;
   padding: 7px 9px;
-  border: 1px solid rgba(226, 232, 240, 0.16);
+  border: 1px solid rgba(251, 191, 36, 0.28);
   border-radius: 8px;
-  background: rgba(15, 23, 42, 0.56);
+  background:
+    linear-gradient(180deg, rgba(248, 250, 252, 0.1), transparent),
+    rgba(15, 23, 42, 0.72);
   color: #f8fafc;
   font-size: 12px;
   font-weight: 900;
   box-shadow: 0 12px 34px rgba(0, 0, 0, 0.22);
   backdrop-filter: blur(14px);
+}
+
+.landing-quip-row svg {
+  color: #fbbf24;
+}
+
+.landing-viral-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  max-width: 780px;
+}
+
+.landing-viral-strip span {
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid rgba(2, 6, 23, 0.78);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #111827;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.15;
+  text-transform: uppercase;
+  box-shadow: 5px 5px 0 rgba(2, 6, 23, 0.72);
+}
+
+.landing-viral-strip span:nth-child(2) {
+  background: #fb7185;
+  color: #fff1f2;
+  transform: rotate(1.1deg);
+}
+
+.landing-viral-strip span:nth-child(3) {
+  background: #2dd4bf;
+  color: #042f2e;
+  transform: rotate(-0.8deg);
 }
 
 .landing-fact-strip {
@@ -176,11 +224,14 @@ button {
 
 .landing-fact-strip div {
   min-width: 0;
-  padding: 9px;
-  border: 1px solid rgba(251, 191, 36, 0.18);
+  padding: 11px 10px;
+  border: 1px solid rgba(251, 191, 36, 0.28);
+  border-bottom: 3px solid rgba(251, 191, 36, 0.76);
   border-radius: 8px;
-  background: rgba(15, 23, 42, 0.58);
-  box-shadow: inset 0 0 0 1px rgba(248, 250, 252, 0.04);
+  background:
+    linear-gradient(180deg, rgba(251, 191, 36, 0.1), transparent),
+    rgba(15, 23, 42, 0.72);
+  box-shadow: inset 0 0 0 1px rgba(248, 250, 252, 0.05), 0 16px 46px rgba(0, 0, 0, 0.24);
   backdrop-filter: blur(14px);
 }
 
@@ -204,15 +255,16 @@ button {
 .landing-cinematic-scene {
   position: relative;
   width: min(860px, 100%);
-  min-height: 540px;
+  min-height: 560px;
   overflow: hidden;
-  border: 1px solid rgba(248, 250, 252, 0.16);
+  border: 2px solid rgba(251, 191, 36, 0.42);
   border-radius: 8px;
   background:
-    linear-gradient(180deg, rgba(2, 6, 23, 0.02), rgba(2, 6, 23, 0.76)),
-    linear-gradient(135deg, rgba(20, 184, 166, 0.2), rgba(236, 72, 153, 0.14)),
+    linear-gradient(180deg, rgba(2, 6, 23, 0), rgba(2, 6, 23, 0.78)),
+    repeating-linear-gradient(135deg, rgba(251, 191, 36, 0.08) 0 3px, transparent 3px 30px),
+    linear-gradient(135deg, rgba(20, 184, 166, 0.22), rgba(236, 72, 153, 0.18)),
     #080a1a;
-  box-shadow: 0 30px 110px rgba(0, 0, 0, 0.54), inset 0 0 0 1px rgba(45, 212, 191, 0.08);
+  box-shadow: 0 34px 120px rgba(0, 0, 0, 0.58), 10px 10px 0 rgba(2, 6, 23, 0.5), inset 0 0 0 1px rgba(45, 212, 191, 0.12);
   isolation: isolate;
 }
 
@@ -250,7 +302,7 @@ button {
   position: absolute;
   z-index: 4;
   max-width: 240px;
-  padding: 9px 11px;
+  padding: 10px 12px;
   border: 1px solid rgba(248, 250, 252, 0.22);
   border-radius: 8px;
   background: rgba(2, 6, 23, 0.72);
@@ -273,6 +325,36 @@ button {
   left: 18px;
   bottom: 18px;
   color: #bbf7d0;
+}
+
+.landing-scene-sticker {
+  position: absolute;
+  z-index: 5;
+  max-width: 210px;
+  padding: 9px 11px;
+  border: 1px solid rgba(2, 6, 23, 0.82);
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.15;
+  text-transform: uppercase;
+  box-shadow: 5px 5px 0 rgba(2, 6, 23, 0.7);
+}
+
+.landing-scene-sticker.one {
+  top: 86px;
+  left: 18px;
+  background: #fbbf24;
+  color: #1f1300;
+  transform: rotate(-5deg);
+}
+
+.landing-scene-sticker.two {
+  right: 22px;
+  bottom: 86px;
+  background: #f8fafc;
+  color: #111827;
+  transform: rotate(4deg);
 }
 
 .landing-hero-poster {
@@ -520,13 +602,24 @@ button {
   gap: 4px 9px;
   min-width: 0;
   padding: 15px;
-  border: 1px solid rgba(226, 232, 240, 0.16);
+  border: 1px solid rgba(226, 232, 240, 0.18);
+  border-bottom: 3px solid rgba(45, 212, 191, 0.58);
   border-radius: 8px;
   background:
-    linear-gradient(180deg, rgba(20, 184, 166, 0.12), transparent),
-    rgba(15, 23, 42, 0.68);
-  box-shadow: inset 0 0 0 1px rgba(45, 212, 191, 0.04), 0 24px 70px rgba(0, 0, 0, 0.24);
+    linear-gradient(180deg, rgba(20, 184, 166, 0.16), transparent 62%),
+    rgba(15, 23, 42, 0.76);
+  box-shadow: inset 0 0 0 1px rgba(45, 212, 191, 0.05), 0 24px 70px rgba(0, 0, 0, 0.26);
   backdrop-filter: blur(16px);
+  transition:
+    border-color 160ms ease,
+    transform 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.landing-feature:hover {
+  border-color: rgba(251, 191, 36, 0.42);
+  box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.08), 0 28px 80px rgba(0, 0, 0, 0.34);
+  transform: translateY(-2px);
 }
 
 .landing-feature svg {
@@ -537,7 +630,7 @@ button {
 
 .landing-feature span,
 .landing-section-title span {
-  color: #99f6e4;
+  color: #fef3c7;
   font-size: 11px;
   font-weight: 900;
   line-height: 1.2;
@@ -584,9 +677,11 @@ button {
   gap: 10px;
   min-width: 0;
   padding: 10px;
-  border: 1px solid rgba(226, 232, 240, 0.14);
+  border: 1px solid rgba(226, 232, 240, 0.16);
   border-radius: 8px;
-  background: rgba(15, 23, 42, 0.72);
+  background:
+    linear-gradient(90deg, rgba(251, 191, 36, 0.11), transparent 36%),
+    rgba(15, 23, 42, 0.76);
 }
 
 .landing-loop-list li > span {
@@ -595,10 +690,11 @@ button {
   width: 30px;
   height: 30px;
   border-radius: 8px;
-  background: rgba(251, 191, 36, 0.18);
-  color: #fde68a;
+  background: #fbbf24;
+  color: #1f1300;
   font-size: 13px;
   font-weight: 900;
+  box-shadow: 3px 3px 0 rgba(2, 6, 23, 0.64);
 }
 
 .landing-loop-list strong {
@@ -628,9 +724,12 @@ button {
 .landing-shot {
   min-width: 0;
   padding: 9px;
-  border: 1px solid rgba(226, 232, 240, 0.14);
+  border: 1px solid rgba(226, 232, 240, 0.16);
+  border-bottom: 3px solid rgba(251, 113, 133, 0.56);
   border-radius: 8px;
-  background: rgba(15, 23, 42, 0.78);
+  background:
+    linear-gradient(180deg, rgba(251, 113, 133, 0.09), transparent),
+    rgba(15, 23, 42, 0.8);
 }
 
 .landing-shot-art {
@@ -642,6 +741,22 @@ button {
   background:
     linear-gradient(180deg, rgba(14, 165, 233, 0.18), transparent 45%),
     linear-gradient(135deg, rgba(30, 41, 59, 0.94), rgba(2, 6, 23, 0.94));
+}
+
+.landing-shot-art::before {
+  content: "REC";
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: #fb7185;
+  color: #fff1f2;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1;
+  box-shadow: 3px 3px 0 rgba(2, 6, 23, 0.58);
 }
 
 .landing-shot-art span {
@@ -789,14 +904,26 @@ button {
 .landing-fun-list p {
   min-width: 0;
   margin: 0;
-  padding: 10px;
-  border: 1px dashed rgba(251, 191, 36, 0.32);
+  padding: 12px;
+  border: 1px dashed rgba(251, 191, 36, 0.44);
+  border-bottom: 3px solid rgba(251, 191, 36, 0.66);
   border-radius: 8px;
-  background: rgba(69, 26, 3, 0.28);
+  background:
+    linear-gradient(180deg, rgba(251, 191, 36, 0.12), transparent),
+    rgba(69, 26, 3, 0.34);
   color: #fde68a;
   font-size: 12px;
   font-weight: 800;
   line-height: 1.35;
+}
+
+.landing-fun-list p:nth-child(even) {
+  border-color: rgba(45, 212, 191, 0.38);
+  border-bottom-color: rgba(45, 212, 191, 0.62);
+  background:
+    linear-gradient(180deg, rgba(45, 212, 191, 0.1), transparent),
+    rgba(6, 78, 59, 0.26);
+  color: #ccfbf1;
 }
 
 .access-story-grid {
@@ -835,19 +962,21 @@ button {
   gap: 12px;
   width: min(380px, calc(100vw - 32px));
   padding: 18px;
-  border: 1px solid rgba(45, 212, 191, 0.28);
+  border: 1px solid rgba(251, 191, 36, 0.42);
+  border-bottom: 4px solid rgba(251, 191, 36, 0.72);
   border-radius: 8px;
   background:
-    linear-gradient(180deg, rgba(20, 184, 166, 0.1), transparent),
-    rgba(7, 10, 25, 0.86);
-  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(248, 250, 252, 0.04);
+    repeating-linear-gradient(135deg, rgba(251, 191, 36, 0.08) 0 2px, transparent 2px 18px),
+    linear-gradient(180deg, rgba(20, 184, 166, 0.12), transparent),
+    rgba(7, 10, 25, 0.9);
+  box-shadow: 0 30px 96px rgba(0, 0, 0, 0.55), 7px 7px 0 rgba(2, 6, 23, 0.54), inset 0 0 0 1px rgba(248, 250, 252, 0.05);
   backdrop-filter: blur(18px);
 }
 
 .access-panel h2 {
   margin: 0;
   color: #f8fafc;
-  font-size: 24px;
+  font-size: 26px;
   line-height: 1.2;
 }
 
@@ -874,9 +1003,9 @@ button {
 
 .access-panel input {
   min-height: 36px;
-  border: 1px solid rgba(226, 232, 240, 0.18);
+  border: 1px solid rgba(226, 232, 240, 0.22);
   border-radius: 7px;
-  background: rgba(15, 23, 42, 0.8);
+  background: rgba(2, 6, 23, 0.78);
   color: #f8fafc;
   padding: 7px 9px;
   font: inherit;
@@ -903,8 +1032,8 @@ button {
 }
 
 .access-mode-tabs button[aria-pressed="true"] {
-  border-color: rgba(45, 212, 191, 0.42);
-  background: rgba(20, 184, 166, 0.24);
+  border-color: rgba(251, 191, 36, 0.5);
+  background: rgba(251, 191, 36, 0.2);
   color: #f8fafc;
 }
 
@@ -913,11 +1042,11 @@ button {
   border: 1px solid rgba(45, 212, 191, 0.55);
   border-radius: 7px;
   background:
-    linear-gradient(90deg, rgba(20, 184, 166, 0.94), rgba(245, 158, 11, 0.92));
+    linear-gradient(90deg, rgba(244, 63, 94, 0.96), rgba(245, 158, 11, 0.95), rgba(20, 184, 166, 0.94));
   color: #f8fafc;
   font-weight: 900;
   cursor: pointer;
-  box-shadow: 0 16px 46px rgba(20, 184, 166, 0.24);
+  box-shadow: 0 16px 46px rgba(244, 63, 94, 0.22), 0 0 28px rgba(245, 158, 11, 0.12);
 }
 
 .access-demo-button {
@@ -1249,7 +1378,9 @@ button {
   position: absolute;
   top: 16px;
   left: 16px;
-  right: 72px;
+  /* Reserve the full top-right control cluster (menu 16–58px + help 64–96px) so the
+     stat strip can never slide under the ? / menu buttons. */
+  right: 112px;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -1290,7 +1421,8 @@ button {
 
 .stat-strip {
   display: flex;
-  flex-wrap: wrap;
+  /* Never wrap on desktop — wrapping pushed a pill down onto the ? button. */
+  flex-wrap: nowrap;
   justify-content: flex-end;
   gap: 8px;
 }
@@ -1400,9 +1532,8 @@ button {
   z-index: 4;
   padding: 92px 24px 34px;
   background:
-    radial-gradient(circle at 20% 18%, rgba(251, 191, 36, 0.18), transparent 30%),
-    radial-gradient(circle at 78% 12%, rgba(236, 72, 153, 0.16), transparent 28%),
-    linear-gradient(90deg, rgba(2, 6, 23, 0.9), rgba(2, 6, 23, 0.52) 52%, rgba(15, 23, 42, 0.82)),
+    repeating-linear-gradient(135deg, rgba(251, 191, 36, 0.08) 0 2px, transparent 2px 24px),
+    linear-gradient(90deg, rgba(2, 6, 23, 0.92), rgba(2, 6, 23, 0.56) 52%, rgba(15, 23, 42, 0.84)),
     linear-gradient(180deg, rgba(2, 6, 23, 0.18), rgba(2, 6, 23, 0.78));
 }
 
@@ -1439,21 +1570,24 @@ button {
   justify-content: center;
   gap: 8px;
   pointer-events: auto;
-  min-width: 170px;
-  min-height: 48px;
+  min-width: 190px;
+  min-height: 52px;
   width: fit-content;
-  padding: 10px 16px;
-  border: 1px solid rgba(45, 212, 191, 0.65);
+  padding: 11px 18px;
+  border: 1px solid rgba(255, 255, 255, 0.58);
   border-radius: 8px;
-  background: rgba(13, 148, 136, 0.88);
+  background:
+    linear-gradient(90deg, #e11d48, #f59e0b 54%, #14b8a6);
   color: #f8fafc;
-  font-weight: 800;
+  font-weight: 900;
   cursor: pointer;
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.38);
+  box-shadow: 6px 6px 0 rgba(2, 6, 23, 0.76), 0 18px 50px rgba(0, 0, 0, 0.38);
+  text-transform: uppercase;
 }
 
 .entry-button:hover {
-  background: rgba(15, 118, 110, 0.95);
+  filter: brightness(1.08);
+  transform: translateY(-1px);
 }
 
 .landing-story-beats {
@@ -1506,9 +1640,12 @@ button {
 .landing-arc {
   min-width: 0;
   padding: 10px;
-  border: 1px solid rgba(226, 232, 240, 0.14);
+  border: 1px solid rgba(226, 232, 240, 0.16);
+  border-bottom: 3px solid rgba(96, 165, 250, 0.52);
   border-radius: 8px;
-  background: rgba(15, 23, 42, 0.78);
+  background:
+    linear-gradient(180deg, rgba(96, 165, 250, 0.1), transparent),
+    rgba(15, 23, 42, 0.8);
   backdrop-filter: blur(14px);
 }
 
@@ -1535,7 +1672,7 @@ button {
   align-items: center;
   gap: 7px;
   min-width: 0;
-  color: #99f6e4;
+  color: #fbbf24;
   margin-bottom: 4px;
 }
 
@@ -1557,11 +1694,12 @@ button {
 .landing-rival {
   min-width: 0;
   padding: 14px;
-  border: 1px solid rgba(226, 232, 240, 0.16);
+  border: 1px solid rgba(226, 232, 240, 0.18);
+  border-bottom: 3px solid rgba(251, 191, 36, 0.54);
   border-radius: 8px;
   background:
-    linear-gradient(180deg, rgba(251, 191, 36, 0.08), transparent),
-    rgba(15, 23, 42, 0.7);
+    linear-gradient(180deg, rgba(251, 191, 36, 0.11), transparent),
+    rgba(15, 23, 42, 0.78);
   backdrop-filter: blur(16px);
 }
 
@@ -1652,8 +1790,11 @@ button {
 }
 
 .landing-product.risky {
-  border-color: rgba(251, 113, 133, 0.32);
-  background: rgba(76, 29, 149, 0.28);
+  border-color: rgba(251, 113, 133, 0.42);
+  border-bottom-color: rgba(251, 113, 133, 0.68);
+  background:
+    linear-gradient(180deg, rgba(251, 113, 133, 0.13), transparent),
+    rgba(76, 29, 149, 0.32);
 }
 
 .landing-product strong {
@@ -1690,9 +1831,12 @@ button {
 .landing-campaign-card {
   min-width: 0;
   padding: 9px;
-  border: 1px solid rgba(96, 165, 250, 0.22);
+  border: 1px solid rgba(96, 165, 250, 0.28);
+  border-bottom: 3px solid rgba(96, 165, 250, 0.58);
   border-radius: 8px;
-  background: rgba(15, 23, 42, 0.76);
+  background:
+    linear-gradient(180deg, rgba(96, 165, 250, 0.1), transparent),
+    rgba(15, 23, 42, 0.78);
   backdrop-filter: blur(14px);
 }
 
@@ -1817,10 +1961,11 @@ button {
 .landing-endgame {
   min-width: 0;
   padding: 10px;
-  border: 1px solid rgba(251, 113, 133, 0.24);
+  border: 1px solid rgba(251, 113, 133, 0.34);
+  border-bottom: 3px solid rgba(251, 113, 133, 0.62);
   border-radius: 8px;
   background:
-    linear-gradient(180deg, rgba(127, 29, 29, 0.24), transparent),
+    linear-gradient(180deg, rgba(127, 29, 29, 0.32), transparent),
     rgba(15, 23, 42, 0.78);
 }
 
@@ -5156,6 +5301,11 @@ kbd {
     padding-bottom: 24px;
   }
 
+  .access-panel {
+    position: static;
+    width: min(560px, 100%);
+  }
+
   .landing-story-beats {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -5214,6 +5364,22 @@ kbd {
     min-height: 380px;
   }
 
+  .landing-scene-sticker {
+    max-width: 160px;
+    padding: 7px 8px;
+    font-size: 10px;
+  }
+
+  .landing-scene-sticker.one {
+    top: 68px;
+    left: 12px;
+  }
+
+  .landing-scene-sticker.two {
+    right: 12px;
+    bottom: 70px;
+  }
+
   .poster-skyline {
     inset: 32px 12px auto;
     height: 96px;
@@ -5267,6 +5433,7 @@ kbd {
 
   .landing-story-beats,
   .landing-intel-grid,
+  .landing-viral-strip,
   .landing-feature-grid,
   .landing-product-grid,
   .landing-shot-grid,
@@ -5328,6 +5495,7 @@ kbd {
 
   .stat-strip {
     flex: 1 1 0;
+    flex-wrap: wrap;
     justify-content: flex-end;
     gap: 6px;
   }
@@ -5727,6 +5895,11 @@ kbd {
   background: rgba(8, 13, 26, 0.78);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   backdrop-filter: blur(8px);
+}
+
+.access-shell + .audio-control,
+.game-shell.landing-active + .audio-control {
+  display: none;
 }
 
 .audio-control-button {
