@@ -68,15 +68,12 @@ import { gameDesignPillars, npcRoles } from "../game/content/story";
 import { baseFacilityList } from "../game/content/baseFacilities";
 import { supplierDeals } from "../game/content/suppliers";
 import { vehicleUpgradeList } from "../game/content/vehicleUpgrades";
-import { graphicsQualityLabels, graphicsQualityModes, type GraphicsQuality } from "../render/three/graphicsQuality";
 
 type DashboardTab = "machines" | "fleet" | "base" | "empire" | "suppliers" | "catalog" | "finance" | "districts" | "rights" | "jobs" | "route" | "logistics" | "crew" | "law" | "heat" | "conflict" | "rival" | "story" | "debug" | "log";
 
 interface DashboardProps {
-  graphicsQuality: GraphicsQuality;
   state: GameState;
   onCommand: (command: GameCommand) => void;
-  onGraphicsQualityChange: (quality: GraphicsQuality) => void;
   showDebug: boolean;
 }
 
@@ -215,7 +212,7 @@ function relationshipBrief(relationship: string): string {
   return "Testing the route through pressure and offers.";
 }
 
-export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQualityChange, showDebug }: DashboardProps) {
+export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
   const [tab, setTab] = useState<DashboardTab>("machines");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const playerMachines = useMemo(() => ownedMachines(state, state.playerFactionId), [state]);
@@ -325,25 +322,6 @@ export function Dashboard({ graphicsQuality, state, onCommand, onGraphicsQuality
   return (
     <aside className="dashboard">
       <div className="dashboard-header">
-        <div className="graphics-quality-control" aria-label="Graphics quality">
-          <span>
-            <SlidersHorizontal size={15} aria-hidden="true" />
-            Graphics
-          </span>
-          <div className="graphics-quality-options" role="group" aria-label="Graphics quality">
-            {graphicsQualityModes.map((quality) => (
-              <button
-                aria-pressed={graphicsQuality === quality}
-                className={graphicsQuality === quality ? "quality-button active" : "quality-button"}
-                key={quality}
-                onClick={() => onGraphicsQualityChange(quality)}
-                type="button"
-              >
-                {graphicsQualityLabels[quality]}
-              </button>
-            ))}
-          </div>
-        </div>
         <div className="dashboard-mode-row">
           <button aria-pressed={showAdvanced} className={showAdvanced ? "mini-button active" : "mini-button"} onClick={() => setShowAdvanced((current) => !current)} type="button">
             <SlidersHorizontal size={13} aria-hidden="true" />

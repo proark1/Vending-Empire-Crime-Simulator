@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { ThreeScene } from "./render/three/ThreeScene";
-import { loadGraphicsQuality, saveGraphicsQuality, type GraphicsQuality } from "./render/three/graphicsQuality";
+import { graphicsQualityLabels, graphicsQualityModes, loadGraphicsQuality, saveGraphicsQuality, type GraphicsQuality } from "./render/three/graphicsQuality";
 import type { SceneFeedbackEvent, SceneTarget } from "./render/three/SceneTargets";
 import { Dashboard } from "./ui/Dashboard";
 import { Hud } from "./ui/Hud";
@@ -9,7 +9,7 @@ import { LandingCinematicScene } from "./ui/LandingCinematicScene";
 import { Minimap } from "./ui/Minimap";
 import { MissionTracker } from "./ui/MissionTracker";
 import { GuidanceArrow } from "./ui/GuidanceArrow";
-import { ClipboardList, Copy, DollarSign, Flame, LogOut, Map, Menu, Network, Package, Play, RotateCcw, Save, ShieldAlert, Sparkles, Truck, Users, Volume2, VolumeX, Wrench, X, Zap, type LucideIcon } from "lucide-react";
+import { ClipboardList, Copy, DollarSign, Flame, LogOut, Map, Menu, Network, Package, Play, RotateCcw, Save, ShieldAlert, SlidersHorizontal, Sparkles, Truck, Users, Volume2, VolumeX, Wrench, X, Zap, type LucideIcon } from "lucide-react";
 import { AdminMapEditor } from "./ui/AdminMapEditor";
 import { getStarterMissionStep } from "./game/core/mission";
 import { activeConflictEvents, activeMachineAlarms, heatTierFor, latestDayReport, selectedRouteTask } from "./game/core/selectors";
@@ -704,7 +704,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
 
   const addToast = useCallback((toast: Omit<ToastMessage, "id">) => {
     const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    setToasts((current) => [{ ...toast, id }, ...current].slice(0, 4));
+    setToasts((current) => [{ ...toast, id }, ...current].slice(0, 3));
     // Two-phase removal: flag as leaving (plays the exit animation), then drop it.
     window.setTimeout(() => {
       setToasts((current) => current.map((message) => (message.id === id ? { ...message, leaving: true } : message)));
@@ -828,11 +828,14 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
         tone: "danger"
       });
     }
-    addToast({
-      title: newestEvent.message.startsWith("ALARM") ? "Machine alarm" : newestEvent.message.startsWith("Alarm missed") ? "Alarm missed" : "Street update",
-      message: newestEvent.message,
-      tone: newestEvent.tone
-    });
+    // The day-report effect already toasts this; don't double up with a "Street update" echo.
+    if (!/^Day \d+ report filed/.test(newestEvent.message)) {
+      addToast({
+        title: newestEvent.message.startsWith("ALARM") ? "Machine alarm" : newestEvent.message.startsWith("Alarm missed") ? "Alarm missed" : "Street update",
+        message: newestEvent.message,
+        tone: newestEvent.tone
+      });
+    }
   }, [activeAlarm, addToast, state.eventLog]);
 
   useEffect(() => {
@@ -1379,6 +1382,25 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
                 {dashboardOpen ? "Close ops" : "Open ops"}
               </button>
             )}
+            <div className="graphics-quality-control" aria-label="Graphics quality">
+              <span>
+                <SlidersHorizontal size={16} aria-hidden="true" />
+                Graphics
+              </span>
+              <div className="graphics-quality-options" role="group" aria-label="Graphics quality">
+                {graphicsQualityModes.map((quality) => (
+                  <button
+                    aria-pressed={graphicsQuality === quality}
+                    className={graphicsQuality === quality ? "quality-button active" : "quality-button"}
+                    key={quality}
+                    onClick={() => setGraphicsQuality(quality)}
+                    type="button"
+                  >
+                    {graphicsQualityLabels[quality]}
+                  </button>
+                ))}
+              </div>
+            </div>
             <button onClick={handleManualSave} role="menuitem" type="button">
               <Save size={16} aria-hidden="true" />
               Save game
@@ -1525,10 +1547,8 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
       )}
       {dashboardOpen && (
         <Dashboard
-          graphicsQuality={graphicsQuality}
           state={state}
           onCommand={sendCommandWithFeedback}
-          onGraphicsQualityChange={setGraphicsQuality}
           showDebug={showDebugTools}
         />
       )}
