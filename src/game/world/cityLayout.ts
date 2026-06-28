@@ -190,10 +190,9 @@ function arterialPositions(min: number, max: number, spacing: [number, number], 
   return positions;
 }
 
-// Merge global arterial positions with district-boundary positions, keeping the
-// district edges (which guarantee every district is road-bounded and therefore
-// gets its own blocks) and only adding global arterials where they are not too
-// close to an already-kept line.
+// Merge arterial positions while keeping a minimum spacing. This can also accept
+// authoritative edge lines, though the current road pass uses global arterials
+// only; district boundaries are added later as block-partition grid lines.
 function mergeArterialLines(globals: number[], edges: number[], min: number, max: number): number[] {
   const lo = min + EDGE_MARGIN;
   const hi = max - EDGE_MARGIN;

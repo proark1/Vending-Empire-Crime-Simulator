@@ -41,6 +41,17 @@ interface AdminMapEditorProps {
   onSave: (layout: WorldMapLayout) => void;
 }
 
+interface CityGenerationWorkerRequest {
+  requestId: number;
+  seed: string;
+}
+
+interface CityGenerationWorkerResponse {
+  error?: string;
+  layout?: WorldMapLayout;
+  requestId: number;
+}
+
 interface Selection {
   index: number;
   layer: EditableLayer;
@@ -999,6 +1010,8 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, modelConfig,
   const svgRef = useRef<SVGSVGElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const layoutRef = useRef(layout);
+  const generationRequestRef = useRef(0);
+  const generationWorkerRef = useRef<Worker | null>(null);
   const issues = useMemo(() => validateWorldMapLayout(layout), [layout]);
   const blockingIssues = issues.filter((issue) => issue.severity === "error");
   const selectedItem = layerItems(layout, selection.layer)[selection.index];
@@ -1007,6 +1020,53 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, modelConfig,
   useEffect(() => {
     layoutRef.current = layout;
   }, [layout]);
+
+  useEffect(() => () => {
+    generationRequestRef.current += 1;
+    generationWorkerRef.current?.terminate();
+    generationWorkerRef.current = null;
+  }, []);
+
+  const generateCityAsync = useCallback((nextSeed: string, requestId: number): Promise<WorldMapLayout> => {
+    if (typeof Worker === "undefined") {
+      return Promise.resolve(regenerateCity(nextSeed));
+    }
+
+    const worker = generationWorkerRef.current ?? new Worker(new URL("../game/world/cityGenerationWorker.ts", import.meta.url), { type: "module" });
+    generationWorkerRef.current = worker;
+
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        worker.removeEventListener("message", handleMessage);
+        worker.removeEventListener("error", handleError);
+      };
+      const handleMessage = (event: MessageEvent<CityGenerationWorkerResponse>) => {
+        if (event.data.requestId !== requestId) {
+          return;
+        }
+        cleanup();
+        if (event.data.error) {
+          reject(new Error(event.data.error));
+          return;
+        }
+        if (!event.data.layout) {
+          reject(new Error("City generation worker returned no layout."));
+          return;
+        }
+        resolve(event.data.layout);
+      };
+      const handleError = (event: ErrorEvent) => {
+        cleanup();
+        generationWorkerRef.current?.terminate();
+        generationWorkerRef.current = null;
+        reject(new Error(event.message || "City generation worker failed."));
+      };
+
+      worker.addEventListener("message", handleMessage);
+      worker.addEventListener("error", handleError);
+      worker.postMessage({ requestId, seed: nextSeed } satisfies CityGenerationWorkerRequest);
+    });
+  }, []);
 
   const pointFromPointer = (event: { clientX: number; clientY: number }) => {
     const svg = svgRef.current;
@@ -1077,9 +1137,9 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, modelConfig,
     }, options);
   }, [commitLayout]);
 
-  const updateSelected = (patch: Record<string, unknown>) => {
+  const updateSelected = useCallback((patch: Record<string, unknown>) => {
     updateItem(selection, patch);
-  };
+  }, [selection, updateItem]);
 
   const handleUndo = useCallback(() => {
     setHistory((current) => {
@@ -1167,7 +1227,7 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, modelConfig,
         depth: numericValue(selectedItem, "width", 1)
       });
     }
-  }, [selectedItem, selection.layer]);
+  }, [selectedItem, selection.layer, updateSelected]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1353,19 +1413,32 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, modelConfig,
   };
 
   const applyGenerated = useCallback((nextSeed: string) => {
+    const requestId = generationRequestRef.current + 1;
+    generationRequestRef.current = requestId;
     setGenerating(true);
-    try {
-      const generated = withEditableLayout(cloneLayout(regenerateCity(nextSeed)));
-      commitLayout(() => generated, { recordHistory: true });
-      setSelection({ layer: "buildings", index: 0 });
-      setActiveLayer("buildings");
-      setStatus(`Generated city for seed "${nextSeed}". Review and Save to publish.`);
-    } catch (error) {
-      setStatus(error instanceof Error ? `Generation failed: ${error.message}. Try another seed.` : "Generation failed; try another seed.");
-    } finally {
-      setGenerating(false);
-    }
-  }, [commitLayout]);
+    generateCityAsync(nextSeed, requestId)
+      .then((generatedLayout) => {
+        if (generationRequestRef.current !== requestId) {
+          return;
+        }
+        const generated = withEditableLayout(cloneLayout(generatedLayout));
+        commitLayout(() => generated, { recordHistory: true });
+        setSelection({ layer: "buildings", index: 0 });
+        setActiveLayer("buildings");
+        setStatus(`Generated city for seed "${nextSeed}". Review and Save to publish.`);
+      })
+      .catch((error) => {
+        if (generationRequestRef.current !== requestId) {
+          return;
+        }
+        setStatus(error instanceof Error ? `Generation failed: ${error.message}. Try another seed.` : "Generation failed; try another seed.");
+      })
+      .finally(() => {
+        if (generationRequestRef.current === requestId) {
+          setGenerating(false);
+        }
+      });
+  }, [commitLayout, generateCityAsync]);
 
   const handleGenerateCity = useCallback(() => {
     applyGenerated(seed.trim() || "vendetta-1");

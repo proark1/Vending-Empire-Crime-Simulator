@@ -2,6 +2,7 @@ import type { Bounds2 } from "../core/types";
 import { buildingFootprintExtents, type WorldBuilding, type WorldRoad } from "../content/world";
 import { WORLD_SCALE } from "./scale";
 import { snapBounds } from "./rectGrid";
+import { RectSpatialIndex } from "./spatialIndex";
 
 export interface SidewalkFootprint {
   depth: number;
@@ -127,18 +128,20 @@ export function sidewalkFootprintsForRoads(
   roads: WorldRoad[],
   blockingBuildings: Array<Pick<WorldBuilding, "depth" | "width" | "x" | "z">> = []
 ): SidewalkFootprint[] {
-  const roadBlockersById = new Map(roads.map((road) => [road.id, roadFootprint(road)]));
-  const buildingBlockers = blockingBuildings.map(buildingFootprint);
+  type Blocker = { bounds: Bounds2; sourceRoadId?: string };
+  const blockers: Blocker[] = [
+    ...roads.map((road) => ({ bounds: roadFootprint(road), sourceRoadId: road.id })),
+    ...blockingBuildings.map((building) => ({ bounds: buildingFootprint(building) }))
+  ];
+  const blockerIndex = new RectSpatialIndex(blockers.map((item) => ({ bounds: item.bounds, item })));
 
   return roads.flatMap((road) => {
-    const otherRoads = [...roadBlockersById]
-      .filter(([roadId]) => roadId !== road.id)
-      .map(([, bounds]) => bounds);
-    const blockers = [...otherRoads, ...buildingBlockers];
-
     return sidewalkStripsForRoad(road).flatMap((strip) => {
       const stripBounds = snapBounds(footprintFromSidewalk(strip));
-      const localBlockers = blockers.filter((blocker) => rectsOverlap(stripBounds, blocker));
+      const localBlockers = blockerIndex
+        .query(stripBounds)
+        .filter((entry) => entry.item.sourceRoadId !== road.id && rectsOverlap(stripBounds, entry.bounds))
+        .map((entry) => entry.bounds);
       const pieces = subtractMany(stripBounds, localBlockers);
       return pieces
         .map((piece) => sidewalkFromFootprint(piece, road.id))

@@ -1,5 +1,6 @@
 import type { Bounds2, Vec2 } from "../core/types";
 import { worldRoads, type WorldRoad } from "../content/world";
+import { RectSpatialIndex } from "./spatialIndex";
 
 export function roadBounds(road: WorldRoad): Bounds2 {
   return {
@@ -19,9 +20,18 @@ export function roadBoundsTouch(a: WorldRoad, b: WorldRoad, margin = 0.04): bool
     && first.maxZ >= second.minZ - margin;
 }
 
+function inflateBounds(bounds: Bounds2, margin: number): Bounds2 {
+  return {
+    minX: bounds.minX - margin,
+    maxX: bounds.maxX + margin,
+    minZ: bounds.minZ - margin,
+    maxZ: bounds.maxZ + margin
+  };
+}
+
 export function connectedRoadComponents(roads: WorldRoad[] = worldRoads): WorldRoad[][] {
   const remaining = new Set(roads.map((road) => road.id));
-  const byId = new Map(roads.map((road) => [road.id, road]));
+  const roadIndex = new RectSpatialIndex(roads.map((road) => ({ bounds: roadBounds(road), item: road })));
   const components: WorldRoad[][] = [];
 
   for (const road of roads) {
@@ -41,11 +51,10 @@ export function connectedRoadComponents(roads: WorldRoad[] = worldRoads): WorldR
 
       component.push(current);
 
-      for (const candidateId of Array.from(remaining)) {
-        const candidate = byId.get(candidateId);
-        if (candidate && roadBoundsTouch(current, candidate)) {
-          remaining.delete(candidateId);
-          queue.push(candidate);
+      for (const candidate of roadIndex.query(inflateBounds(roadBounds(current), 0.04))) {
+        if (remaining.has(candidate.item.id) && roadBoundsTouch(current, candidate.item)) {
+          remaining.delete(candidate.item.id);
+          queue.push(candidate.item);
         }
       }
     }

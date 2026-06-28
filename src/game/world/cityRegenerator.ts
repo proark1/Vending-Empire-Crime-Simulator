@@ -45,6 +45,7 @@ import {
   snap,
   snapBounds
 } from "./rectGrid";
+import { createRectSpatialIndex, RectSpatialIndex } from "./spatialIndex";
 
 const SIDEWALK = WORLD_SCALE.road.sidewalkWidth;
 const SETBACK = WORLD_SCALE.layout.placementSetback;
@@ -63,6 +64,34 @@ function roadFootprint(road: WorldRoad): Bounds2 {
   };
 }
 
+interface RoadGeometry {
+  bounds: Bounds2;
+  center: Vec2;
+  horizontal: boolean;
+  road: WorldRoad;
+}
+
+interface PlacementContext {
+  roadGeometry: RoadGeometry[];
+  roadIndex: RectSpatialIndex<RoadGeometry>;
+}
+
+function createPlacementContext(roads: WorldRoad[]): PlacementContext {
+  const roadGeometry = roads.map((road) => {
+    const bounds = roadFootprint(road);
+    return {
+      bounds,
+      center: boundsCenter(bounds),
+      horizontal: road.width >= road.depth,
+      road
+    };
+  });
+  return {
+    roadGeometry,
+    roadIndex: new RectSpatialIndex(roadGeometry.map((item) => ({ bounds: item.bounds, item })))
+  };
+}
+
 function footprint(building: WorldBuilding): Bounds2 {
   const swap = building.facing === "east" || building.facing === "west";
   const x = swap ? building.depth : building.width;
@@ -70,8 +99,19 @@ function footprint(building: WorldBuilding): Bounds2 {
   return { minX: building.x - x / 2, maxX: building.x + x / 2, minZ: building.z - z / 2, maxZ: building.z + z / 2 };
 }
 
+function candidateFootprint(candidate: ForcedCandidate): Bounds2 {
+  const swap = candidate.facing === "east" || candidate.facing === "west";
+  const x = swap ? candidate.depth : candidate.width;
+  const z = swap ? candidate.width : candidate.depth;
+  return { minX: candidate.x - x / 2, maxX: candidate.x + x / 2, minZ: candidate.z - z / 2, maxZ: candidate.z + z / 2 };
+}
+
+function footprintCoversSpawn(bounds: Bounds2): boolean {
+  return pointInRect(PLAYER_SPAWN, inflate(bounds, SPAWN_CLEAR));
+}
+
 function coversSpawn(building: WorldBuilding): boolean {
-  return pointInRect(PLAYER_SPAWN, inflate(footprint(building), SPAWN_CLEAR));
+  return footprintCoversSpawn(footprint(building));
 }
 
 function normalized(point: Vec2, bounds: Bounds2): Vec2 {
@@ -80,25 +120,12 @@ function normalized(point: Vec2, bounds: Bounds2): Vec2 {
   return { x: (point.x - bounds.minX) / w, z: (point.z - bounds.minZ) / d };
 }
 
-function distanceToNearestRoad(point: Vec2, roads: WorldRoad[]): number {
-  let nearest = Infinity;
-  for (const road of roads) {
-    const b = roadFootprint(road);
-    const dx = Math.max(b.minX - point.x, point.x - b.maxX, 0);
-    const dz = Math.max(b.minZ - point.z, point.z - b.maxZ, 0);
-    nearest = Math.min(nearest, Math.hypot(dx, dz));
-  }
-  return nearest;
-}
-
 // Cardinal direction from a point toward the nearest road.
-function facingTowardNearestRoad(point: Vec2, roads: WorldRoad[]): BuildingFacing {
-  let best: WorldRoad | null = null;
+function facingTowardNearestRoad(point: Vec2, roadGeometry: RoadGeometry[]): BuildingFacing {
+  let best: RoadGeometry | null = null;
   let bestDistance = Infinity;
-  for (const road of roads) {
-    const bounds = roadFootprint(road);
-    const center = boundsCenter(bounds);
-    const distance = Math.hypot(center.x - point.x, center.z - point.z);
+  for (const road of roadGeometry) {
+    const distance = Math.hypot(road.center.x - point.x, road.center.z - point.z);
     if (distance < bestDistance) {
       bestDistance = distance;
       best = road;
@@ -107,11 +134,10 @@ function facingTowardNearestRoad(point: Vec2, roads: WorldRoad[]): BuildingFacin
   if (!best) {
     return "north";
   }
-  const horizontal = best.width >= best.depth;
-  if (horizontal) {
-    return best.z <= point.z ? "north" : "south";
+  if (best.horizontal) {
+    return best.road.z <= point.z ? "north" : "south";
   }
-  return best.x <= point.x ? "west" : "east";
+  return best.road.x <= point.x ? "west" : "east";
 }
 
 // ---------------------------------------------------------------------------
@@ -151,20 +177,19 @@ interface ForcedCandidate {
 // road, facing the road. Because the front (road side) is always free of
 // buildings, the derived machine anchor never lands inside a neighbour — which
 // the plain grid scan could not guarantee.
-function alongRoadCandidates(region: Bounds2, roads: WorldRoad[], w: number, d: number): ForcedCandidate[] {
-  const out: ForcedCandidate[] = [];
+function* alongRoadCandidates(region: Bounds2, roadGeometry: RoadGeometry[], w: number, d: number): Iterable<ForcedCandidate> {
   const offset = SIDEWALK + SETBACK + d / 2;
-  for (const road of roads) {
-    const rb = roadFootprint(road);
+  for (const roadInfo of roadGeometry) {
+    const { bounds: rb, road } = roadInfo;
     if (!rectsOverlap(inflate(rb, 24), region)) {
       continue;
     }
-    if (road.width >= road.depth) {
+    if (roadInfo.horizontal) {
       for (const side of [-1, 1] as const) {
         const z = snap(road.z + side * (road.depth / 2 + offset));
         const facing: BuildingFacing = side < 0 ? "south" : "north";
         for (let x = region.minX + w / 2; x <= region.maxX - w / 2; x += w + MIN_GAP) {
-          out.push({ facing, width: w, depth: d, x: snap(x), z });
+          yield { facing, width: w, depth: d, x: snap(x), z };
         }
       }
     } else {
@@ -172,27 +197,75 @@ function alongRoadCandidates(region: Bounds2, roads: WorldRoad[], w: number, d: 
         const x = snap(road.x + side * (road.width / 2 + offset));
         const facing: BuildingFacing = side < 0 ? "east" : "west";
         for (let z = region.minZ + w / 2; z <= region.maxZ - w / 2; z += w + MIN_GAP) {
-          out.push({ facing, width: w, depth: d, x, z: snap(z) });
+          yield { facing, width: w, depth: d, x, z: snap(z) };
         }
       }
     }
   }
-  return out;
 }
 
-function gridCandidates(region: Bounds2, roads: WorldRoad[], w: number, d: number, step: number): ForcedCandidate[] {
-  const out: ForcedCandidate[] = [];
+function* gridCandidates(region: Bounds2, roadGeometry: RoadGeometry[], w: number, d: number, step: number): Iterable<ForcedCandidate> {
   for (let x = region.minX + w / 2; x <= region.maxX - w / 2; x += step) {
     for (let z = region.minZ + d / 2; z <= region.maxZ - d / 2; z += step) {
-      out.push({ facing: facingTowardNearestRoad({ x, z }, roads), width: w, depth: d, x: snap(x), z: snap(z) });
+      yield { facing: facingTowardNearestRoad({ x, z }, roadGeometry), width: w, depth: d, x: snap(x), z: snap(z) };
     }
   }
-  return out;
+}
+
+function* nearRoadGridCandidates(region: Bounds2, roadGeometry: RoadGeometry[], w: number, d: number, step: number): Iterable<ForcedCandidate> {
+  const seen = new Set<string>();
+  const baseOffset = SIDEWALK + SETBACK + d / 2;
+  const maxSpan = Math.max(region.maxX - region.minX, region.maxZ - region.minZ);
+  const rings = Math.ceil(maxSpan / step);
+  const emit = function* (candidate: ForcedCandidate): Iterable<ForcedCandidate> {
+    if (
+      candidate.x < region.minX + w / 2
+      || candidate.x > region.maxX - w / 2
+      || candidate.z < region.minZ + d / 2
+      || candidate.z > region.maxZ - d / 2
+    ) {
+      return;
+    }
+    const key = `${candidate.x}:${candidate.z}:${candidate.facing}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    yield candidate;
+  };
+
+  for (let ring = 0; ring <= rings; ring += 1) {
+    const offset = baseOffset + ring * step;
+    for (const roadInfo of roadGeometry) {
+      const { road } = roadInfo;
+      if (roadInfo.horizontal) {
+        const xStart = Math.max(region.minX + w / 2, road.x - road.width / 2);
+        const xEnd = Math.min(region.maxX - w / 2, road.x + road.width / 2);
+        for (const side of [-1, 1] as const) {
+          const z = snap(road.z + side * (road.depth / 2 + offset));
+          const facing: BuildingFacing = side < 0 ? "south" : "north";
+          for (let x = xStart; x <= xEnd; x += step) {
+            yield* emit({ facing, width: w, depth: d, x: snap(x), z });
+          }
+        }
+      } else {
+        const zStart = Math.max(region.minZ + d / 2, road.z - road.depth / 2);
+        const zEnd = Math.min(region.maxZ - d / 2, road.z + road.depth / 2);
+        for (const side of [-1, 1] as const) {
+          const x = snap(road.x + side * (road.width / 2 + offset));
+          const facing: BuildingFacing = side < 0 ? "east" : "west";
+          for (let z = zStart; z <= zEnd; z += step) {
+            yield* emit({ facing, width: w, depth: d, x, z: snap(z) });
+          }
+        }
+      }
+    }
+  }
 }
 
 function forcePlaceNamed(
   template: NamedTemplate,
-  roads: WorldRoad[],
+  context: PlacementContext,
   placed: WorldBuilding[]
 ): WorldBuilding | null {
   const district = districts[template.districtId];
@@ -201,11 +274,21 @@ function forcePlaceNamed(
   }
   const region = district.bounds;
   const clear = SETBACK + 0.05;
+  const placedFootprints = placed.map((building) => ({ bounds: footprint(building), building }));
+  const placedIndex = new RectSpatialIndex(placedFootprints.map((item) => ({ bounds: item.bounds, item })));
+  const placedGapIndex = new RectSpatialIndex(placedFootprints.map((item) => ({ bounds: inflate(item.bounds, MIN_GAP / 2), item })));
+  const namedGapIndex = new RectSpatialIndex(
+    placedFootprints
+      .filter((item) => item.building.locationId)
+      .map((item) => ({ bounds: inflate(item.bounds, MIN_GAP / 2), item }))
+  );
   // A spot stays "walkable-between" from every other storefront when no already-
   // placed named footprint sits within the navigable gap of it. Every gap warning
   // is location-vs-location, so honouring this in the fallbacks removes them.
-  const keepsNamedGap = (fp: Bounds2): boolean =>
-    !placed.some((other) => other.locationId && rectsOverlap(inflate(fp, MIN_GAP / 2), inflate(footprint(other), MIN_GAP / 2)));
+  const keepsNamedGap = (fp: Bounds2): boolean => {
+    const gapFp = inflate(fp, MIN_GAP / 2);
+    return !namedGapIndex.some(gapFp, (entry) => rectsOverlap(gapFp, entry.bounds));
+  };
   // Prefer street-facing row slots (clean anchor fronts); fall back to a packed
   // grid scan, with progressively smaller footprints / finer steps so even a
   // crammed starter suburb fits its last named location.
@@ -216,40 +299,53 @@ function forcePlaceNamed(
     { size: [3.5, 3.5], step: 1 },
     { size: [3, 3], step: 0.75 }
   ];
-  for (const { size: [w, d], step } of attempts) {
-    const candidates = [...alongRoadCandidates(region, roads, w, d), ...gridCandidates(region, roads, w, d, step)];
-    for (const candidate of candidates) {
-      const building: WorldBuilding = {
-        id: `${template.locationId}_building`,
-        locationId: template.locationId,
-        districtId: template.districtId,
-        facing: candidate.facing,
-        height: Math.max(template.height, WORLD_SCALE.building.minimumStorefrontHeight),
-        signText: template.signText,
-        style: template.style,
-        width: candidate.width,
-        depth: candidate.depth,
-        x: candidate.x,
-        z: candidate.z
-      };
-      if (coversSpawn(building)) {
-        continue;
-      }
-      if (!pointInRect({ x: building.x, z: building.z }, region)) {
-        continue;
-      }
-      const fp = footprint(building);
-      if (!rectContains(worldBounds, fp)) {
-        continue;
-      }
-      if (roads.some((road) => rectsOverlap(inflate(fp, clear), roadFootprint(road)))) {
-        continue;
-      }
+  const tryCandidate = (candidate: ForcedCandidate, roadClearance: number, requireGap: boolean): WorldBuilding | null => {
+    if (!pointInRect({ x: candidate.x, z: candidate.z }, region)) {
+      return null;
+    }
+    const fp = candidateFootprint(candidate);
+    if (footprintCoversSpawn(fp) || !rectContains(worldBounds, fp)) {
+      return null;
+    }
+    const roadBounds = inflate(fp, roadClearance);
+    if (context.roadIndex.some(roadBounds, (entry) => rectsOverlap(roadBounds, entry.bounds))) {
+      return null;
+    }
+    if (requireGap) {
       const gapFp = inflate(fp, MIN_GAP / 2);
-      if (placed.some((other) => rectsOverlap(gapFp, inflate(footprint(other), MIN_GAP / 2)))) {
-        continue;
+      if (placedGapIndex.some(gapFp, (entry) => rectsOverlap(gapFp, entry.bounds))) {
+        return null;
       }
-      return building;
+    } else if (placedIndex.some(fp, (entry) => rectsOverlap(fp, entry.bounds))) {
+      return null;
+    }
+    return {
+      id: `${template.locationId}_building`,
+      locationId: template.locationId,
+      districtId: template.districtId,
+      facing: candidate.facing,
+      height: Math.max(template.height, WORLD_SCALE.building.minimumStorefrontHeight),
+      signText: template.signText,
+      style: template.style,
+      width: candidate.width,
+      depth: candidate.depth,
+      x: candidate.x,
+      z: candidate.z
+    };
+  };
+
+  for (const { size: [w, d], step } of attempts) {
+    for (const candidate of alongRoadCandidates(region, context.roadGeometry, w, d)) {
+      const building = tryCandidate(candidate, clear, true);
+      if (building) {
+        return building;
+      }
+    }
+    for (const candidate of gridCandidates(region, context.roadGeometry, w, d, step)) {
+      const building = tryCandidate(candidate, clear, true);
+      if (building) {
+        return building;
+      }
     }
   }
 
@@ -282,37 +378,13 @@ function forcePlaceNamed(
   // the navigable gap (a non-blocking warning) but never errors or leaves its
   // district.
   const tiny = 2;
-  const tinyCandidates = [
-    ...alongRoadCandidates(region, roads, tiny, tiny),
-    ...gridCandidates(region, roads, tiny, tiny, 0.5).sort(
-      (a, b) => distanceToNearestRoad({ x: a.x, z: a.z }, roads) - distanceToNearestRoad({ x: b.x, z: b.z }, roads)
-    )
-  ];
   let tinyFallback: WorldBuilding | null = null;
-  for (const candidate of tinyCandidates) {
-    const building: WorldBuilding = {
-      id: `${template.locationId}_building`,
-      locationId: template.locationId,
-      districtId: template.districtId,
-      facing: candidate.facing,
-      height: Math.max(template.height, WORLD_SCALE.building.minimumStorefrontHeight),
-      signText: template.signText,
-      style: template.style,
-      width: tiny,
-      depth: tiny,
-      x: candidate.x,
-      z: candidate.z
-    };
-    if (coversSpawn(building) || !pointInRect({ x: building.x, z: building.z }, region)) {
+  for (const candidate of nearRoadGridCandidates(region, context.roadGeometry, tiny, tiny, 0.5)) {
+    const building = tryCandidate(candidate, 0.1, false);
+    if (!building) {
       continue;
     }
     const fp = footprint(building);
-    if (!rectContains(worldBounds, fp) || roads.some((road) => rectsOverlap(inflate(fp, 0.1), roadFootprint(road)))) {
-      continue;
-    }
-    if (placed.some((other) => rectsOverlap(fp, footprint(other)))) {
-      continue;
-    }
     if (keepsNamedGap(fp)) {
       return building; // a clean, walkable-between spot
     }
@@ -324,6 +396,7 @@ function forcePlaceNamed(
 }
 
 function buildBuildings(plan: ReturnType<typeof generateCityPlan>): WorldBuilding[] {
+  const placementContext = createPlacementContext(plan.roads);
   const templatesByDistrict = new Map<string, NamedTemplate[]>();
   for (const template of namedTemplates()) {
     const list = templatesByDistrict.get(template.districtId) ?? [];
@@ -371,7 +444,7 @@ function buildBuildings(plan: ReturnType<typeof generateCityPlan>): WorldBuildin
           height: Math.max(template.height, WORLD_SCALE.building.minimumStorefrontHeight)
         });
       } else {
-        const forced = forcePlaceNamed(template, plan.roads, result);
+        const forced = forcePlaceNamed(template, placementContext, result);
         if (!forced) {
           throw new Error(`city regenerator could not place location "${template.locationId}" in ${districtId}`);
         }
@@ -404,7 +477,7 @@ function buildBuildings(plan: ReturnType<typeof generateCityPlan>): WorldBuildin
     }
   }
   for (const template of displacedNamed) {
-    const forced = forcePlaceNamed(template, plan.roads, cleared);
+    const forced = forcePlaceNamed(template, placementContext, cleared);
     if (!forced) {
       throw new Error(`city regenerator could not re-place spawn-blocked location "${template.locationId}"`);
     }
@@ -512,7 +585,7 @@ function roadDistrictMap(roads: WorldRoad[]): Map<string, string> {
 
 function buildDecorations(roads: WorldRoad[], sidewalks: Array<{ depth: number; sourceRoadId: string; width: number; x: number; z: number }>, rng: Rng): WorldDecoration[] {
   const roadDistrict = roadDistrictMap(roads);
-  const roadFps = roads.map(roadFootprint);
+  const roadIndex = createRectSpatialIndex(roads, roadFootprint);
   const decorations: WorldDecoration[] = [];
   const kinds: WorldDecorationKind[] = ["streetlight", "planter", "bollard", "utility_box"];
   // A prop's footprint must stay this far clear of every road — nothing belongs
@@ -532,7 +605,7 @@ function buildDecorations(roads: WorldRoad[], sidewalks: Array<{ depth: number; 
       minZ: piece.z - PROP_CLEARANCE,
       maxZ: piece.z + PROP_CLEARANCE
     };
-    if (roadFps.some((fp) => rectsOverlap(propBounds, fp))) {
+    if (roadIndex.some(propBounds, (entry) => rectsOverlap(propBounds, entry.bounds))) {
       continue; // would intrude onto a road
     }
     const kind = rng.pick(kinds);
@@ -555,10 +628,13 @@ function buildDecorations(roads: WorldRoad[], sidewalks: Array<{ depth: number; 
 // building — would otherwise read as barren ground. Fill them with a jittered
 // grid of leafy planters so they look like landscaped greens instead of voids.
 function buildGreenery(blocks: CityBlock[], buildings: WorldBuilding[], roads: WorldRoad[], parks: WorldPark[], rng: Rng): WorldDecoration[] {
-  const roadFps = roads.map(roadFootprint);
+  const roadIndex = createRectSpatialIndex(roads, roadFootprint);
   // Keep planters clear of building footprints — a neighbouring block's building
   // can overhang an "empty" block, which the centre-only emptiness test misses.
-  const buildingFps = buildings.map((building) => inflate(footprint(building), 0.6));
+  const buildingIndex = new RectSpatialIndex(buildings.map((building) => {
+    const bounds = inflate(footprint(building), 0.6);
+    return { bounds, item: bounds };
+  }));
   const parkBounds = parks.map((park) => park.bounds);
   const greenColors = ["#4ade80", "#22c55e", "#65a30d", "#16a34a"];
   const out: WorldDecoration[] = [];
@@ -592,11 +668,12 @@ function buildGreenery(blocks: CityBlock[], buildings: WorldBuilding[], roads: W
         }
         const px = snap(Math.min(maxX, x + rng.range(-0.4, 0.4)));
         const pz = snap(Math.min(maxZ, z + rng.range(-0.4, 0.4)));
-        if (buildingFps.some((fp) => pointInRect({ x: px, z: pz }, fp))) {
+        const pointBounds: Bounds2 = { minX: px, maxX: px, minZ: pz, maxZ: pz };
+        if (buildingIndex.some(pointBounds, (entry) => pointInRect({ x: px, z: pz }, entry.bounds))) {
           continue;
         }
         const propBounds: Bounds2 = { minX: px - 0.9, maxX: px + 0.9, minZ: pz - 0.9, maxZ: pz + 0.9 };
-        if (roadFps.some((fp) => rectsOverlap(propBounds, fp))) {
+        if (roadIndex.some(propBounds, (entry) => rectsOverlap(propBounds, entry.bounds))) {
           continue;
         }
         out.push({
@@ -787,10 +864,19 @@ function districtAt(point: Vec2): string {
 }
 
 function buildBackdrops(roads: WorldRoad[], buildings: WorldBuilding[], parks: WorldPark[], rng: Rng): CityBackdropBuilding[] {
-  const roadBlockers = roads.map((road) => inflate(roadFootprint(road), SIDEWALK + 0.5));
-  const buildingBlockers = buildings.map((building) => inflate(footprint(building), 0.5));
+  const roadIndex = new RectSpatialIndex(roads.map((road) => {
+    const bounds = inflate(roadFootprint(road), SIDEWALK + 0.5);
+    return { bounds, item: bounds };
+  }));
+  const buildingIndex = new RectSpatialIndex(buildings.map((building) => {
+    const bounds = inflate(footprint(building), 0.5);
+    return { bounds, item: bounds };
+  }));
   // Parks are open green space — never drop a skyline tower onto one.
-  const parkBlockers = parks.map((park) => inflate(park.bounds, 1));
+  const parkIndex = new RectSpatialIndex(parks.map((park) => {
+    const bounds = inflate(park.bounds, 1);
+    return { bounds, item: bounds };
+  }));
   const out: CityBackdropBuilding[] = [];
   const step = 13;
   for (let x = worldBounds.minX + 8; x <= worldBounds.maxX - 8; x += step) {
@@ -804,13 +890,13 @@ function buildBackdrops(roads: WorldRoad[], buildings: WorldBuilding[], parks: W
       if (!rectContains(worldBounds, fp)) {
         continue;
       }
-      if (roadBlockers.some((blocker) => rectsOverlap(fp, blocker))) {
+      if (roadIndex.some(fp, (entry) => rectsOverlap(fp, entry.bounds))) {
         continue;
       }
-      if (buildingBlockers.some((blocker) => rectsOverlap(fp, blocker))) {
+      if (buildingIndex.some(fp, (entry) => rectsOverlap(fp, entry.bounds))) {
         continue;
       }
-      if (parkBlockers.some((blocker) => rectsOverlap(fp, blocker))) {
+      if (parkIndex.some(fp, (entry) => rectsOverlap(fp, entry.bounds))) {
         continue;
       }
       if (out.some((other) => rectsOverlap(fp, { minX: other.x - other.width / 2, maxX: other.x + other.width / 2, minZ: other.z - other.depth / 2, maxZ: other.z + other.depth / 2 }))) {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { regenerateCity } from "./cityRegenerator";
+import { generateCityPlan } from "./cityLayout";
 import { validateWorldMapLayout, buildingFootprint } from "./mapLayoutStorage";
 import { anchorsForLayout } from "./locationGeometry";
 import { connectedRoadComponents, roadBounds } from "./roadGraph";
@@ -11,7 +12,7 @@ import {
   worldBuildings,
   worldInteriors
 } from "../content/world";
-import { pointInRect, rectContains, rectsOverlap } from "./rectGrid";
+import { boundsArea, inflate, pointInRect, rectContains, rectsOverlap } from "./rectGrid";
 
 const SEEDS = Array.from({ length: 20 }, (_, index) => `regen_${index}`);
 
@@ -115,6 +116,36 @@ describe("city regenerator", () => {
     // in a cramped district may sit further (the original bug stranded dozens).
     const far = layout.buildings.filter((b) => frontDistance(b) > 6).length;
     expect(far, `${far} storefronts float far from any street`).toBeLessThanOrEqual(5);
+  });
+
+  it.each(SEEDS)("keeps emergency tiny named-location fallbacks rare (%s)", (seed) => {
+    const layout = regenerateCity(seed);
+    const tinyNamed = layout.buildings.filter((building) =>
+      building.locationId && Math.min(building.width, building.depth) < 3
+    );
+    expect(tinyNamed.length, `too many named locations needed tiny fallback lots: ${tinyNamed.map((building) => building.locationId).join(", ")}`).toBeLessThanOrEqual(3);
+  });
+
+  it.each(SEEDS)("keeps every district visibly populated (%s)", (seed) => {
+    const layout = regenerateCity(seed);
+    expect(layout.buildings.length, "city should stay dense enough to read as urban").toBeGreaterThanOrEqual(130);
+    for (const districtId of Object.keys(districts)) {
+      const count = layout.buildings.filter((building) => building.districtId === districtId).length;
+      expect(count, `${districtId} has too few buildings`).toBeGreaterThanOrEqual(6);
+    }
+  });
+
+  it.each(SEEDS)("limits large empty blocks outside parks (%s)", (seed) => {
+    const plan = generateCityPlan(seed);
+    const layout = regenerateCity(seed);
+    const parkBounds = layout.parks.map((park) => park.bounds);
+    const buildingBounds = layout.buildings.map(buildingFootprint);
+    const largeEmptyBlocks = plan.blocks
+      .filter((block) => boundsArea(block.bounds) > 320)
+      .filter((block) => !parkBounds.some((bounds) => rectsOverlap(block.bounds, bounds)))
+      .filter((block) => !buildingBounds.some((bounds) => rectsOverlap(inflate(block.bounds, -1), bounds)));
+
+    expect(largeEmptyBlocks.length, "large buildable blocks should be parks or have buildings").toBeLessThanOrEqual(5);
   });
 
   it.each(SEEDS)("never overlaps two buildings (%s)", (seed) => {
