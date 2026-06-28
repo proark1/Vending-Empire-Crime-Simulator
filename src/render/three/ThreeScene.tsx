@@ -22,6 +22,7 @@ import {
   type WorldPark,
   type WorldRoad
 } from "../../game/content/world";
+import { crimeContactPositionOverrides, hotspotPositionOverrides } from "../../game/world/locationGeometry";
 import { pathOnRoads, roadBounds } from "../../game/world/roadGraph";
 import { WORLD_SCALE } from "../../game/world/scale";
 import { sidewalkFootprintsForRoads } from "../../game/world/sidewalks";
@@ -4098,7 +4099,7 @@ function addDistrictAccessOverlays(group: THREE.Group, currentState: GameState):
   }
 }
 
-function populateDynamicObjects(group: THREE.Group, currentState: GameState, guidanceLocationId: string | undefined, quality: GraphicsQuality, modelConfig: ModelConfig): Interactable[] {
+function populateDynamicObjects(group: THREE.Group, currentState: GameState, guidanceLocationId: string | undefined, quality: GraphicsQuality, modelConfig: ModelConfig, poi: { hotspots: Record<string, Vec2>; contacts: Record<string, Vec2> }): Interactable[] {
   clearGroup(group);
   const interactables: Interactable[] = [];
   addDistrictAccessOverlays(group, currentState);
@@ -4107,28 +4108,30 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
   const routePlanByLocation = new Map((optimizedRoutePlan(currentState)?.stops ?? []).map((stop) => [stop.locationId, stop]));
 
   for (const hotspot of neighborhoodHotspots) {
+    const pos = poi.hotspots[hotspot.id] ?? { x: hotspot.x, z: hotspot.z };
     const progress = districtProgress(currentState, hotspot.districtId);
     const marker = createNeighborhoodHotspotMarker(hotspot.color, hotspot.kind, progress.access);
-    marker.position.set(hotspot.x, 0.02, hotspot.z);
+    marker.position.set(pos.x, 0.02, pos.z);
     group.add(marker);
-    addLabel(group, hotspot.label, hotspot.color, new THREE.Vector3(hotspot.x, 0, hotspot.z), progress.access === "locked" ? 1.55 : 1.72);
+    addLabel(group, hotspot.label, hotspot.color, new THREE.Vector3(pos.x, 0, pos.z), progress.access === "locked" ? 1.55 : 1.72);
     interactables.push({
       radius: Math.max(1.25, Math.min(2.4, hotspot.radius * 0.28)),
       target: { type: "neighborhood", id: hotspot.id, label: hotspot.label },
-      position: new THREE.Vector3(hotspot.x, 0, hotspot.z)
+      position: new THREE.Vector3(pos.x, 0, pos.z)
     });
   }
 
   for (const contact of crimeContacts) {
+    const pos = poi.contacts[contact.id] ?? { x: contact.x, z: contact.z };
     const progress = districtProgress(currentState, contact.districtId);
     const marker = createCrimeContactMarker(contact.color, contact.kind, progress.access);
-    marker.position.set(contact.x, 0.02, contact.z);
+    marker.position.set(pos.x, 0.02, pos.z);
     group.add(marker);
-    addLabel(group, contact.label, contact.color, new THREE.Vector3(contact.x, 0, contact.z), progress.access === "locked" ? 1.42 : 1.62);
+    addLabel(group, contact.label, contact.color, new THREE.Vector3(pos.x, 0, pos.z), progress.access === "locked" ? 1.42 : 1.62);
     interactables.push({
       radius: Math.max(1.2, Math.min(2.2, contact.radius * 0.3)),
       target: { type: "crime_contact", id: contact.id, label: contact.label },
-      position: new THREE.Vector3(contact.x, 0, contact.z)
+      position: new THREE.Vector3(pos.x, 0, pos.z)
     });
   }
 
@@ -4824,7 +4827,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
         return;
       }
 
-      interactablesRef.current = populateDynamicObjects(dynamicGroupRef.current, stateRef.current, guidanceLocationIdRef.current, renderProfile.detail, modelConfig);
+      interactablesRef.current = populateDynamicObjects(dynamicGroupRef.current, stateRef.current, guidanceLocationIdRef.current, renderProfile.detail, modelConfig, { hotspots: hotspotPositionOverrides(mapLayout), contacts: crimeContactPositionOverrides(mapLayout) });
       if (debugVisible && debugGroupRef.current) {
         populateDebugOverlay(debugGroupRef.current, stateRef.current, interactablesRef.current, animatedProps, mapLayout);
       }
@@ -5275,7 +5278,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       return;
     }
 
-    interactablesRef.current = populateDynamicObjects(dynamicGroup, state, guidanceLocationId, graphicsQuality, modelConfig);
+    interactablesRef.current = populateDynamicObjects(dynamicGroup, state, guidanceLocationId, graphicsQuality, modelConfig, { hotspots: hotspotPositionOverrides(mapLayout), contacts: crimeContactPositionOverrides(mapLayout) });
     const debugGroup = debugGroupRef.current;
     if (debugGroup?.visible) {
       populateDebugOverlay(debugGroup, state, interactablesRef.current, animatedPropsRef.current, mapLayout);

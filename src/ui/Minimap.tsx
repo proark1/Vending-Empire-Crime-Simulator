@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import type { GameState, Vec2 } from "../game/core/types";
 import { activeVehicle, districtProgress, machineAtLocation } from "../game/core/selectors";
 import { crimeContacts, worldBounds, type WorldMapLayout } from "../game/content/world";
-import { locationPositionOverrides } from "../game/world/locationGeometry";
+import { crimeContactPositionOverrides, locationPositionOverrides } from "../game/world/locationGeometry";
 import type { SceneTarget } from "../render/three/SceneTargets";
 
 interface MinimapProps {
@@ -49,6 +49,7 @@ function toDistrictRect(bounds: { maxX: number; maxZ: number; minX: number; minZ
 
 export function Minimap({ state, mapLayout, playerPosition, guidanceLocationId, target }: MinimapProps) {
   const locationOverrides = useMemo(() => locationPositionOverrides(mapLayout), [mapLayout]);
+  const contactOverrides = useMemo(() => crimeContactPositionOverrides(mapLayout), [mapLayout]);
   const targetOperation = target?.type === "rival_operation"
     ? Object.values(state.rivalOrganizations ?? {})
         .flatMap((organization) => organization.operations)
@@ -101,7 +102,7 @@ export function Minimap({ state, mapLayout, playerPosition, guidanceLocationId, 
           );
         })}
         {crimeContacts.map((contact) => {
-          const point = toMapPoint({ x: contact.x, z: contact.z });
+          const point = toMapPoint(contactOverrides[contact.id] ?? { x: contact.x, z: contact.z });
           const access = districtProgress(state, contact.districtId).access;
           return (
             <g className={`map-contact ${access} ${targetContactId === contact.id ? "target" : ""}`} key={contact.id}>

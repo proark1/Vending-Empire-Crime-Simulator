@@ -10,10 +10,12 @@
 import type { Bounds2, Vec2 } from "../core/types";
 import {
   buildingFootprintExtents,
+  crimeContacts,
   facingOutwardUnit,
   facingToRotationY,
   locations,
   machinePlacementAnchors,
+  neighborhoodHotspots,
   type BuildingFacing,
   type MachinePlacementAnchor,
   type WorldBuilding,
@@ -104,4 +106,51 @@ export function locationPositionOverrides(layout: WorldMapLayout): Record<string
     }
   }
   return overrides;
+}
+
+// Neighbourhood hotspots and crime contacts are abstract in-district points, not
+// buildings, so the generator can't move them directly. On a generated layout (a
+// building carries a derived `anchor`) we pin each to the front of the nearest
+// unused storefront in its own district — a real, walkable spot near actual shops
+// — preserving id/flavour/radius. A hand-authored layout produces no overrides, so
+// the default map keeps its authored positions untouched.
+function poiOverrides(
+  layout: WorldMapLayout,
+  items: ReadonlyArray<{ id: string; districtId: string; x: number; z: number }>
+): Record<string, Vec2> {
+  const generated = layout.buildings.some((building) => building.locationId && building.anchor);
+  if (!generated) {
+    return {};
+  }
+  const overrides: Record<string, Vec2> = {};
+  const usedByDistrict = new Map<string, Set<WorldBuilding>>();
+  for (const item of items) {
+    const used = usedByDistrict.get(item.districtId) ?? new Set<WorldBuilding>();
+    let best: WorldBuilding | null = null;
+    let bestDistance = Infinity;
+    for (const building of layout.buildings) {
+      if (building.districtId !== item.districtId || used.has(building)) {
+        continue;
+      }
+      const distance = (building.x - item.x) ** 2 + (building.z - item.z) ** 2;
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = building;
+      }
+    }
+    if (best) {
+      used.add(best);
+      usedByDistrict.set(item.districtId, used);
+      overrides[item.id] = frontCenter(best);
+    }
+  }
+  return overrides;
+}
+
+export function hotspotPositionOverrides(layout: WorldMapLayout): Record<string, Vec2> {
+  return poiOverrides(layout, neighborhoodHotspots);
+}
+
+export function crimeContactPositionOverrides(layout: WorldMapLayout): Record<string, Vec2> {
+  return poiOverrides(layout, crimeContacts);
 }
