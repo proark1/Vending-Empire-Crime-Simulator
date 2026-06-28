@@ -1403,7 +1403,6 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
       {entered && <GuidanceArrow label={guidanceLabel} state={state} targetLocationId={guidanceLocationId} playerHeadingDegrees={playerHeadingDegrees} playerPosition={playerPosition} />}
       {entered && activeTarget && primaryInteraction && (
         <div className={`target-prompt ${primaryInteraction.disabled ? "disabled" : ""} ${serviceHold ? "working" : ""}`}>
-          <span className="target-name">{activeTarget.label}</span>
           <span className="target-action">
             <kbd>{holdPrimaryInteraction ? "HOLD E" : "E"}</kbd>
             {primaryInteraction.label}

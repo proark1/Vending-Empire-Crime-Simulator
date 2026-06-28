@@ -25,6 +25,10 @@ function distance(from: Vec2, to: Vec2): number {
   return Math.hypot(to.x - from.x, to.z - from.z);
 }
 
+// Once the player is essentially on top of the target, the interaction panel and
+// crosshair prompt already name it — so the arrow would only echo them. Hide it.
+const ARRIVED_METERS = 8;
+
 export function GuidanceArrow({ label, state, targetLocationId, playerHeadingDegrees, playerPosition }: GuidanceArrowProps) {
   if (!targetLocationId) {
     return null;
@@ -36,6 +40,10 @@ export function GuidanceArrow({ label, state, targetLocationId, playerHeadingDeg
   }
 
   const meters = Math.max(0, Math.round(distance(playerPosition, location.position) * 6));
+  if (meters <= ARRIVED_METERS) {
+    return null;
+  }
+
   const rotation = guidanceRotationDegrees(playerPosition, location.position, playerHeadingDegrees);
 
   return (
