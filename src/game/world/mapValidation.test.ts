@@ -30,6 +30,9 @@ const hasMessage = (layout: WorldMapLayout, needle: string, severity: "error" | 
 
 describe("map validation rules", () => {
   it("keeps the hand-authored default layout free of errors", () => {
+    // The default map carries a handful of "outside its district bounds" *warnings*
+    // (districts are loose, overlapping tagging regions) — intentionally non-blocking,
+    // so the shipped map stays error-free and saveable.
     expect(validateWorldMapLayout(defaultWorldMapLayout).filter((i) => i.severity === "error")).toEqual([]);
   });
 
@@ -45,10 +48,12 @@ describe("map validation rules", () => {
     expect(hasMessage(layout, "too close to walk between", "warning")).toBe(false);
   });
 
-  it("flags a building sitting outside its district bounds", () => {
+  it("flags a building outside its district bounds as a warning, never an error", () => {
     const layout = baseLayout();
     layout.buildings = [building(60, 0, "FAR")]; // starter_suburb maxX is 20
+    // Deliberately a warning, not a save-blocking error (the default map relies on this).
     expect(hasMessage(layout, "outside its district bounds", "warning")).toBe(true);
+    expect(hasMessage(layout, "outside its district bounds", "error")).toBe(false);
   });
 
   it("detects a generated layout and preserves its arrays verbatim", () => {

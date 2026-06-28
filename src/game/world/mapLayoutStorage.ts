@@ -382,6 +382,11 @@ export function validateWorldMapLayout(layout: WorldMapLayout): MapValidationIss
 
     const district = districts[building.districtId];
     if (district && !pointInsideBounds({ x: building.x, z: building.z }, district.bounds)) {
+      // A warning, deliberately not an error: district bounds are loose, overlapping
+      // tagging regions, and the hand-authored default map intentionally places ~8
+      // buildings whose centres sit just past their tagged district edge. Blocking
+      // save on this would invalidate the shipped map. The generator produces none,
+      // so in practice this only ever flags a manual edit that drifted off-district.
       pushIssue(issues, "warning", "buildings", `${label} sits outside its district bounds.`);
     }
 
