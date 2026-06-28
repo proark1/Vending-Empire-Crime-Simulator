@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { WebSocket, WebSocketServer } from "ws";
-import { createRoomManager } from "./roomManager.js";
+import { createRoomManager, sweepDeadConnections } from "./roomManager.js";
 
 const { Pool } = pg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -53,6 +53,7 @@ const metrics = {
   multiplayerDisconnects: 0,
   multiplayerMessages: 0,
   multiplayerRoomsCreated: 0,
+  multiplayerTimeouts: 0,
   playerDataResets: 0,
   serverErrors: 0
 };
@@ -1420,6 +1421,13 @@ async function handleMultiplayerUpgrade(request, socket, head, url, wss) {
       }
     });
 
+    // WS-level heartbeat: the browser auto-pongs our pings, re-arming isAlive so the
+    // sweep can tell a live socket from a half-open one.
+    ws.isAlive = true;
+    ws.on("pong", () => {
+      ws.isAlive = true;
+    });
+
     ws.on("message", (message) => {
       if (multiplayerRoomManager.handleMessage(peerId, message)) {
         metrics.multiplayerMessages += 1;
@@ -1692,6 +1700,17 @@ const server = createServer(async (request, response) => {
 });
 
 const multiplayerWss = new WebSocketServer({ maxPayload: jsonLimitBytes, noServer: true });
+
+// Reap half-open sockets (laptop sleep, crash, network drop) that never sent a
+// close frame — otherwise a ghost peer lingers in its room, and a ghost host keeps
+// the room open forever so guests never get room:closed. terminate() fires 'close',
+// which routes cleanup back through the room manager.
+const multiplayerHeartbeatMs = Number(process.env.MULTIPLAYER_HEARTBEAT_MS ?? 30000);
+const multiplayerHeartbeat = setInterval(() => {
+  metrics.multiplayerTimeouts += sweepDeadConnections(multiplayerWss.clients);
+}, multiplayerHeartbeatMs);
+multiplayerHeartbeat.unref?.();
+multiplayerWss.on("close", () => clearInterval(multiplayerHeartbeat));
 
 server.on("upgrade", (request, socket, head) => {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);

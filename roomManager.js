@@ -362,3 +362,32 @@ export function createRoomManager(options = {}) {
     }
   };
 }
+
+/**
+ * One heartbeat sweep over a set of live sockets. Any socket that has not marked
+ * itself alive (via a pong) since the previous sweep is terminated — this is the
+ * only way to detect a half-open TCP connection (laptop sleep, network drop, crash)
+ * that never sent a clean close frame. Survivors are marked not-alive and pinged;
+ * the browser auto-replies with a pong, which re-arms `isAlive` before the next sweep.
+ *
+ * Pure over an injected client collection so it can be unit-tested without real sockets.
+ * @param {Iterable<{ isAlive?: boolean, terminate: () => void, ping: () => void }>} clients
+ * @returns {number} how many dead sockets were terminated this sweep
+ */
+export function sweepDeadConnections(clients) {
+  let terminated = 0;
+  for (const ws of clients) {
+    if (ws.isAlive === false) {
+      ws.terminate();
+      terminated += 1;
+      continue;
+    }
+    ws.isAlive = false;
+    try {
+      ws.ping();
+    } catch {
+      // Socket is already tearing down; the next sweep (or its close event) reaps it.
+    }
+  }
+  return terminated;
+}

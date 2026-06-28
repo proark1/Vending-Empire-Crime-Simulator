@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { createRoomManager, MULTIPLAYER_PROTOCOL_VERSION } from "./roomManager.js";
+import { createRoomManager, MULTIPLAYER_PROTOCOL_VERSION, sweepDeadConnections } from "./roomManager.js";
 
 // A test harness around the manager: each "connection" captures the messages the
 // manager sends to that peer, and `send` feeds a JSON frame in as a client would.
@@ -326,5 +326,61 @@ describe("roomManager: protocol robustness", () => {
     const t = setup();
     expect(t.send("ghost", { type: "room:create" })).toBeNull();
     expect(t.manager.roomCount).toBe(0);
+  });
+});
+
+describe("sweepDeadConnections (heartbeat)", () => {
+  const fakeWs = (isAlive, { pingThrows = false } = {}) => ({
+    isAlive,
+    terminated: false,
+    pinged: false,
+    terminate() {
+      this.terminated = true;
+    },
+    ping() {
+      this.pinged = true;
+      if (pingThrows) {
+        throw new Error("socket closing");
+      }
+    }
+  });
+
+  it("terminates a socket that did not pong since the last sweep", () => {
+    const dead = fakeWs(false);
+    expect(sweepDeadConnections([dead])).toBe(1);
+    expect(dead.terminated).toBe(true);
+    expect(dead.pinged).toBe(false);
+  });
+
+  it("pings and re-arms a live socket instead of terminating it", () => {
+    const live = fakeWs(true);
+    expect(sweepDeadConnections([live])).toBe(0);
+    expect(live.terminated).toBe(false);
+    expect(live.pinged).toBe(true);
+    expect(live.isAlive).toBe(false); // re-armed for the next sweep; pong will flip it back
+  });
+
+  it("treats a brand-new socket (isAlive undefined) as alive on the first sweep", () => {
+    const fresh = fakeWs(undefined);
+    expect(sweepDeadConnections([fresh])).toBe(0);
+    expect(fresh.terminated).toBe(false);
+    expect(fresh.pinged).toBe(true);
+  });
+
+  it("reaps only the dead sockets in a mixed set and counts them", () => {
+    const a = fakeWs(true);
+    const b = fakeWs(false);
+    const c = fakeWs(true);
+    const d = fakeWs(false);
+    expect(sweepDeadConnections([a, b, c, d])).toBe(2);
+    expect([a.terminated, b.terminated, c.terminated, d.terminated]).toEqual([false, true, false, true]);
+    expect([a.pinged, c.pinged]).toEqual([true, true]);
+  });
+
+  it("keeps sweeping if a ping throws on a tearing-down socket", () => {
+    const flaky = fakeWs(true, { pingThrows: true });
+    const next = fakeWs(false);
+    expect(() => sweepDeadConnections([flaky, next])).not.toThrow();
+    expect(next.terminated).toBe(true);
   });
 });
