@@ -65,6 +65,7 @@ import {
 import { estimateMachineSalesPerHour } from "../game/systems/economy";
 import { machineModels } from "../game/content/machineModels";
 import { gameDesignPillars, npcRoles } from "../game/content/story";
+import { milestoneBalanceTargets } from "../game/content/balanceTargets";
 import { baseFacilityList } from "../game/content/baseFacilities";
 import { supplierDeals } from "../game/content/suppliers";
 import { vehicleUpgradeList } from "../game/content/vehicleUpgrades";
@@ -1623,6 +1624,28 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
             <span>
               {campaignProgress.filter((progress) => progress.mission.completed).length}/{campaignProgress.length} chains · {storyProgress.length} arcs · leading ending {endingScores[0]?.path.title ?? "unknown"}
             </span>
+          </article>
+
+          <article className="vehicle-card pacing-card">
+            <div className="vehicle-heading">
+              <Route size={18} aria-hidden="true" />
+              <div>
+                <h3>Milestone pacing</h3>
+                <p>Targets for the current vertical slice playtest.</p>
+              </div>
+            </div>
+            <div className="storage-list">
+              {milestoneBalanceTargets.map((target) => (
+                <article className="inventory-row" key={target.id}>
+                  <div>
+                    <h3>{target.title}</h3>
+                    <p>{target.evidence}</p>
+                    <p>{target.tuningRisk}</p>
+                  </div>
+                  <strong>{target.targetWindow}</strong>
+                </article>
+              ))}
+            </div>
           </article>
 
           <article className="vehicle-card">

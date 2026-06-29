@@ -1,16 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { ThreeScene } from "./render/three/ThreeScene";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { graphicsQualityLabels, graphicsQualityModes, loadGraphicsQuality, saveGraphicsQuality, type GraphicsQuality } from "./render/three/graphicsQuality";
 import type { SceneFeedbackEvent, SceneTarget } from "./render/three/SceneTargets";
-import { Dashboard } from "./ui/Dashboard";
 import { Hud } from "./ui/Hud";
 import { InteractionPanel } from "./ui/InteractionPanel";
-import { LandingCinematicScene } from "./ui/LandingCinematicScene";
 import { Minimap } from "./ui/Minimap";
 import { MissionTracker } from "./ui/MissionTracker";
 import { GuidanceArrow } from "./ui/GuidanceArrow";
 import { ClipboardList, Copy, DollarSign, Flame, LogOut, Map, Menu, Network, Package, Play, RotateCcw, Save, ShieldAlert, SlidersHorizontal, Sparkles, Truck, Users, Volume2, VolumeX, Wrench, X, Zap, type LucideIcon } from "lucide-react";
-import { AdminMapEditor } from "./ui/AdminMapEditor";
 import { getStarterMissionStep } from "./game/core/mission";
 import { activeConflictEvents, activeMachineAlarms, heatTierFor, latestDayReport, selectedRouteTask } from "./game/core/selectors";
 import { executePrimaryInteraction, getPrimaryInteraction, type PrimaryInteraction, type PrimaryInteractionTone } from "./ui/interactionActions";
@@ -29,6 +25,11 @@ import { createInitialState } from "./game/content/initialState";
 import { configureGameAudio, playEventCue, playFeedbackCue, playVoiceCue, startGameAmbience, unlockGameAudio, updateGameAmbience } from "./ui/audio";
 import { MultiplayerClient } from "./game/network/multiplayerClient";
 import type { MultiplayerStatus } from "./game/network/protocol";
+
+const AdminMapEditor = lazy(() => import("./ui/AdminMapEditor").then((module) => ({ default: module.AdminMapEditor })));
+const Dashboard = lazy(() => import("./ui/Dashboard").then((module) => ({ default: module.Dashboard })));
+const LandingCinematicScene = lazy(() => import("./ui/LandingCinematicScene").then((module) => ({ default: module.LandingCinematicScene })));
+const ThreeScene = lazy(() => import("./render/three/ThreeScene").then((module) => ({ default: module.ThreeScene })));
 
 function targetLocationId(target: SceneTarget | null, state: GameState): LocationId | null {
   if (!target) {
@@ -663,6 +664,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
   const [showControls, setShowControls] = useState(false);
   const [hasMoved, setHasMoved] = useState(false);
   const [voiceLine, setVoiceLine] = useState<{ speaker: string; subtitle: string } | null>(null);
+  const [dismissedEndingPathId, setDismissedEndingPathId] = useState<string | null>(null);
   const heatVoiceTierRef = useRef(0);
   const [pointerLocked, setPointerLocked] = useState(false);
   const [hasLockedOnce, setHasLockedOnce] = useState(false);
@@ -694,6 +696,14 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
   const installedPlayerMachines = Object.values(state.machines).filter((machine) => machine.ownerFactionId === state.playerFactionId && machine.placementStatus === "installed").length;
   const rivalMachines = Object.values(state.machines).filter((machine) => machine.ownerFactionId !== state.playerFactionId && machine.placementStatus === "installed").length;
   const starterArc = storyMissionArcs[0];
+  const executedEnding = useMemo(
+    () => Object.values(state.empire.endingExecutions).find((ending) => ending.status === "executed"),
+    [state.empire.endingExecutions]
+  );
+  const executedEndingPath = useMemo(
+    () => endgamePaths.find((path) => path.id === executedEnding?.pathId),
+    [executedEnding?.pathId]
+  );
   const showDebugTools = useMemo(() => new URLSearchParams(window.location.search).has("debug"), []);
   const isLocalSession = session.local === true;
   const worldClockPaused = !entered || dashboardOpen || gameMenuOpen || showControls;
@@ -707,6 +717,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
       : multiplayerStatus.connection === "error"
         ? "Connection failed"
         : "Not in a room";
+  const showEndingOverlay = Boolean(entered && executedEnding && executedEndingPath && dismissedEndingPathId !== executedEnding.pathId);
 
   const addToast = useCallback((toast: Omit<ToastMessage, "id">) => {
     const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -891,6 +902,10 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
       tone: report.contractsFailed > 0 ? "warning" : "good"
     });
   }, [addToast, report]);
+
+  useEffect(() => {
+    setDismissedEndingPathId((current) => (current && current === executedEnding?.pathId ? current : null));
+  }, [executedEnding?.pathId]);
 
   const handleRestart = useCallback(() => {
     if (window.confirm("Restart this local MVP save?")) {
@@ -1226,18 +1241,20 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
 
   return (
     <main className={gameShellClassName}>
-      <ThreeScene
-        graphicsQuality={graphicsQuality}
-        guidanceLocationId={guidanceLocationId}
-        mapLayout={mapLayout}
-        modelConfig={modelConfig}
-        state={state}
-        feedbackEvent={sceneFeedback}
-        onVehicleDrive={handleVehicleDrive}
-        onPlayerPositionChange={setPlayerPosition}
-        onPlayerHeadingChange={setPlayerHeadingDegrees}
-        onTargetChange={setTarget}
-      />
+      <Suspense fallback={<div className="scene-loading" role="status">Loading city...</div>}>
+        <ThreeScene
+          graphicsQuality={graphicsQuality}
+          guidanceLocationId={guidanceLocationId}
+          mapLayout={mapLayout}
+          modelConfig={modelConfig}
+          state={state}
+          feedbackEvent={sceneFeedback}
+          onVehicleDrive={handleVehicleDrive}
+          onPlayerPositionChange={setPlayerPosition}
+          onPlayerHeadingChange={setPlayerHeadingDegrees}
+          onTargetChange={setTarget}
+        />
+      </Suspense>
       <div className="world-vignette" aria-hidden="true" />
       {entered && <Hud feedbackEvent={sceneFeedback} nextActionLabel={nextActionLabel} state={state} />}
       {entered && <MissionTracker compact={dashboardOpen} state={state} playerPosition={playerPosition} />}
@@ -1296,6 +1313,41 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
             <li><span className="controls-legend-keys"><kbd>M</kbd></span><span>Dashboard &amp; map</span></li>
           </ul>
         </div>
+      )}
+      {showEndingOverlay && executedEnding && executedEndingPath && (
+        <section className="ending-overlay" role="dialog" aria-modal="true" aria-label={`${executedEndingPath.title} ending`}>
+          <div className="ending-panel">
+            <span className="landing-kicker">Ending executed</span>
+            <h2>{executedEndingPath.title}</h2>
+            <p>{executedEnding.summary ?? executedEndingPath.consequence}</p>
+            <div className="ending-stat-grid" aria-label="Run summary">
+              <div>
+                <span>Cash</span>
+                <strong>${Math.round(playerFaction.money)}</strong>
+              </div>
+              <div>
+                <span>Heat</span>
+                <strong>{Math.round(playerFaction.heat)}</strong>
+              </div>
+              <div>
+                <span>Your machines</span>
+                <strong>{installedPlayerMachines}</strong>
+              </div>
+              <div>
+                <span>Day</span>
+                <strong>{Math.max(1, Math.floor(state.worldTimeHours / 24) + 1)}</strong>
+              </div>
+            </div>
+            <div className="ending-actions">
+              <button onClick={() => setDismissedEndingPathId(executedEnding.pathId)} type="button">
+                Keep running route
+              </button>
+              <button className="danger" onClick={handleRestart} type="button">
+                Restart run
+              </button>
+            </div>
+          </div>
+        </section>
       )}
       {entered && (
         <button
@@ -1495,7 +1547,9 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
                 <Play size={18} aria-hidden="true" />
                 Start Snack Beef
               </button>
-              <LandingCinematicScene modelConfig={modelConfig} />
+              <Suspense fallback={<div className="landing-cinematic-placeholder" aria-hidden="true" />}>
+                <LandingCinematicScene modelConfig={modelConfig} />
+              </Suspense>
               <LandingQuickFacts state={state} />
               <LandingFeatureGrid />
               <LandingGameLoop />
@@ -1556,11 +1610,13 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
         </button>
       )}
       {dashboardOpen && (
-        <Dashboard
-          state={state}
-          onCommand={sendCommandWithFeedback}
-          showDebug={showDebugTools}
-        />
+        <Suspense fallback={<aside className="dashboard dashboard-loading" role="status">Loading ops...</aside>}>
+          <Dashboard
+            state={state}
+            onCommand={sendCommandWithFeedback}
+            showDebug={showDebugTools}
+          />
+        </Suspense>
       )}
       {entered && <Minimap state={state} mapLayout={mapLayout} playerPosition={playerPosition} guidanceLocationId={guidanceLocationId} target={activeTarget} />}
       {entered && <InteractionPanel state={state} target={activeTarget} onCommand={sendCommandAtActiveTarget} onSave={save} onReload={reload} onRestart={handleRestart} />}
@@ -1956,17 +2012,19 @@ export function App() {
 
   if (isAdminRoute) {
     return (
-      <AdminMapEditor
-        initialAudioConfig={audioConfig}
-        initialLayout={mapLayout}
-        modelConfig={modelConfig}
-        onAudioSave={setAudioConfig}
-        onAudioReset={setAudioConfig}
-        onModelReset={handleResetModelConfig}
-        onModelSave={handleSaveModelConfig}
-        onSave={handleSaveMapLayout}
-        onReset={handleResetMapLayout}
-      />
+      <Suspense fallback={<main className="admin-loading" role="status">Loading admin tools...</main>}>
+        <AdminMapEditor
+          initialAudioConfig={audioConfig}
+          initialLayout={mapLayout}
+          modelConfig={modelConfig}
+          onAudioSave={setAudioConfig}
+          onAudioReset={setAudioConfig}
+          onModelReset={handleResetModelConfig}
+          onModelSave={handleSaveModelConfig}
+          onSave={handleSaveMapLayout}
+          onReset={handleResetMapLayout}
+        />
+      </Suspense>
     );
   }
 

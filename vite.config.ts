@@ -26,6 +26,28 @@ export default defineConfig(async () => {
   const proxyApi = process.env.VITE_API_PROXY === "1" || await canConnect(apiUrl.hostname, port);
 
   return {
+    build: {
+      chunkSizeWarningLimit: 650,
+      rollupOptions: {
+        output: {
+          manualChunks(id: string) {
+            if (!id.includes("node_modules")) {
+              return undefined;
+            }
+            if (id.includes("/node_modules/three/")) {
+              return id.includes("/examples/") ? "vendor-three-extras" : "vendor-three";
+            }
+            if (id.includes("/node_modules/lucide-react/")) {
+              return "vendor-icons";
+            }
+            if (id.includes("/node_modules/react/") || id.includes("/node_modules/react-dom/") || id.includes("/node_modules/scheduler/")) {
+              return "vendor-react";
+            }
+            return "vendor";
+          }
+        }
+      }
+    },
     plugins: [react()],
     server: {
       proxy: proxyApi

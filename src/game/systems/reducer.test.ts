@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createInitialState } from "../content/initialState";
 import {
+  activeLawInspections,
   activeLocationRights,
   baseStorageCapacity,
   campaignMissionProgress,
@@ -447,6 +448,91 @@ describe("game reducer", () => {
 
     expect(districtUnlockInfo(result.state, "industrial_yards").progress.access).toBe("unlocked");
     expect(machineAtLocation(result.state, "freight_depot")?.ownerFactionId).toBe("player");
+  });
+
+  it("covers the vertical slice with real commands and no debug shortcuts", () => {
+    let state = createInitialState();
+    state.factions.player.money = 2200;
+    const commands: GameCommand[] = [];
+    const run = (command: GameCommand) => {
+      commands.push(command);
+      state = reduceGameState(state, command).state;
+      return state;
+    };
+    const readyStoredMachine = () => {
+      const machine = Object.values(state.machines).find(
+        (candidate) => candidate.ownerFactionId === "player" && candidate.placementStatus === "stored" && candidate.damage <= 0
+      );
+      expect(machine).toBeDefined();
+      return machine!;
+    };
+
+    run(visit("garage"));
+    run({ type: "repair_machine", actorId: "player", machineId: "machine_player_1" });
+    run(visit("laundromat"));
+    run({ type: "place_machine", actorId: "player", locationId: "laundromat", machineId: "machine_player_1", method: "legal_contract" });
+    run(visit("supplier"));
+    run({ type: "buy_product", actorId: "player", productId: "soda", quantity: 6 });
+    run(visit("laundromat"));
+    run({ type: "stock_machine", actorId: "player", machineId: "machine_player_1", productId: "soda", quantity: 6 });
+
+    run(visit("garage"));
+    run({ type: "buy_machine_model", actorId: "player", modelId: "combo_machine", quantity: 2 });
+    const gymMachine = readyStoredMachine();
+    run(visit("gym"));
+    run({ type: "place_machine", actorId: "player", locationId: "gym", machineId: gymMachine.id, method: "legal_contract" });
+    run(visit("supplier"));
+    run({ type: "buy_product", actorId: "player", productId: "chips", quantity: 10 });
+    run(visit("gym"));
+    run({ type: "stock_machine", actorId: "player", machineId: gymMachine.id, productId: "chips", quantity: 10 });
+
+    const arcadeMachine = readyStoredMachine();
+    run(visit("arcade"));
+    run({ type: "place_machine", actorId: "player", locationId: "arcade", machineId: arcadeMachine.id, method: "legal_contract" });
+    run(visit("supplier"));
+    run({ type: "buy_product", actorId: "player", productId: "water", quantity: 10 });
+    run(visit("arcade"));
+    run({ type: "stock_machine", actorId: "player", machineId: arcadeMachine.id, productId: "water", quantity: 10 });
+
+    expect(state.contracts.contract_1.status).toBe("completed");
+    expect(state.mission.completed).toBe(true);
+
+    run({ type: "scout_district", actorId: "player", districtId: "industrial_yards" });
+    run({ type: "unlock_district", actorId: "player", districtId: "industrial_yards" });
+    expect(districtUnlockInfo(state, "industrial_yards").progress.access).toBe("unlocked");
+
+    run(visit("garage"));
+    run({ type: "buy_machine_model", actorId: "player", modelId: "basic_snack", quantity: 1 });
+    const yardMachine = readyStoredMachine();
+    run(visit("freight_depot"));
+    run({ type: "place_machine", actorId: "player", locationId: "freight_depot", machineId: yardMachine.id, method: "illegal" });
+    run(visit("supplier"));
+    run({ type: "buy_product", actorId: "player", productId: "energy", quantity: 8 });
+    run(visit("freight_depot"));
+    run({ type: "stock_machine", actorId: "player", machineId: yardMachine.id, productId: "energy", quantity: 8 });
+
+    run(visit("garage"));
+    run({ type: "hire_employee", actorId: "player", role: "guard" });
+    const guard = Object.values(state.employees).find((employee) => employee.role === "guard");
+    expect(guard).toBeDefined();
+    run({ type: "assign_employee", actorId: "player", employeeId: guard!.id, machineId: yardMachine.id, assigned: true });
+
+    run(visit("supplier"));
+    run({ type: "negotiate_supplier_deal", actorId: "player", supplierId: "backdoor_wholesale", dealKind: "bulk_discount" });
+    expect(Object.values(state.economy.supply.activeDeals).some((deal) => deal.supplierId === "backdoor_wholesale")).toBe(true);
+
+    state.factions.player.heat = Math.max(state.factions.player.heat, 16);
+    state.law.nextInspectionHour = state.worldTimeHours + 0.05;
+    run({ type: "advance_time", actorId: "player", hours: 0.1 });
+    const inspection = activeLawInspections(state)[0];
+    expect(inspection).toBeDefined();
+    run(visit(inspection!.locationId));
+    run({ type: "resolve_inspection", actorId: "player", inspectionId: inspection!.id, resolution: "pay_fine" });
+
+    const yardProgress = campaignMissionProgress(state).find((progress) => progress.arc.id === "yard_leverage");
+    expect(yardProgress?.completedObjectives.map((objective) => objective.id)).toEqual(["yard_scout", "yard_open", "yard_muscle"]);
+    expect(state.law.activeInspections[inspection!.id]).toMatchObject({ status: "resolved", resolution: "pay_fine" });
+    expect(commands.some((command) => command.type.startsWith("debug_"))).toBe(false);
   });
 
   it("keeps rival expansion out of locked districts", () => {
