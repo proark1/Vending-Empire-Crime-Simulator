@@ -65,10 +65,10 @@ import {
 import { estimateMachineSalesPerHour } from "../game/systems/economy";
 import { machineModels } from "../game/content/machineModels";
 import { gameDesignPillars, npcRoles } from "../game/content/story";
-import { milestoneBalanceTargets } from "../game/content/balanceTargets";
 import { baseFacilityList } from "../game/content/baseFacilities";
 import { supplierDeals } from "../game/content/suppliers";
 import { vehicleUpgradeList } from "../game/content/vehicleUpgrades";
+import { buildPlaytestReport, playtestReportFilename } from "../game/core/playtestTelemetry";
 
 type DashboardTab = "machines" | "fleet" | "base" | "empire" | "suppliers" | "catalog" | "finance" | "districts" | "rights" | "jobs" | "route" | "logistics" | "crew" | "law" | "heat" | "conflict" | "rival" | "story" | "debug" | "log";
 
@@ -216,6 +216,7 @@ function relationshipBrief(relationship: string): string {
 export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
   const [tab, setTab] = useState<DashboardTab>("machines");
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [playtestExportStatus, setPlaytestExportStatus] = useState("");
   const playerMachines = useMemo(() => ownedMachines(state, state.playerFactionId), [state]);
   const installedPlayerMachines = useMemo(() => installedMachines(state, state.playerFactionId), [state]);
   const rivals = useMemo(() => Object.values(state.factions).filter((faction) => faction.type === "npc"), [state.factions]);
@@ -279,6 +280,7 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
   const storyProgress = useMemo(() => storyArcProgress(state), [state]);
   const campaignProgress = useMemo(() => campaignMissionProgress(state), [state]);
   const endingScores = useMemo(() => endgamePathScores(state), [state]);
+  const playtestReport = useMemo(() => buildPlaytestReport(state), [state]);
   const advancedTabs = useMemo<DashboardTab[]>(() => ["empire", "suppliers", "catalog", "finance", "logistics", "heat", "conflict", "rival", "story", ...(showDebug ? (["debug"] as DashboardTab[]) : [])], [showDebug]);
   const visibleTabs = useMemo<Array<{ icon: React.ReactNode; id: DashboardTab; label: string }>>(
     () => [
@@ -320,6 +322,34 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
       setTab("machines");
     }
   }, [advancedTabs, showAdvanced, showDebug, tab]);
+
+  const handleExportPlaytestReport = () => {
+    const report = buildPlaytestReport(state);
+    const payload = JSON.stringify(report, null, 2);
+    const downloadReport = () => {
+      const blob = new Blob([payload], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = playtestReportFilename(state);
+      link.click();
+      URL.revokeObjectURL(url);
+      setPlaytestExportStatus("Downloaded JSON");
+    };
+    setPlaytestExportStatus("");
+
+    if (!navigator.clipboard) {
+      downloadReport();
+      return;
+    }
+
+    void navigator.clipboard
+      .writeText(payload)
+      .then(() => {
+        setPlaytestExportStatus("Copied JSON");
+      })
+      .catch(downloadReport);
+  };
 
   return (
     <aside className="dashboard">
@@ -1631,18 +1661,37 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
               <Route size={18} aria-hidden="true" />
               <div>
                 <h3>Milestone pacing</h3>
-                <p>Targets for the current vertical slice playtest.</p>
+                <p>
+                  {playtestReport.phase} · {playtestReport.estimatedActiveMinutes} active min · {playtestReport.flags.length} flags
+                </p>
               </div>
             </div>
+            <div className="row-actions">
+              <MiniButton onClick={handleExportPlaytestReport}>
+                Export playtest JSON
+              </MiniButton>
+              {playtestExportStatus && <span className="save-status">{playtestExportStatus}</span>}
+            </div>
             <div className="storage-list">
-              {milestoneBalanceTargets.map((target) => (
-                <article className="inventory-row" key={target.id}>
+              {playtestReport.milestones.map((target) => (
+                <article className={`inventory-row ${target.status === "complete" ? "contract-needed" : target.timing === "late" ? "danger" : ""}`} key={target.id}>
                   <div>
                     <h3>{target.title}</h3>
                     <p>{target.evidence}</p>
-                    <p>{target.tuningRisk}</p>
+                    <p>
+                      {target.status} · {target.completedClock ?? "not timed"} · {target.timing ?? "unmeasured"}
+                    </p>
                   </div>
                   <strong>{target.targetWindow}</strong>
+                </article>
+              ))}
+              {playtestReport.flags.map((flag) => (
+                <article className={`inventory-row ${flag.severity === "error" ? "danger" : flag.severity === "warning" ? "contract-needed" : ""}`} key={flag.code}>
+                  <div>
+                    <h3>{flag.code.replaceAll("_", " ")}</h3>
+                    <p>{flag.message}</p>
+                  </div>
+                  <strong>{flag.severity}</strong>
                 </article>
               ))}
             </div>
@@ -1721,7 +1770,7 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
                 <h3>{progress.arc.title}</h3>
                 <p>
                   {progress.mission.completed
-                    ? `${progress.arc.reward}`
+                    ? progress.arc.payoff
                     : progress.activeObjective
                       ? `${progress.activeObjective.title} · ${progress.activeObjective.description}`
                       : "No active objective"}
@@ -1753,6 +1802,7 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
                 <p>
                   {state.districts[progress.arc.districtId]?.name ?? progress.arc.districtId} · {progress.stage} · {progress.arc.reward}
                 </p>
+                {progress.stage === "complete" && <p>{progress.arc.payoff}</p>}
                 <p>{progress.signals.length > 0 ? progress.signals.join(" · ") : progress.arc.beats.join(" · ")}</p>
               </div>
               <strong>{Math.round(progress.progressRatio * 100)}%</strong>

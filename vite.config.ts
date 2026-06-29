@@ -31,6 +31,15 @@ export default defineConfig(async () => {
       rollupOptions: {
         output: {
           manualChunks(id: string) {
+            if (id.includes("/src/game/systems/") || id.includes("/src/game/ai/")) {
+              return "game-systems";
+            }
+            if (id.includes("/src/game/content/")) {
+              return "game-content";
+            }
+            if (id.includes("/src/game/world/")) {
+              return "game-world";
+            }
             if (!id.includes("node_modules")) {
               return undefined;
             }

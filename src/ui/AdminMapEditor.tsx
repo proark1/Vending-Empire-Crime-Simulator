@@ -1,5 +1,5 @@
 import { Activity, AlertTriangle, Box, Building2, CheckCircle2, CircleDot, Clock, Copy, Eye, Gauge, History, Map, Music, Plus, Redo2, RotateCcw, RotateCw, Route, Save, Shuffle, Sparkles, Square, Trash2, Trees, Undo2, Users, Wand2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import * as THREE from "three";
 import type { AudioConfig } from "../game/content/audioConfig";
@@ -23,8 +23,9 @@ import {
   type RemoteMapRevision
 } from "../game/save/api";
 import { createBuilding } from "../render/three/proceduralArt";
-import { AdminAudioEditor } from "./AdminAudioEditor";
-import { AdminModelEditor } from "./AdminModelEditor";
+
+const AdminAudioEditor = lazy(() => import("./AdminAudioEditor").then((module) => ({ default: module.AdminAudioEditor })));
+const AdminModelEditor = lazy(() => import("./AdminModelEditor").then((module) => ({ default: module.AdminModelEditor })));
 
 type EditableLayer = "roads" | "buildings" | "backdropBuildings" | "decorations" | "patrolZones" | "parks";
 type AdminViewMode = "2d" | "3d";
@@ -2263,11 +2264,15 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, modelConfig,
         </aside>
       </section>
       ) : activeAdminTab === "models" ? (
-        <AdminModelEditor config={modelConfig} onReset={onModelReset} onSave={onModelSave} />
+        <Suspense fallback={<section className="admin-panel" role="status">Loading model tools...</section>}>
+          <AdminModelEditor config={modelConfig} onReset={onModelReset} onSave={onModelSave} />
+        </Suspense>
       ) : activeAdminTab === "ops" ? (
         <LiveOpsPanel monitoring={monitoring} onRefresh={() => refreshMonitoring()} onResetPlayerData={handleResetPlayerData} saving={saving} status={status} />
       ) : (
-        <AdminAudioEditor initialConfig={initialAudioConfig} onReset={onAudioReset} onSave={onAudioSave} session={adminSession} />
+        <Suspense fallback={<section className="admin-panel" role="status">Loading audio tools...</section>}>
+          <AdminAudioEditor initialConfig={initialAudioConfig} onReset={onAudioReset} onSave={onAudioSave} session={adminSession} />
+        </Suspense>
       )}
     </main>
   );

@@ -12,6 +12,7 @@ export interface StoryMissionArc {
   beats: string[];
   missionChain: StoryMissionObjective[];
   reward: string;
+  payoff: string;
 }
 
 export type StoryMissionRequirement =
@@ -40,6 +41,7 @@ export interface EndgamePath {
   title: string;
   condition: string;
   consequence: string;
+  executionSummary: string;
 }
 
 export interface NpcRoleDefinition {
@@ -103,7 +105,8 @@ export const storyMissionArcs: StoryMissionArc[] = [
         rewardMoney: 0
       }
     ],
-    reward: "Iron Yard scouting and expansion cash"
+    reward: "Iron Yard scouting and expansion cash",
+    payoff: "By closing time, Foam & Fold regulars stop calling it the broken snack box and start calling it your machine. Redline notices the word your."
   },
   {
     id: "yard_leverage",
@@ -133,7 +136,8 @@ export const storyMissionArcs: StoryMissionArc[] = [
         rewardMoney: 55
       }
     ],
-    reward: "Bulk supplier pricing and armored machine access"
+    reward: "Bulk supplier pricing and armored machine access",
+    payoff: "The freight gate shifts around your schedule now: drivers time their breaks to the machine hum, and the dock foreman stops asking who signed the paperwork."
   },
   {
     id: "downtown_contracts",
@@ -163,7 +167,8 @@ export const storyMissionArcs: StoryMissionArc[] = [
         rewardMoney: 85
       }
     ],
-    reward: "Luxury vendors and cleaner public reputation"
+    reward: "Luxury vendors and cleaner public reputation",
+    payoff: "Downtown does not applaud. It stamps forms, unlocks lobby doors, and quietly lets your machines become part of the building directory."
   },
   {
     id: "neon_afterhours",
@@ -193,7 +198,8 @@ export const storyMissionArcs: StoryMissionArc[] = [
         rewardMoney: 80
       }
     ],
-    reward: "Discreet machine models and high-risk fictional products"
+    reward: "Discreet machine models and high-risk fictional products",
+    payoff: "Neon Quarter turns your labels into a rumor: half menu, half password. The night crowd knows which button to press, and so do the rivals."
   },
   {
     id: "old_town_war",
@@ -223,7 +229,8 @@ export const storyMissionArcs: StoryMissionArc[] = [
         rewardMoney: 120
       }
     ],
-    reward: "Citywide control decision"
+    reward: "Citywide control decision",
+    payoff: "Old Town answers in echoes: Marlow's old shortcuts, courthouse whispers, motel dead ends. When your machine lights up, the old map finally stops belonging to him."
   }
 ];
 
@@ -232,30 +239,35 @@ export const endgamePaths: EndgamePath[] = [
     id: "legit_empire",
     title: "Legit Empire",
     condition: "High public reputation, low heat, legal placements dominate.",
-    consequence: "Vendetta Vending becomes a real citywide corporation."
+    consequence: "Vendetta Vending becomes a real citywide corporation.",
+    executionSummary: "The city signs what it already lives with: permits, clean ledgers, and vending routes that look too boring to raid. Vendetta Vending survives by becoming paperwork with a pulse."
   },
   {
     id: "syndicate",
     title: "Syndicate",
     condition: "High street reputation, controlled districts, repeated grey-market wins.",
-    consequence: "The city treats every vending machine like a territorial flag."
+    consequence: "The city treats every vending machine like a territorial flag.",
+    executionSummary: "Every stocked coil becomes a border marker. Suppliers call first, rivals ask permission, and the city learns that territory can hum under fluorescent light."
   },
   {
     id: "collapse",
     title: "Collapse",
     condition: "Heat, missed defenses, and unpaid crew spiral together.",
-    consequence: "Raids, betrayal, and rival pressure tear the route apart."
+    consequence: "Raids, betrayal, and rival pressure tear the route apart.",
+    executionSummary: "The route buckles under unpaid favors and flashing notices. Machines go dark one block at a time while rivals divide what the heat leaves behind."
   },
   {
     id: "kingmaker",
     title: "Kingmaker",
     condition: "Ally with one faction while weakening the rest.",
-    consequence: "The player controls the city indirectly through vending proxies."
+    consequence: "The player controls the city indirectly through vending proxies.",
+    executionSummary: "You stop owning every corner yourself and start owning the people who need them. The machines stay public; the power moves through proxies."
   },
   {
     id: "exit_plan",
     title: "Exit Plan",
     condition: "Build high valuation, stabilize heat, and cash out before the final war.",
-    consequence: "The empire sells, the machines stay, and the player vanishes."
+    consequence: "The empire sells, the machines stay, and the player vanishes.",
+    executionSummary: "The buyer sees clean growth, the rivals see empty locks, and by morning your name is gone from the route. The machines keep earning for someone else."
   }
 ];

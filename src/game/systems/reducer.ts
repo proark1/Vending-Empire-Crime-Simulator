@@ -3409,7 +3409,8 @@ function advanceCampaignMissions(state: GameState, events: GameEvent[]): void {
         mission.completed = true;
         mission.completedHour = state.worldTimeHours;
         mission.activeStepId = step.id;
-        log(state, events, `${arc.title} chain complete. ${arc.reward}.`, "good");
+        log(state, events, `${arc.title} chain complete. ${arc.payoff}`, "good");
+        log(state, events, `Unlocked: ${arc.reward}.`, "good");
       }
       advanced = true;
     }
@@ -4499,9 +4500,9 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
         executedHour: state.worldTimeHours,
         pathId: ending.path.id,
         status: "executed",
-        summary: ending.path.consequence
+        summary: ending.path.executionSummary
       };
-      log(state, events, `ENDING EXECUTED: ${ending.path.title}. ${ending.path.consequence}`, "good");
+      log(state, events, `ENDING EXECUTED: ${ending.path.title}. ${ending.path.executionSummary}`, "good");
       break;
     }
 
