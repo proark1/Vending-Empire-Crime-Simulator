@@ -5481,10 +5481,12 @@ kbd {
   .hud {
     top: 10px;
     left: 10px;
-    right: 60px;
-    flex-direction: row;
+    right: 10px;
+    /* Stack the brand over a full-width stat row so the pills never collide with the
+       top-right ? / menu cluster (the desktop row layout had no room on phones). */
+    flex-direction: column;
     align-items: flex-start;
-    gap: 8px;
+    gap: 6px;
   }
 
   .brand-block {
@@ -5494,9 +5496,9 @@ kbd {
   }
 
   .stat-strip {
-    flex: 1 1 0;
+    width: 100%;
     flex-wrap: wrap;
-    justify-content: flex-end;
+    justify-content: flex-start;
     gap: 6px;
   }
 
@@ -5523,7 +5525,7 @@ kbd {
   }
 
   .mission-tracker.compact {
-    top: 124px;
+    top: 164px;
     width: auto;
     min-width: 0;
   }
@@ -5560,11 +5562,21 @@ kbd {
   }
 
   .mission-tracker {
-    top: 124px;
+    top: 164px;
     left: 10px;
     right: 10px;
     width: auto;
     min-width: 0;
+  }
+
+  /* The WASD coach is a keyboard hint with nothing to do on touch, and its centred
+     blob overlapped the mission card — drop it on small screens. */
+  .move-coach {
+    display: none;
+  }
+
+  .controls-help-toggle {
+    top: 10px;
   }
 
   .target-prompt {
