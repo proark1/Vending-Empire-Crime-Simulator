@@ -1,7 +1,6 @@
 import type {
   MultiplayerGameMessage,
   MultiplayerPeer,
-  MultiplayerRole,
   MultiplayerRoom,
   MultiplayerServerMessage,
   MultiplayerStatus,

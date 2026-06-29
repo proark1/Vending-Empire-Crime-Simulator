@@ -1,6 +1,5 @@
 import type {
   BaseFacilityId,
-  CampaignMissionState,
   CommandResult,
   DistrictEvent,
   DistrictEventKind,
@@ -11,7 +10,6 @@ import type {
   EmployeeRole,
   EmpireAssetId,
   EmpireRaid,
-  EmpireRaidResolution,
   Faction,
   FactionId,
   FinanceLedgerCategory,
@@ -35,14 +33,12 @@ import type {
   ServiceContract,
   StreetActivity,
   StreetActivityKind,
-  SupplierDealKind,
   SupplierRelationshipState,
   VendingMachine
 } from "../core/types";
 import {
   activeContracts,
   activeAlarmForMachine,
-  activeMachineAlarms,
   activeLawInspections,
   activeMajorRaids,
   baseFacilityLevel,

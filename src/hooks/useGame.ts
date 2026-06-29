@@ -192,7 +192,10 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
         }
 
         lastRemoteSnapshotSequenceRef.current = message.sequence;
-        saveTimerRef.current && window.clearTimeout(saveTimerRef.current);
+        if (saveTimerRef.current) {
+          window.clearTimeout(saveTimerRef.current);
+          saveTimerRef.current = null;
+        }
         setState(message.state);
         transport.emitSnapshot(message.state);
         return;

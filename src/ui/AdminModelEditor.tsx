@@ -585,7 +585,7 @@ function AdminModelPreview({
     };
 
     const updateOrbitDragState = (event: { value: unknown }) => {
-      orbitControls.enabled = !Boolean(event.value);
+      orbitControls.enabled = !event.value;
     };
 
     transformControls.addEventListener("objectChange", syncTransformFromControls);

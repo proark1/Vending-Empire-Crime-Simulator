@@ -290,12 +290,6 @@ function chunkRangeForBounds(bounds: RectBounds): { maxIndexX: number; maxIndexZ
   };
 }
 
-function addObjectToWorldChunk(chunks: Map<string, WorldChunkRuntime>, parent: THREE.Object3D, object: THREE.Object3D, x: number, z: number): void {
-  const indexX = chunkIndexForCoordinate(x, worldBounds.minX);
-  const indexZ = chunkIndexForCoordinate(z, worldBounds.minZ);
-  getOrCreateWorldChunk(chunks, parent, indexX, indexZ).group.add(object);
-}
-
 function addObjectBuildJobToWorldChunk(
   specs: Map<string, WorldChunkBuildSpec>,
   createObject: () => THREE.Object3D,
@@ -307,39 +301,6 @@ function addObjectBuildJobToWorldChunk(
   getOrCreateWorldChunkSpec(specs, indexX, indexZ).jobs.push((chunk) => {
     chunk.group.add(createObject());
   });
-}
-
-function addRectMeshesToWorldChunks(
-  chunks: Map<string, WorldChunkRuntime>,
-  parent: THREE.Object3D,
-  bounds: RectBounds,
-  y: number,
-  height: number,
-  material: THREE.Material,
-  configure?: (mesh: THREE.Mesh) => void
-): void {
-  const range = chunkRangeForBounds(bounds);
-
-  for (let indexX = range.minIndexX; indexX <= range.maxIndexX; indexX += 1) {
-    for (let indexZ = range.minIndexZ; indexZ <= range.maxIndexZ; indexZ += 1) {
-      const currentChunkBounds = chunkBounds(indexX, indexZ);
-      const minX = Math.max(bounds.minX, currentChunkBounds.minX);
-      const maxX = Math.min(bounds.maxX, currentChunkBounds.maxX);
-      const minZ = Math.max(bounds.minZ, currentChunkBounds.minZ);
-      const maxZ = Math.min(bounds.maxZ, currentChunkBounds.maxZ);
-      const width = maxX - minX;
-      const depth = maxZ - minZ;
-
-      if (width <= 0.01 || depth <= 0.01) {
-        continue;
-      }
-
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), material);
-      mesh.position.set((minX + maxX) / 2, y, (minZ + maxZ) / 2);
-      configure?.(mesh);
-      getOrCreateWorldChunk(chunks, parent, indexX, indexZ).group.add(mesh);
-    }
-  }
 }
 
 function addRectMeshBuildJobsToWorldChunks(
@@ -3663,42 +3624,6 @@ function createTrafficLayer(loops: TrafficLoop[], roads: WorldRoad[], maxLoops: 
   });
 
   return { animated, group };
-}
-
-function addRoadMarkingsToChunks(chunks: Map<string, WorldChunkRuntime>, parent: THREE.Object3D, road: WorldRoad): void {
-  const bounds = roadBounds(road);
-  const profile = districtVisualProfiles[road.districtId] ?? districtVisualProfiles.starter_suburb;
-  const laneMaterial = new THREE.MeshBasicMaterial({ color: profile.laneColor, transparent: true, opacity: 0.82 });
-  const curbMaterial = new THREE.MeshBasicMaterial({ color: profile.curbColor, transparent: true, opacity: 0.72 });
-  const horizontal = road.width >= road.depth;
-  const dashLength = 2.1;
-  const dashGap = 2.6;
-  const y = 0.095;
-
-  if (horizontal) {
-    for (let x = bounds.minX + 1.2; x < bounds.maxX - 0.8; x += dashLength + dashGap) {
-      const width = Math.min(dashLength, bounds.maxX - x - 0.8);
-      const dash = new THREE.Mesh(new THREE.BoxGeometry(width, 0.012, 0.065), laneMaterial);
-      dash.position.set(x + width / 2, y, road.z);
-      addObjectToWorldChunk(chunks, parent, dash, dash.position.x, dash.position.z);
-    }
-
-    for (const z of [bounds.minZ + 0.16, bounds.maxZ - 0.16]) {
-      addRectMeshesToWorldChunks(chunks, parent, { minX: bounds.minX, maxX: bounds.maxX, minZ: z - 0.025, maxZ: z + 0.025 }, y + 0.002, 0.014, curbMaterial);
-    }
-    return;
-  }
-
-  for (let z = bounds.minZ + 1.2; z < bounds.maxZ - 0.8; z += dashLength + dashGap) {
-    const depth = Math.min(dashLength, bounds.maxZ - z - 0.8);
-    const dash = new THREE.Mesh(new THREE.BoxGeometry(0.065, 0.012, depth), laneMaterial);
-    dash.position.set(road.x, y, z + depth / 2);
-    addObjectToWorldChunk(chunks, parent, dash, dash.position.x, dash.position.z);
-  }
-
-  for (const x of [bounds.minX + 0.16, bounds.maxX - 0.16]) {
-    addRectMeshesToWorldChunks(chunks, parent, { minX: x - 0.025, maxX: x + 0.025, minZ: bounds.minZ, maxZ: bounds.maxZ }, y + 0.002, 0.014, curbMaterial);
-  }
 }
 
 function addRoadMarkingBuildJobsToChunks(specs: Map<string, WorldChunkBuildSpec>, road: WorldRoad): void {

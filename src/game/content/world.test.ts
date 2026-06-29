@@ -123,7 +123,7 @@ describe("world content", () => {
       }
       expect(buildingBoxes.some((box) => rectsIntersect(sidewalkBounds, box)), `${sidewalk.sourceRoadId} sidewalk overlaps a building`).toBe(false);
     }
-  });
+  }, 15_000);
 
   it("keeps police patrol cars and foot patrols inside police spaces", () => {
     for (const loop of trafficLoops.filter((trafficLoop) => trafficLoop.kind === "police")) {

@@ -19,7 +19,7 @@ import { ToastStack, type ToastMessage } from "./ui/ToastStack";
 import type { GameCommand, GameState, LocationId, ProductId, Vec2, VehicleId } from "./game/core/types";
 import { createDefaultAudioConfig, normalizeAudioConfig, type AudioConfig } from "./game/content/audioConfig";
 import { clearModelConfig, loadModelConfig, MODEL_CONFIG_KEY, MODEL_CONFIG_UPDATED_EVENT, saveModelConfig, type ModelConfig } from "./game/content/modelConfig";
-import { crimeContacts, worldBounds, type WorldMapLayout } from "./game/content/world";
+import { crimeContacts, districts, worldBounds, type WorldMapLayout } from "./game/content/world";
 import { endgamePaths, storyMissionArcs } from "./game/content/story";
 import { products } from "./game/content/products";
 import { clearWorldMapLayout, loadWorldMapLayout, normalizeLayout, saveWorldMapLayout } from "./game/world/mapLayoutStorage";
@@ -238,6 +238,7 @@ interface GameAppProps {
   modelConfig: ModelConfig;
   onLogout: () => void;
   session: GameSession;
+  startEntered?: boolean;
 }
 
 interface ServiceHoldState {
@@ -353,12 +354,13 @@ const landingFunNotes = [
 
 function LandingQuickFacts({ state }: { state?: GameState }) {
   const productCount = Object.keys(state?.products ?? products).length;
+  const districtCount = Object.keys(state?.districts ?? districts).length;
   const machineCount = state ? Object.values(state.machines).filter((machine) => machine.placementStatus === "installed").length : "Citywide";
 
   return (
     <div className="landing-fact-strip" aria-label="Game scale">
       <div>
-        <strong>{storyMissionArcs.length}</strong>
+        <strong>{districtCount}</strong>
         <span>petty districts</span>
       </div>
       <div>
@@ -644,12 +646,15 @@ const VOICE_EVENT_PATTERNS: Array<{ test: RegExp; trigger: string }> = [
   { test: /delivered to the garage/i, trigger: "voice.mechanic_unlock" }
 ];
 
-function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: GameAppProps) {
+const WORLD_TICK_HOURS = 0.04;
+const WORLD_TICK_MS = 1500;
+
+function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, startEntered = false }: GameAppProps) {
   const multiplayerClient = useMemo(() => new MultiplayerClient(session.token), [session.token]);
   const [multiplayerStatus, setMultiplayerStatus] = useState<MultiplayerStatus>(() => multiplayerClient.getStatus());
   const { state, sendCommand, advanceWorld, save, reload, restart, saveStatus } = useGame({ initialState, multiplayerClient, multiplayerRole: multiplayerStatus.role, session });
   const [target, setTarget] = useState<SceneTarget | null>(null);
-  const [entered, setEntered] = useState(false);
+  const [entered, setEntered] = useState(() => startEntered);
   const [dashboardOpen, setDashboardOpen] = useState(false);
   const [gameMenuOpen, setGameMenuOpen] = useState(false);
   const [roomCodeInput, setRoomCodeInput] = useState("");
@@ -691,6 +696,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
   const starterArc = storyMissionArcs[0];
   const showDebugTools = useMemo(() => new URLSearchParams(window.location.search).has("debug"), []);
   const isLocalSession = session.local === true;
+  const worldClockPaused = !entered || dashboardOpen || gameMenuOpen || showControls;
   const multiplayerRoom = multiplayerStatus.room;
   const multiplayerStatusLabel = multiplayerRoom
     ? multiplayerStatus.role === "host"
@@ -799,12 +805,16 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session }: Ga
   }, [gameMenuOpen]);
 
   useEffect(() => {
+    if (worldClockPaused) {
+      return;
+    }
+
     const timer = window.setInterval(() => {
-      advanceWorld(0.12);
-    }, 1500);
+      advanceWorld(WORLD_TICK_HOURS);
+    }, WORLD_TICK_MS);
 
     return () => window.clearInterval(timer);
-  }, [advanceWorld]);
+  }, [advanceWorld, worldClockPaused]);
 
   useEffect(() => {
     const newestEvent = state.eventLog[0];
@@ -1635,6 +1645,8 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
 
   const handleQuickStart = useCallback(() => {
     clearStoredGameSession();
+    unlockGameAudio();
+    startGameAmbience();
     setSubmitting(false);
     setAuthState({
       status: "ready",
@@ -1666,7 +1678,7 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
   }, []);
 
   if (authState.status === "ready") {
-    return <GameApp key={authState.session.profile.id} initialState={authState.initialState} mapLayout={mapLayout} modelConfig={modelConfig} onLogout={handleLogout} session={authState.session} />;
+    return <GameApp key={authState.session.profile.id} initialState={authState.initialState} mapLayout={mapLayout} modelConfig={modelConfig} onLogout={handleLogout} session={authState.session} startEntered={authState.session.local === true} />;
   }
 
   return (

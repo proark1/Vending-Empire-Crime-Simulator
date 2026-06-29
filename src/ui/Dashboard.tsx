@@ -255,6 +255,7 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
   const tasks = useMemo(() => routeTasks(state), [state]);
   const routePlan = useMemo(() => optimizedRoutePlan(state), [state]);
   const selectedTask = selectedRouteTask(state);
+  const nextTask = selectedTask ?? tasks[0];
   const contracts = useMemo(() => activeContracts(state), [state]);
   const inspections = useMemo(() => activeLawInspections(state), [state]);
   const conflicts = useMemo(() => activeConflictEvents(state), [state]);
@@ -327,6 +328,10 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
             <SlidersHorizontal size={13} aria-hidden="true" />
             Advanced
           </button>
+        </div>
+        <div className="dashboard-next" aria-label="Recommended next stop">
+          <span>Next</span>
+          <strong>{nextTask ? nextTask.title : "Keep starter route stocked"}</strong>
         </div>
       </div>
       <div className="tab-row" role="tablist" aria-label="Operations dashboard">

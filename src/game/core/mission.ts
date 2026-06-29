@@ -160,7 +160,6 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
   const carriedUnits = carriedCrateUnits(state);
   const storageUnits = garageStorageUnits(state);
   const stockUnits = totalOwnedStockUnits(state);
-  const starterStock = firstMachine.slots.reduce((sum, slot) => sum + slot.quantity, 0);
   const starterHasEverBeenStocked = firstMachine.slots.length > 0;
   const starterInstalled = (firstMachine.placementStatus ?? "installed") === "installed";
   const starterAlarm = activeAlarmForMachine(state, firstMachine.id);
