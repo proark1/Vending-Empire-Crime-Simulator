@@ -455,25 +455,29 @@ export function createInitialState(): GameState {
         factionId: "rival_redline",
         aggression: 0.55,
         lastActedHour: 8,
-        cooldownHours: 2.25
+        cooldownHours: 2.25,
+        sabotageCooldownHours: 9
       },
       rival_glassline: {
         factionId: "rival_glassline",
         aggression: 0.28,
         lastActedHour: 8,
-        cooldownHours: 7.5
+        cooldownHours: 7.5,
+        sabotageCooldownHours: 16
       },
       rival_nightmarket: {
         factionId: "rival_nightmarket",
         aggression: 0.68,
         lastActedHour: 8,
-        cooldownHours: 6.25
+        cooldownHours: 6.25,
+        sabotageCooldownHours: 11
       },
       rival_marlow: {
         factionId: "rival_marlow",
         aggression: 0.76,
         lastActedHour: 8,
-        cooldownHours: 8.25
+        cooldownHours: 8.25,
+        sabotageCooldownHours: 13
       }
     },
     machineAlarms: {},

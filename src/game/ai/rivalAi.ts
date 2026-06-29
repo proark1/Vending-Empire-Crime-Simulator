@@ -53,7 +53,12 @@ export function planNpcCommands(state: GameState): GameCommand[] {
     const sabotageCashThreshold = targetIsExpansion ? 18 : 28;
     const sabotageDamageLimit = targetIsExpansion ? 88 : 82;
 
-    if (target && target.revenueStored >= sabotageCashThreshold && target.damage < sabotageDamageLimit && sabotageRisk < 0.48) {
+    // Sabotage is the punishing, alarm-spawning action — keep it on a long, separate
+    // cooldown so rivals stay busy (undercut/expand) without attacking machines constantly.
+    const sabotageCooldown = controller.sabotageCooldownHours ?? 12;
+    const sabotageReady = state.worldTimeHours - (controller.lastSabotagedHour ?? Number.NEGATIVE_INFINITY) >= sabotageCooldown;
+
+    if (sabotageReady && target && target.revenueStored >= sabotageCashThreshold && target.damage < sabotageDamageLimit && sabotageRisk < 0.48) {
       commands.push({ type: "rival_action", actorId: faction.id, action: "sabotage", targetMachineId: target.id });
       continue;
     }

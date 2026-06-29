@@ -3289,12 +3289,12 @@ function createDistrictEventMarker(event: DistrictEvent, location: Location, cur
   group.add(beacon);
   addLabel(group, event.kind === "police_surge" ? "PATROLS" : event.kind.toUpperCase(), color, center, 2.92);
 
-  const crowdCount = quality === "low" ? 1 : quality === "high" ? 4 : 3;
+  const crowdCount = quality === "low" ? 1 : quality === "high" ? 3 : 2;
   for (let actorIndex = 0; actorIndex < crowdCount; actorIndex += 1) {
     const variant = event.kind === "police_surge" ? "scout" : event.kind === "shortage" ? "worker" : "customer";
     const actor = createNpcCharacter(variant, quality);
     const angle = currentWorldTime * 0.34 + index * 0.9 + actorIndex * ((Math.PI * 2) / crowdCount);
-    const radius = 1.25 + actorIndex * 0.18;
+    const radius = 1.9 + actorIndex * 0.6;
     const start = center.clone().add(new THREE.Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius));
     const stop = center.clone().add(new THREE.Vector3(Math.cos(angle + 0.9) * (radius + 0.25), 0, Math.sin(angle + 0.9) * (radius + 0.25)));
     const exit = center.clone().add(new THREE.Vector3(Math.cos(angle + 1.8) * radius, 0, Math.sin(angle + 1.8) * radius));
@@ -4082,14 +4082,18 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
     });
   }
 
+  const usedEventLocationIds = new Set<string>();
   activeDistrictEvents(currentState).slice(0, quality === "low" ? 2 : quality === "high" ? 5 : 4).forEach((event, index) => {
-    const eventLocation = Object.values(currentState.locations)
+    const districtLocations = Object.values(currentState.locations)
       .filter((location) => location.districtId === event.districtId)
-      .sort((a, b) => b.footTraffic - a.footTraffic)[0];
+      .sort((a, b) => b.footTraffic - a.footTraffic);
+    // Spread events across distinct locations so two crowds never pile onto the same spot.
+    const eventLocation = districtLocations.find((location) => !usedEventLocationIds.has(location.id)) ?? districtLocations[0];
     if (!eventLocation) {
       return;
     }
 
+    usedEventLocationIds.add(eventLocation.id);
     group.add(createDistrictEventMarker(event, eventLocation, currentState.worldTimeHours, quality, modelConfig, index));
   });
 

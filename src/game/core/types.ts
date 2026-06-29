@@ -528,6 +528,10 @@ export interface NpcController {
   aggression: number;
   lastActedHour: number;
   cooldownHours: number;
+  /** World hour of this rival's last successful sabotage; gates sabotage frequency. */
+  lastSabotagedHour?: number;
+  /** Minimum world hours between sabotage attempts so machine attacks stay rare. */
+  sabotageCooldownHours?: number;
 }
 
 export type MachineAlarmKind = "sabotage" | "undercut" | "tamper";

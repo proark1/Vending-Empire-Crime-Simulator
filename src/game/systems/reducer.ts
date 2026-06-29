@@ -5633,6 +5633,9 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       if (command.action === "sabotage" && command.targetMachineId) {
         const target = state.machines[command.targetMachineId];
         if (target && target.ownerFactionId !== actor.id && isMachineInstalled(target)) {
+          if (controller) {
+            controller.lastSabotagedHour = state.worldTimeHours;
+          }
           const baseDamage = Math.max(8, 18 + Math.round((controller?.aggression ?? 0) * 8) + profile.sabotageBonus);
           if (target.ownerFactionId === state.playerFactionId) {
             createMachineAlarm(state, events, target, actor.id, "sabotage", baseDamage);
