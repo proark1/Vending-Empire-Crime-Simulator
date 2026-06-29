@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createInitialState } from "../content/initialState";
 import {
   activeLawInspections,
+  activeMachineAlarms,
   activeLocationRights,
   baseStorageCapacity,
   campaignMissionProgress,
@@ -496,6 +497,13 @@ describe("game reducer", () => {
 
     expect(state.contracts.contract_1.status).toBe("completed");
     expect(state.mission.completed).toBe(true);
+    expect(activeMachineAlarms(state).some((alarm) => alarm.kind === "undercut")).toBe(false);
+    run({ type: "advance_time", actorId: "player", hours: 14 });
+    const firstRivalAlarm = activeMachineAlarms(state).find((alarm) => alarm.kind === "undercut");
+    expect(firstRivalAlarm).toBeDefined();
+    run(visit(firstRivalAlarm!.locationId));
+    run({ type: "confront_alarm", actorId: "player", alarmId: firstRivalAlarm!.id });
+    expect(state.machineAlarms[firstRivalAlarm!.id]).toMatchObject({ resolved: true, outcome: "confronted" });
 
     run({ type: "scout_district", actorId: "player", districtId: "industrial_yards" });
     run({ type: "unlock_district", actorId: "player", districtId: "industrial_yards" });

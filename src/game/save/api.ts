@@ -98,6 +98,44 @@ export interface AdminMonitoringSnapshot {
     latencyMs: number | null;
     ok: boolean;
   };
+  liveOps: {
+    issues: Array<{
+      code: string;
+      detail: string;
+      profileName?: string;
+      severity: "error" | "info" | "warning";
+      title: string;
+    }>;
+    phaseCounts: Record<string, number>;
+    players: Array<{
+      activeAlarms: number;
+      activeInspections: number;
+      cash: number;
+      day: number;
+      flags: string[];
+      heat: number;
+      installedMachines: number;
+      missionPhase: string;
+      profileId: string;
+      profileName: string;
+      revision: number;
+      saveAgeHours: number | null;
+      stockUnits: number;
+      unlockedDistricts: number;
+      updatedAt: string | null;
+    }>;
+    summary: {
+      activeAlarmPlayers: number;
+      activeInspectionPlayers: number;
+      averageRevision: number;
+      endingPlayers: number;
+      playerCount: number;
+      profilesWithSaves: number;
+      recentSaves: number;
+      staleSaves: number;
+      totalInstalledMachines: number;
+    };
+  };
   metrics: Record<string, number>;
   recentEvents: Array<{
     at: string;

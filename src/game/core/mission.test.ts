@@ -103,8 +103,8 @@ describe("starter mission flow", () => {
     expect(step.id).toBe("collect_cash");
   });
 
-  it("surfaces Redline undercut after the first cash run", () => {
-    const state = reduceCommands(placeStarterState(), [
+  it("surfaces Redline undercut after the first cash run matures", () => {
+    const earlyState = reduceCommands(placeStarterState(), [
       visit("supplier"),
       { type: "buy_product", actorId: "player", productId: "soda", quantity: 10 },
       visit("laundromat"),
@@ -112,7 +112,11 @@ describe("starter mission flow", () => {
       { type: "advance_time", actorId: "player", hours: 10 },
       { type: "collect_revenue", actorId: "player", machineId: "machine_player_1" }
     ]).state;
+    const earlyStep = getStarterMissionStep(earlyState, { x: -5, z: -5 });
 
+    expect(earlyStep.id).toBe("install_second");
+
+    const state = reduceCommands(earlyState, [{ type: "advance_time", actorId: "player", hours: 4 }]).state;
     const step = getStarterMissionStep(state, { x: -5, z: -5 });
 
     expect(["answer_undercut", "answer_retaliation"]).toContain(step.id);

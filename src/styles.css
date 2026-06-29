@@ -4288,6 +4288,7 @@ kbd {
 .admin-provider-grid button,
 .admin-audio-row button,
 .admin-audio-actions button,
+.admin-liveops-header button,
 .admin-model-tabs button,
 .admin-model-list button,
 .admin-model-toolbar button,
@@ -4322,6 +4323,7 @@ kbd {
 .admin-provider-grid button:hover,
 .admin-audio-row button:hover,
 .admin-audio-actions button:hover,
+.admin-liveops-header button:hover,
 .admin-model-tabs button:hover,
 .admin-model-list button:hover,
 .admin-model-toolbar button:hover,
@@ -5434,9 +5436,313 @@ kbd {
   font-weight: 900;
 }
 
+.admin-liveops {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+}
+
+.admin-liveops-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid rgba(226, 232, 240, 0.14);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.admin-liveops-header > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.admin-liveops-header h2,
+.liveops-panel h3 {
+  margin: 0;
+  color: #f8fafc;
+}
+
+.admin-liveops-header h2 {
+  font-size: 18px;
+}
+
+.admin-liveops-header p,
+.liveops-panel p {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.admin-liveops-header button.danger {
+  border-color: rgba(248, 113, 113, 0.34);
+  color: #fecdd3;
+}
+
+.liveops-card-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.liveops-card,
+.liveops-panel {
+  border: 1px solid rgba(226, 232, 240, 0.14);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.liveops-card {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.liveops-card span {
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.liveops-card strong {
+  color: #f8fafc;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.liveops-card p {
+  margin: 0;
+  color: #cbd5e1;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.liveops-card.good {
+  border-color: rgba(34, 197, 94, 0.3);
+}
+
+.liveops-card.warning {
+  border-color: rgba(251, 191, 36, 0.34);
+}
+
+.liveops-card.danger {
+  border-color: rgba(248, 113, 113, 0.36);
+}
+
+.liveops-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+  gap: 14px;
+}
+
+.liveops-panel {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+}
+
+.liveops-panel h3 {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 14px;
+}
+
+.liveops-issue-list,
+.liveops-event-list,
+.liveops-working-list,
+.liveops-phase-list {
+  display: grid;
+  gap: 8px;
+}
+
+.liveops-issue {
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  border: 1px solid rgba(226, 232, 240, 0.12);
+  border-radius: 7px;
+  background: rgba(2, 6, 23, 0.32);
+}
+
+.liveops-issue span {
+  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.liveops-issue strong {
+  color: #f8fafc;
+  font-size: 13px;
+}
+
+.liveops-issue.error {
+  border-color: rgba(248, 113, 113, 0.32);
+}
+
+.liveops-issue.warning {
+  border-color: rgba(251, 191, 36, 0.28);
+}
+
+.liveops-working-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.liveops-working-list span,
+.liveops-event-counts span,
+.liveops-flag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 8px;
+  border: 1px solid rgba(226, 232, 240, 0.12);
+  border-radius: 999px;
+  background: rgba(2, 6, 23, 0.24);
+  color: #cbd5e1;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.liveops-working-list span.good,
+.liveops-flag.good {
+  border-color: rgba(34, 197, 94, 0.3);
+  color: #bbf7d0;
+}
+
+.liveops-working-list span.danger {
+  border-color: rgba(248, 113, 113, 0.34);
+  color: #fecdd3;
+}
+
+.liveops-phase-list div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.1);
+}
+
+.liveops-phase-list div:last-child {
+  border-bottom: 0;
+}
+
+.liveops-phase-list span {
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: capitalize;
+}
+
+.liveops-phase-list strong {
+  color: #f8fafc;
+}
+
+.liveops-table-wrap {
+  overflow: auto;
+  border: 1px solid rgba(226, 232, 240, 0.12);
+  border-radius: 8px;
+}
+
+.liveops-player-table {
+  width: 100%;
+  min-width: 980px;
+  border-collapse: collapse;
+}
+
+.liveops-player-table th,
+.liveops-player-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.1);
+  color: #cbd5e1;
+  font-size: 12px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.liveops-player-table th {
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.liveops-player-table td strong,
+.liveops-event-list strong {
+  display: block;
+  color: #f8fafc;
+  font-size: 12px;
+}
+
+.liveops-player-table td small {
+  display: block;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.liveops-player-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.liveops-player-table td:last-child {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.liveops-event-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.liveops-event-list div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.1);
+}
+
+.liveops-event-list div:last-child {
+  border-bottom: 0;
+}
+
+.liveops-event-list div.error strong {
+  color: #fecdd3;
+}
+
+.liveops-event-list div.warning strong {
+  color: #fde68a;
+}
+
+.liveops-event-list span {
+  color: #64748b;
+  font-size: 11px;
+}
+
 @media (max-width: 1080px) {
   .access-landing,
   .landing-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .liveops-card-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .liveops-split {
     grid-template-columns: 1fr;
   }
 
@@ -6028,6 +6334,21 @@ kbd {
 }
 
 @media (max-width: 640px) {
+  .admin-liveops-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .admin-liveops-header > div {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .liveops-card-grid,
+  .liveops-working-list {
+    grid-template-columns: 1fr;
+  }
+
   .ending-stat-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

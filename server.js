@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { WebSocket, WebSocketServer } from "ws";
+import { analyzeLiveOpsSaveRows } from "./liveOpsAnalyzer.js";
 import { createRoomManager, sweepDeadConnections } from "./roomManager.js";
 
 const { Pool } = pg;
@@ -1337,10 +1338,29 @@ async function handleAudioProviderGenerate(request, response, body) {
 async function handleAdminMonitoring(request, response) {
   await requireAdmin(request);
   let database = { ok: false, latencyMs: null };
+  let liveOps = analyzeLiveOpsSaveRows([]);
   if (databaseUrl) {
     const started = Date.now();
     try {
-      await getPool().query("SELECT 1");
+      const client = await getPool().connect();
+      try {
+        await client.query("SELECT 1");
+        const saves = await client.query(`
+          SELECT
+            player_profiles.id AS profile_id,
+            player_profiles.name,
+            game_saves.state,
+            game_saves.revision,
+            game_saves.updated_at
+          FROM player_profiles
+          LEFT JOIN game_saves ON game_saves.profile_id = player_profiles.id
+          ORDER BY game_saves.updated_at DESC NULLS LAST, player_profiles.last_login_at DESC NULLS LAST
+          LIMIT 200
+        `);
+        liveOps = analyzeLiveOpsSaveRows(saves.rows);
+      } finally {
+        client.release();
+      }
       database = { ok: true, latencyMs: Date.now() - started };
     } catch (error) {
       metrics.dbFailures += 1;
@@ -1353,6 +1373,7 @@ async function handleAdminMonitoring(request, response) {
     startedAt: startedAt.toISOString(),
     uptimeSeconds: Math.round((Date.now() - startedAt.getTime()) / 1000),
     database,
+    liveOps,
     metrics,
     recentEvents
   });

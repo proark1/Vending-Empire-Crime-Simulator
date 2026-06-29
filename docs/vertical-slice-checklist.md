@@ -44,6 +44,8 @@ playtests falsifiable.
 - The largest production chunk is reviewed after code splitting.
 - Any failed target above produces either a balance change or a documented reason.
 
+Current automated baseline: `docs/playtest-baseline-2026-06-29.md`.
+
 ## Known Follow-Up
 
 - Long-session multiplayer QA still needs real host/guest testing.

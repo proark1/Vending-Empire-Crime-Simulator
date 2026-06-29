@@ -344,6 +344,7 @@ export interface ProgressionState {
   rivalActionsToday: number;
   productDesignsCompleted: number;
   starterMachinePlaced: boolean;
+  starterMachinePlacedHour?: number;
   firstUndercutTriggered: boolean;
   firstRetaliationTriggered: boolean;
 }

@@ -1,4 +1,4 @@
-import { AlertTriangle, Box, Building2, CircleDot, Copy, Eye, Gauge, History, Map, Music, Plus, Redo2, RotateCcw, RotateCw, Route, Save, Shuffle, Sparkles, Square, Trash2, Trees, Undo2, Wand2 } from "lucide-react";
+import { Activity, AlertTriangle, Box, Building2, CheckCircle2, CircleDot, Clock, Copy, Eye, Gauge, History, Map, Music, Plus, Redo2, RotateCcw, RotateCw, Route, Save, Shuffle, Sparkles, Square, Trash2, Trees, Undo2, Users, Wand2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import * as THREE from "three";
@@ -28,7 +28,7 @@ import { AdminModelEditor } from "./AdminModelEditor";
 
 type EditableLayer = "roads" | "buildings" | "backdropBuildings" | "decorations" | "patrolZones" | "parks";
 type AdminViewMode = "2d" | "3d";
-type AdminTab = "map" | "models" | "audio";
+type AdminTab = "map" | "models" | "audio" | "ops";
 
 interface AdminMapEditorProps {
   initialAudioConfig: AudioConfig;
@@ -218,6 +218,262 @@ function isSameSelection(left: Selection, right: Selection): boolean {
 function districtName(item: Record<string, unknown>): string {
   const districtId = String(item.districtId ?? "");
   return districts[districtId]?.name ?? (districtId || "No district");
+}
+
+function formatLiveOpsAge(hours: number | null): string {
+  if (hours === null) {
+    return "never";
+  }
+
+  if (hours < 1) {
+    return `${Math.max(1, Math.round(hours * 60))}m ago`;
+  }
+
+  if (hours < 48) {
+    return `${Math.round(hours)}h ago`;
+  }
+
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+function metricValue(metrics: Record<string, number>, key: string): number {
+  return metrics[key] ?? 0;
+}
+
+function LiveOpsPanel({
+  monitoring,
+  saving,
+  status,
+  onRefresh,
+  onResetPlayerData
+}: {
+  monitoring: AdminMonitoringSnapshot | null;
+  onRefresh: () => void;
+  onResetPlayerData: () => void;
+  saving: boolean;
+  status: string;
+}) {
+  const liveOps = monitoring?.liveOps;
+  const issueCounts = useMemo(() => {
+    const issues = liveOps?.issues ?? [];
+    return {
+      error: issues.filter((issue) => issue.severity === "error").length,
+      warning: issues.filter((issue) => issue.severity === "warning").length
+    };
+  }, [liveOps?.issues]);
+  const phaseEntries = Object.entries(liveOps?.phaseCounts ?? {}).sort((a, b) => b[1] - a[1]);
+  const eventBuckets = monitoring?.recentEvents.reduce<Record<string, number>>((buckets, event) => {
+    buckets[event.level] = (buckets[event.level] ?? 0) + 1;
+    return buckets;
+  }, {}) ?? {};
+
+  return (
+    <section className="admin-liveops">
+      <header className="admin-liveops-header">
+        <div>
+          <Gauge size={20} aria-hidden="true" />
+          <div>
+            <h2>Live Ops</h2>
+            <p>Operational health, save-state risks, and player progression signals.</p>
+          </div>
+        </div>
+        <div>
+          <button onClick={onRefresh} type="button">
+            <RotateCw size={16} aria-hidden="true" />
+            Refresh
+          </button>
+          <button className="danger" disabled={saving} onClick={onResetPlayerData} type="button">
+            <Trash2 size={16} aria-hidden="true" />
+            Reset players
+          </button>
+        </div>
+      </header>
+
+      {monitoring ? (
+        <>
+          <div className="liveops-card-grid">
+            <article className={`liveops-card ${monitoring.database.ok ? "good" : "danger"}`}>
+              <span>Database</span>
+              <strong>{monitoring.database.ok ? "Online" : "Offline"}</strong>
+              <p>{monitoring.database.latencyMs ?? "--"}ms latency · uptime {monitoring.uptimeSeconds}s</p>
+            </article>
+            <article className="liveops-card">
+              <span>Saves</span>
+              <strong>{metricValue(monitoring.metrics, "gameSaves")}</strong>
+              <p>{metricValue(monitoring.metrics, "gameSaveConflicts")} conflicts · avg r{liveOps?.summary.averageRevision ?? 0}</p>
+            </article>
+            <article className={issueCounts.error > 0 ? "liveops-card danger" : issueCounts.warning > 0 ? "liveops-card warning" : "liveops-card good"}>
+              <span>Issue Queue</span>
+              <strong>{liveOps?.issues.length ?? 0}</strong>
+              <p>{issueCounts.error} blocking · {issueCounts.warning} warnings</p>
+            </article>
+            <article className="liveops-card">
+              <span>Players</span>
+              <strong>{liveOps?.summary.playerCount ?? 0}</strong>
+              <p>{liveOps?.summary.recentSaves ?? 0} recent saves · {liveOps?.summary.staleSaves ?? 0} stale</p>
+            </article>
+            <article className="liveops-card">
+              <span>World Progress</span>
+              <strong>{liveOps?.summary.totalInstalledMachines ?? 0}</strong>
+              <p>{liveOps?.summary.endingPlayers ?? 0} endings · {liveOps?.summary.activeAlarmPlayers ?? 0} alarm players</p>
+            </article>
+            <article className={metricValue(monitoring.metrics, "serverErrors") > 0 ? "liveops-card danger" : "liveops-card good"}>
+              <span>Server</span>
+              <strong>{metricValue(monitoring.metrics, "serverErrors")}</strong>
+              <p>{metricValue(monitoring.metrics, "apiRequests")} requests · {metricValue(monitoring.metrics, "dbFailures")} DB failures</p>
+            </article>
+          </div>
+
+          <div className="liveops-split">
+            <article className="liveops-panel">
+              <h3>
+                <AlertTriangle size={16} aria-hidden="true" />
+                What is not working
+              </h3>
+              {liveOps && liveOps.issues.length > 0 ? (
+                <div className="liveops-issue-list">
+                  {liveOps.issues.slice(0, 14).map((issue, index) => (
+                    <div className={`liveops-issue ${issue.severity}`} key={`${issue.code}-${issue.profileName ?? "global"}-${index}`}>
+                      <span>{issue.severity}</span>
+                      <strong>{issue.title}</strong>
+                      <p>{issue.profileName ? `${issue.profileName}: ` : ""}{issue.detail}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p>No save-state issues detected.</p>
+              )}
+            </article>
+
+            <article className="liveops-panel">
+              <h3>
+                <CheckCircle2 size={16} aria-hidden="true" />
+                What is working
+              </h3>
+              <div className="liveops-working-list">
+                <span className={monitoring.database.ok ? "good" : "danger"}>DB {monitoring.database.ok ? "online" : "offline"}</span>
+                <span className={metricValue(monitoring.metrics, "serverErrors") === 0 ? "good" : "danger"}>{metricValue(monitoring.metrics, "serverErrors")} server errors</span>
+                <span className="good">{liveOps?.summary.profilesWithSaves ?? 0} valid saves</span>
+                <span>{liveOps?.summary.totalInstalledMachines ?? 0} installed machines</span>
+                <span>{liveOps?.summary.activeInspectionPlayers ?? 0} inspection players</span>
+                <span>{metricValue(monitoring.metrics, "multiplayerConnections")} multiplayer connections</span>
+              </div>
+              <div className="liveops-phase-list">
+                {phaseEntries.length === 0 ? (
+                  <p>No player phases yet.</p>
+                ) : (
+                  phaseEntries.map(([phase, count]) => (
+                    <div key={phase}>
+                      <span>{phase}</span>
+                      <strong>{count}</strong>
+                    </div>
+                  ))
+                )}
+              </div>
+            </article>
+          </div>
+
+          <article className="liveops-panel">
+            <h3>
+              <Users size={16} aria-hidden="true" />
+              Player State
+            </h3>
+            {liveOps && liveOps.players.length > 0 ? (
+              <div className="liveops-table-wrap">
+                <table className="liveops-player-table">
+                  <thead>
+                    <tr>
+                      <th>Player</th>
+                      <th>Last save</th>
+                      <th>Phase</th>
+                      <th>Cash</th>
+                      <th>Heat</th>
+                      <th>Machines</th>
+                      <th>Stock</th>
+                      <th>Pressure</th>
+                      <th>Flags</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {liveOps.players.slice(0, 50).map((player) => (
+                      <tr key={player.profileId}>
+                        <td>
+                          <strong>{player.profileName}</strong>
+                          <small>Day {player.day} · r{player.revision}</small>
+                        </td>
+                        <td>{formatLiveOpsAge(player.saveAgeHours)}</td>
+                        <td>{player.missionPhase}</td>
+                        <td>${player.cash}</td>
+                        <td>{player.heat}</td>
+                        <td>{player.installedMachines}</td>
+                        <td>{player.stockUnits}</td>
+                        <td>{player.activeAlarms} alarms · {player.activeInspections} inspections</td>
+                        <td>
+                          {player.flags.length === 0 ? (
+                            <span className="liveops-flag good">ok</span>
+                          ) : (
+                            player.flags.slice(0, 3).map((flag) => <span className="liveops-flag" key={flag}>{flag}</span>)
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p>No player saves available.</p>
+            )}
+          </article>
+
+          <div className="liveops-split">
+            <article className="liveops-panel">
+              <h3>
+                <Activity size={16} aria-hidden="true" />
+                Recent Events
+              </h3>
+              <div className="liveops-event-counts">
+                <span>{eventBuckets.error ?? 0} errors</span>
+                <span>{eventBuckets.warning ?? 0} warnings</span>
+                <span>{eventBuckets.info ?? 0} info</span>
+              </div>
+              <div className="liveops-event-list">
+                {monitoring.recentEvents.slice(0, 12).map((event) => (
+                  <div className={event.level} key={`${event.at}-${event.type}`}>
+                    <strong>{event.type}</strong>
+                    <span>{new Date(event.at).toLocaleTimeString()}</span>
+                    <p>{event.message}</p>
+                  </div>
+                ))}
+              </div>
+            </article>
+            <article className="liveops-panel">
+              <h3>
+                <Clock size={16} aria-hidden="true" />
+                Admin Actions
+              </h3>
+              <div className="liveops-working-list">
+                <span>{metricValue(monitoring.metrics, "adminLogins")} admin logins</span>
+                <span>{metricValue(monitoring.metrics, "adminFailedLogins")} failed logins</span>
+                <span>{metricValue(monitoring.metrics, "mapSaves")} map saves</span>
+                <span>{metricValue(monitoring.metrics, "audioSaves")} audio saves</span>
+                <span>{metricValue(monitoring.metrics, "audioGenerations")} audio generations</span>
+                <span>{metricValue(monitoring.metrics, "playerDataResets")} player resets</span>
+              </div>
+            </article>
+          </div>
+        </>
+      ) : (
+        <article className="liveops-panel">
+          <h3>
+            <Gauge size={16} aria-hidden="true" />
+            Monitoring snapshot not loaded
+          </h3>
+          <p>Use Refresh after signing in, or check the API server connection.</p>
+        </article>
+      )}
+      {status && <p className="admin-status">{status}</p>}
+    </section>
+  );
 }
 
 function itemMetrics(layer: EditableLayer, item: Record<string, unknown>): string {
@@ -1316,6 +1572,16 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, modelConfig,
     refreshMonitoring(adminSession);
   }, [adminSession, refreshMonitoring, refreshRevisions]);
 
+  useEffect(() => {
+    if (!adminSession || activeAdminTab !== "ops") {
+      return;
+    }
+
+    refreshMonitoring(adminSession);
+    const timer = window.setInterval(() => refreshMonitoring(adminSession), 15000);
+    return () => window.clearInterval(timer);
+  }, [activeAdminTab, adminSession, refreshMonitoring]);
+
   const handleRestoreRevision = useCallback((revision: RemoteMapRevision) => {
     if (!adminSession) {
       setStatus("Admin session expired. Sign in again.");
@@ -1522,7 +1788,7 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, modelConfig,
     <main className="admin-shell">
       <header className="admin-header">
         <div>
-          {activeAdminTab === "audio" ? <Music size={20} aria-hidden="true" /> : activeAdminTab === "models" ? <Box size={20} aria-hidden="true" /> : <Map size={20} aria-hidden="true" />}
+          {activeAdminTab === "audio" ? <Music size={20} aria-hidden="true" /> : activeAdminTab === "models" ? <Box size={20} aria-hidden="true" /> : activeAdminTab === "ops" ? <Gauge size={20} aria-hidden="true" /> : <Map size={20} aria-hidden="true" />}
           <div>
             <h1>Admin Console</h1>
             <span>
@@ -1530,6 +1796,8 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, modelConfig,
                 ? "Sound, music, and voice controls"
                 : activeAdminTab === "models"
                   ? "Live 3D model transforms"
+                  : activeAdminTab === "ops"
+                    ? "Live health, saves, issues, and player progression"
                 : blockingIssues.length === 0 ? "Layout valid" : `${blockingIssues.length} blocking issue${blockingIssues.length === 1 ? "" : "s"}`}
             </span>
           </div>
@@ -1596,6 +1864,10 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, modelConfig,
         <button className={activeAdminTab === "audio" ? "active" : ""} onClick={() => setActiveAdminTab("audio")} type="button">
           <Music size={16} aria-hidden="true" />
           Audio
+        </button>
+        <button className={activeAdminTab === "ops" ? "active" : ""} onClick={() => setActiveAdminTab("ops")} type="button">
+          <Gauge size={16} aria-hidden="true" />
+          Live Ops
         </button>
       </nav>
 
@@ -1987,37 +2259,13 @@ export function AdminMapEditor({ initialAudioConfig, initialLayout, modelConfig,
             )}
           </div>
 
-          <div className="admin-monitoring">
-            <h3>
-              <Gauge size={16} aria-hidden="true" />
-              Operations
-              <button onClick={() => refreshMonitoring()} type="button">Refresh</button>
-              <button className="danger" disabled={saving} onClick={handleResetPlayerData} type="button">Reset players</button>
-            </h3>
-            {monitoring ? (
-              <>
-                <p>DB {monitoring.database.ok ? "ok" : "offline"} · {monitoring.database.latencyMs ?? "--"}ms · uptime {monitoring.uptimeSeconds}s</p>
-                <div>
-                  <span>Requests {monitoring.metrics.apiRequests ?? 0}</span>
-                  <span>Saves {monitoring.metrics.gameSaves ?? 0}</span>
-                  <span>Conflicts {monitoring.metrics.gameSaveConflicts ?? 0}</span>
-                  <span>Map saves {monitoring.metrics.mapSaves ?? 0}</span>
-                  <span>Player resets {monitoring.metrics.playerDataResets ?? 0}</span>
-                  <span>Errors {monitoring.metrics.serverErrors ?? 0}</span>
-                </div>
-                {monitoring.recentEvents.slice(0, 4).map((event) => (
-                  <small className={event.level} key={`${event.at}-${event.type}`}>{event.type}: {event.message}</small>
-                ))}
-              </>
-            ) : (
-              <p>Monitoring snapshot not loaded.</p>
-            )}
-          </div>
           {status && <p className="admin-status">{status}</p>}
         </aside>
       </section>
       ) : activeAdminTab === "models" ? (
         <AdminModelEditor config={modelConfig} onReset={onModelReset} onSave={onModelSave} />
+      ) : activeAdminTab === "ops" ? (
+        <LiveOpsPanel monitoring={monitoring} onRefresh={() => refreshMonitoring()} onResetPlayerData={handleResetPlayerData} saving={saving} status={status} />
       ) : (
         <AdminAudioEditor initialConfig={initialAudioConfig} onReset={onAudioReset} onSave={onAudioSave} session={adminSession} />
       )}

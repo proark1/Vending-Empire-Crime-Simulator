@@ -97,6 +97,7 @@ import { runMachineSales } from "./economy";
 
 const MACHINE_ALARM_RESPONSE_HOURS = 0.85;
 const INSPECTION_RESPONSE_HOURS = 1.1;
+const FIRST_UNDERCUT_MIN_ROUTE_HOURS = 14;
 const STARTER_MACHINE_ID = "machine_player_1";
 const STARTER_LOCATION_ID = "laundromat";
 
@@ -2170,7 +2171,8 @@ function maybeTriggerStarterUndercut(state: GameState, events: GameEvent[], play
   }
 
   const hasFirstCashSignal = machine.revenueStored >= 18 || state.progression.revenueCollectedToday >= 18 || playerEarned >= 18 || state.progression.contractsCompletedToday > 0;
-  if (!hasFirstCashSignal) {
+  const routeHasMatured = typeof state.progression.starterMachinePlacedHour !== "number" || state.worldTimeHours - state.progression.starterMachinePlacedHour >= FIRST_UNDERCUT_MIN_ROUTE_HOURS;
+  if (!hasFirstCashSignal || !routeHasMatured) {
     return;
   }
 
@@ -4971,6 +4973,7 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
 
       if (machine.id === STARTER_MACHINE_ID && actor.id === state.playerFactionId) {
         state.progression.starterMachinePlaced = true;
+        state.progression.starterMachinePlacedHour ??= state.worldTimeHours;
       }
 
       log(state, events, `${machine.name} installed at ${location.name} via ${quote.label.toLowerCase()}.`, actor.id === state.playerFactionId ? "good" : "danger");
