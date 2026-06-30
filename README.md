@@ -24,11 +24,13 @@ npm run dev        # Vite dev server (127.0.0.1)
 ```bash
 npm run typecheck  # tsc -b
 npm test           # vitest run
+npx playwright install chromium  # one-time local browser install
+npm run smoke:browser
 npm run build      # tsc -b && vite build
 npm run lint       # eslint .
 ```
 
-CI runs typecheck/test/build on every push and PR to `main`. A separate
+CI runs typecheck/test/build plus the browser smoke on every push and PR to `main`. A separate
 **Lint** workflow runs ESLint on PRs, scoped to the files the PR changes, so
 it flags issues in new work without failing on pre-existing code.
 

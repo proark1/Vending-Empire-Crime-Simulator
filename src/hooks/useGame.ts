@@ -25,7 +25,7 @@ export interface UseGameResult {
   advanceWorld: (hours: number) => void;
   save: () => void;
   reload: () => void;
-  restart: () => void;
+  restart: (seed?: number) => void;
   saveStatus: SaveStatus;
 }
 
@@ -43,6 +43,7 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
   const lastRoomPeerCountRef = useRef(0);
   const sentCommandSequenceRef = useRef(0);
   const seenRemoteCommandIdsRef = useRef(new Set<string>());
+  const remoteUnavailableRef = useRef(false);
   const transport = useMemo(() => new LocalTransport(), []);
 
   useEffect(() => {
@@ -65,6 +66,7 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
   const loadLatestRemoteSave = useCallback((session: GameSession) => {
     void loadRemoteGame(session)
       .then((remote) => {
+        remoteUnavailableRef.current = false;
         remoteSaveRevisionRef.current = remote.save?.revision ?? null;
         updateStoredGameSessionSaveRevision(remote.save?.revision ?? null, remote.save?.updatedAt ?? null);
         const nextState = remote.save?.state ?? createInitialState(Date.now());
@@ -72,6 +74,7 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
         setState(nextState);
       })
       .catch((error) => {
+        remoteUnavailableRef.current = true;
         console.warn("Remote reload failed", error);
       });
   }, []);
@@ -86,6 +89,12 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
     saveGame(currentState);
 
     if (!session || session.local) {
+      remoteUnavailableRef.current = false;
+      return;
+    }
+
+    if (remoteUnavailableRef.current) {
+      setSaveStatus("offline");
       return;
     }
 
@@ -97,6 +106,7 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
     setSaveStatus("saving");
     void saveRemoteGame(session, currentState, remoteSaveRevisionRef.current)
       .then((result) => {
+        remoteUnavailableRef.current = false;
         remoteSaveRevisionRef.current = result.revision;
         sessionRef.current = {
           ...session,
@@ -116,7 +126,10 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
         }
 
         // Don't lie that it saved: the cloud write failed, though local save persisted.
-        console.warn("Remote save failed", error);
+        if (!remoteUnavailableRef.current) {
+          console.warn("Remote save failed", error);
+        }
+        remoteUnavailableRef.current = true;
         setSaveStatus("offline");
       });
   }, [loadLatestRemoteSave]);
@@ -295,7 +308,7 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
     }
 
     const session = sessionRef.current;
-    if (!session) {
+    if (!session || session.local || remoteUnavailableRef.current) {
       setState(loadGame());
       return;
     }
@@ -303,23 +316,24 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
     loadLatestRemoteSave(session);
   }, [loadLatestRemoteSave]);
 
-  const restart = useCallback(() => {
+  const restart = useCallback((seed = Date.now()) => {
     if (multiplayerRoleRef.current === "guest") {
       return;
     }
 
-    const nextState = createInitialState(Date.now());
+    const nextState = createInitialState(seed);
     clearSave();
     saveGame(nextState);
     setState(nextState);
 
     const session = sessionRef.current;
-    if (session) {
+    if (session && !session.local && !remoteUnavailableRef.current) {
       void saveRemoteGame(session, nextState, remoteSaveRevisionRef.current)
         .then((result) => {
           remoteSaveRevisionRef.current = result.revision;
         })
         .catch((error) => {
+          remoteUnavailableRef.current = true;
           console.warn("Remote reset save failed", error);
         });
     }

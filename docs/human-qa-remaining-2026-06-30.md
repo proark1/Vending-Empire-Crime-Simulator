@@ -1,7 +1,14 @@
 # Human QA Remaining - 2026-06-30
 
 This is the remaining work that cannot be proven by reducer tests, build output,
-or command-line smoke checks.
+or the checked-in Playwright browser smoke.
+
+## Now Automated
+
+- Clean Quick Start reaches the in-game scene.
+- The WebGL canvas is populated.
+- The first Storage Garage repair can be completed by holding `E` without needing a perfect camera ray.
+- Ops opens without browser console errors.
 
 ## Vertical Slice Timing
 
@@ -17,6 +24,10 @@ at these points:
 
 Record wall-clock minutes, confusion points, and whether the next objective was
 obvious without reading code or docs.
+
+The Story tab now exposes the run modifier, active run challenge, milestone pacing,
+and export button in the same place so the tester can capture both numbers and
+confusion notes.
 
 ## Multiplayer Host/Guest Session
 
@@ -35,6 +46,10 @@ Run two real browser clients for at least 45 minutes:
 Play into Downtown, Neon, and Old Town and judge whether the new quest openings,
 campaign payoffs, and ending summaries feel like authored story moments rather
 than only checklist completion.
+
+Pay special attention to whether the active run challenge changes minute-to-minute
+route decisions and whether the ending recap makes the next run seed/modifier
+tempting enough to restart.
 
 ## Production Admin
 

@@ -15,14 +15,15 @@ Run before shipping another visual pass:
 ```sh
 npm run typecheck
 npm run test
+npm run smoke:browser
 npm run build
 ```
 
 The `procedural visual assets` tests instantiate representative machines and crates under the Node test runner. They catch regressions where model-specific machine detail or crate labeling disappears during refactors.
 
-There is no checked-in Playwright or browser-runner dependency in this repo. Until one is added intentionally, browser smoke remains a manual/live check: start Vite, quick-start the game, verify a populated canvas, and inspect console output.
+The checked-in Playwright smoke starts Vite on `127.0.0.1:5175`, quick-starts a clean local run, verifies the WebGL canvas is populated, completes the first repair by holding `E`, opens Ops, and fails on browser console errors.
 
-## Manual Render Smoke
+## Manual Render Spot Check
 
 1. Start the app with `npm run dev -- --port 5173`.
 2. Open `http://127.0.0.1:5173/`.
@@ -43,4 +44,4 @@ There is no checked-in Playwright or browser-runner dependency in this repo. Unt
 
 - The model identity pass is additive mesh detail on medium/high only; low quality keeps cabinet silhouettes lightweight.
 - If frame time regresses in dense districts, first reduce high-frequency detail counts on machine identity overlays and street props before reducing world chunk radius.
-- Browser smoke should include a nonblank canvas screenshot after Quick Start. A visible HUD over a populated scene is enough for this pass; detailed per-pixel baselines can be added later if a browser test harness is introduced.
+- Browser smoke now guards the first-run canvas and first repair path. Detailed per-pixel baselines can be added later if regressions become subtle enough to justify image snapshots.

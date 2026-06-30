@@ -28,6 +28,13 @@ export interface RunModifierDefinition {
   };
 }
 
+export interface RunRouteChallenge {
+  detail: string;
+  progressLabel: string;
+  title: string;
+  tone: "danger" | "good" | "neutral" | "warning";
+}
+
 export interface MachineTraitDefinition {
   id: MachineTraitId;
   name: string;
@@ -169,6 +176,69 @@ export function createReplayState(seed = 1): GameState["replay"] {
 
 export function activeRunModifier(state: GameState): RunModifierDefinition {
   return runModifierDefinitions[state.replay?.modifier?.id] ?? chooseRunModifier(state.replay?.runSeed ?? 1);
+}
+
+export function activeRunRouteChallenge(state: GameState): RunRouteChallenge {
+  const modifier = activeRunModifier(state);
+  const player = state.factions[state.playerFactionId];
+  const playerMachines = Object.values(state.machines).filter((machine) => machine.ownerFactionId === state.playerFactionId && (machine.placementStatus ?? "installed") === "installed");
+  const stockedMachines = playerMachines.filter((machine) => machine.slots.some((slot) => slot.quantity > 0));
+  const greyStocked = playerMachines.reduce((count, machine) => {
+    return count + machine.slots.filter((slot) => {
+      const product = state.products[slot.productId];
+      return slot.quantity > 0 && (product.category === "fictional-grey" || product.category === "fictional-contraband");
+    }).length;
+  }, 0);
+  const studentStocked = playerMachines.reduce((count, machine) => {
+    return count + machine.slots.filter((slot) => slot.quantity > 0 && state.products[slot.productId]?.demandTags.includes("student")).length;
+  }, 0);
+  const completedContracts = state.progression.contractsCompletedTotal;
+  const activeInspections = Object.values(state.law.activeInspections).filter((inspection) => inspection.status === "active").length;
+
+  switch (modifier.id) {
+    case "inspection_crackdown":
+      return {
+        title: "Keep the paperwork boring",
+        detail: "Favor legal placements and clean stock before inspectors turn a warning into a fine.",
+        progressLabel: `${activeInspections} active inspections · heat ${Math.round(player.heat)}`,
+        tone: activeInspections > 0 || player.heat >= 18 ? "warning" : "good"
+      };
+    case "supplier_shortage":
+      return {
+        title: "Make every crate pay twice",
+        detail: "Use scarce stock on contracts before filling casual shelves.",
+        progressLabel: `${completedContracts} contracts closed · ${stockedMachines.length} stocked machines`,
+        tone: completedContracts > 0 ? "good" : stockedMachines.length > 0 ? "neutral" : "warning"
+      };
+    case "redline_price_war":
+      return {
+        title: "Prepare for the early undercut",
+        detail: "Stock the starter route, bank repair cash, and be ready to answer Redline sooner.",
+        progressLabel: state.progression.firstUndercutTriggered ? "First undercut surfaced" : `${stockedMachines.length} stocked machines`,
+        tone: state.progression.firstUndercutTriggered ? "warning" : stockedMachines.length >= 2 ? "good" : "neutral"
+      };
+    case "night_market_boom":
+      return {
+        title: "Run one hot shelf cleanly",
+        detail: "Grey goods move faster this run, but each visible shelf makes inspections sharper.",
+        progressLabel: `${greyStocked} grey shelves · heat ${Math.round(player.heat)}`,
+        tone: greyStocked > 0 && player.heat < 18 ? "good" : player.heat >= 18 ? "danger" : "warning"
+      };
+    case "student_rush":
+      return {
+        title: "Feed the cheap-route crowd",
+        detail: "Student-tagged stock sells harder; keep starter and campus-style stops from sitting empty.",
+        progressLabel: `${studentStocked} student shelves · ${stockedMachines.length} stocked machines`,
+        tone: studentStocked >= 2 ? "good" : stockedMachines.length > 0 ? "neutral" : "warning"
+      };
+    default:
+      return {
+        title: modifier.name,
+        detail: modifier.description,
+        progressLabel: `${stockedMachines.length} stocked machines`,
+        tone: "neutral"
+      };
+  }
 }
 
 export function machineTraitsFor(state: GameState, machineId: MachineId): MachineTraitState[] {

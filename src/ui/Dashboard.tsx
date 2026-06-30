@@ -69,9 +69,10 @@ import { baseFacilityList } from "../game/content/baseFacilities";
 import { supplierDeals } from "../game/content/suppliers";
 import { vehicleUpgradeList } from "../game/content/vehicleUpgrades";
 import { buildPlaytestReport, playtestReportFilename } from "../game/core/playtestTelemetry";
-import { activeRunModifier, machineTraitDefinitions, machineTraitsFor } from "../game/content/replayability";
+import { activeRunModifier, activeRunRouteChallenge, machineTraitDefinitions, machineTraitsFor } from "../game/content/replayability";
 
 type DashboardTab = "machines" | "fleet" | "base" | "empire" | "suppliers" | "catalog" | "finance" | "districts" | "rights" | "jobs" | "route" | "logistics" | "crew" | "law" | "heat" | "conflict" | "rival" | "story" | "debug" | "log";
+type DashboardAdvancedGroup = "commerce" | "people" | "risk" | "story";
 
 interface DashboardProps {
   state: GameState;
@@ -214,9 +215,54 @@ function relationshipBrief(relationship: string): string {
   return "Testing the route through pressure and offers.";
 }
 
+const advancedTabGroups: Record<DashboardAdvancedGroup, Array<{ id: DashboardTab; label: string; icon: React.ReactNode }>> = {
+  commerce: [
+    { id: "catalog", label: "Market", icon: <FlaskConical size={16} aria-hidden="true" /> },
+    { id: "suppliers", label: "Suppliers", icon: <Truck size={16} aria-hidden="true" /> },
+    { id: "rights", label: "Rights", icon: <Landmark size={16} aria-hidden="true" /> },
+    { id: "finance", label: "Finance", icon: <Landmark size={16} aria-hidden="true" /> },
+    { id: "logistics", label: "Stock", icon: <Package size={16} aria-hidden="true" /> }
+  ],
+  people: [
+    { id: "crew", label: "Crew", icon: <Users size={16} aria-hidden="true" /> },
+    { id: "empire", label: "Empire", icon: <Building2 size={16} aria-hidden="true" /> }
+  ],
+  risk: [
+    { id: "law", label: "Law", icon: <ShieldAlert size={16} aria-hidden="true" /> },
+    { id: "heat", label: "Heat", icon: <AlertTriangle size={16} aria-hidden="true" /> },
+    { id: "conflict", label: "Conflict", icon: <ShieldAlert size={16} aria-hidden="true" /> },
+    { id: "rival", label: "Rivals", icon: <Map size={16} aria-hidden="true" /> }
+  ],
+  story: [
+    { id: "story", label: "Story", icon: <Trophy size={16} aria-hidden="true" /> }
+  ]
+};
+
+const advancedGroupLabels: Array<{ id: DashboardAdvancedGroup; label: string }> = [
+  { id: "commerce", label: "Commerce" },
+  { id: "people", label: "People" },
+  { id: "risk", label: "Risk" },
+  { id: "story", label: "Story" }
+];
+
+function advancedGroupForTab(tab: DashboardTab): DashboardAdvancedGroup | null {
+  if (tab === "debug") {
+    return "risk";
+  }
+
+  for (const [group, tabs] of Object.entries(advancedTabGroups) as Array<[DashboardAdvancedGroup, typeof advancedTabGroups[DashboardAdvancedGroup]]>) {
+    if (tabs.some((item) => item.id === tab)) {
+      return group;
+    }
+  }
+
+  return null;
+}
+
 export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
   const [tab, setTab] = useState<DashboardTab>("machines");
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [advancedGroup, setAdvancedGroup] = useState<DashboardAdvancedGroup>("commerce");
   const [playtestExportStatus, setPlaytestExportStatus] = useState("");
   const playerMachines = useMemo(() => ownedMachines(state, state.playerFactionId), [state]);
   const installedPlayerMachines = useMemo(() => installedMachines(state, state.playerFactionId), [state]);
@@ -283,10 +329,18 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
   const endingScores = useMemo(() => endgamePathScores(state), [state]);
   const playtestReport = useMemo(() => buildPlaytestReport(state), [state]);
   const runModifier = useMemo(() => activeRunModifier(state), [state]);
+  const runChallenge = useMemo(() => activeRunRouteChallenge(state), [state]);
   const strategyUnlocks = state.replay?.strategyUnlocks ?? [];
   const advancedTabs = useMemo<DashboardTab[]>(
-    () => ["rights", "crew", "law", "empire", "suppliers", "catalog", "finance", "logistics", "heat", "conflict", "rival", "story", ...(showDebug ? (["debug"] as DashboardTab[]) : [])],
+    () => [...Object.values(advancedTabGroups).flat().map((item) => item.id), ...(showDebug ? (["debug"] as DashboardTab[]) : [])],
     [showDebug]
+  );
+  const groupedAdvancedTabs = useMemo(
+    () => [
+      ...advancedTabGroups[advancedGroup],
+      ...(showDebug && advancedGroup === "risk" ? [{ id: "debug" as DashboardTab, label: "Debug", icon: <Wrench size={16} aria-hidden="true" /> }] : [])
+    ],
+    [advancedGroup, showDebug]
   );
   const visibleTabs = useMemo<Array<{ icon: React.ReactNode; id: DashboardTab; label: string }>>(
     () => [
@@ -297,25 +351,9 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
       { id: "base", label: "Base", icon: <Factory size={16} aria-hidden="true" /> },
       { id: "districts", label: "Districts", icon: <Building2 size={16} aria-hidden="true" /> },
       { id: "log", label: "Log", icon: <ClipboardList size={16} aria-hidden="true" /> },
-      ...(showAdvanced
-        ? [
-            { id: "catalog" as DashboardTab, label: "Market", icon: <FlaskConical size={16} aria-hidden="true" /> },
-            { id: "suppliers" as DashboardTab, label: "Suppliers", icon: <Truck size={16} aria-hidden="true" /> },
-            { id: "crew" as DashboardTab, label: "Crew", icon: <Users size={16} aria-hidden="true" /> },
-            { id: "rights" as DashboardTab, label: "Rights", icon: <Landmark size={16} aria-hidden="true" /> },
-            { id: "empire" as DashboardTab, label: "Empire", icon: <Building2 size={16} aria-hidden="true" /> },
-            { id: "finance" as DashboardTab, label: "Finance", icon: <Landmark size={16} aria-hidden="true" /> },
-            { id: "logistics" as DashboardTab, label: "Stock", icon: <Package size={16} aria-hidden="true" /> },
-            { id: "law" as DashboardTab, label: "Law", icon: <ShieldAlert size={16} aria-hidden="true" /> },
-            { id: "heat" as DashboardTab, label: "Heat", icon: <AlertTriangle size={16} aria-hidden="true" /> },
-            { id: "conflict" as DashboardTab, label: "Conflict", icon: <ShieldAlert size={16} aria-hidden="true" /> },
-            { id: "rival" as DashboardTab, label: "Rivals", icon: <Map size={16} aria-hidden="true" /> },
-            { id: "story" as DashboardTab, label: "Story", icon: <Trophy size={16} aria-hidden="true" /> },
-            ...(showDebug ? [{ id: "debug" as DashboardTab, label: "Debug", icon: <Wrench size={16} aria-hidden="true" /> }] : [])
-          ]
-        : [])
+      ...(showAdvanced ? groupedAdvancedTabs : [])
     ],
-    [showAdvanced, showDebug]
+    [groupedAdvancedTabs, showAdvanced]
   );
 
   useEffect(() => {
@@ -324,10 +362,16 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
       return;
     }
 
+    const owningGroup = advancedGroupForTab(tab);
+    if (showAdvanced && owningGroup && owningGroup !== advancedGroup) {
+      setAdvancedGroup(owningGroup);
+      return;
+    }
+
     if (tab === "debug" && !showDebug) {
       setTab("machines");
     }
-  }, [advancedTabs, showAdvanced, showDebug, tab]);
+  }, [advancedGroup, advancedTabs, showAdvanced, showDebug, tab]);
 
   const handleExportPlaytestReport = () => {
     const report = buildPlaytestReport(state);
@@ -375,6 +419,26 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
           <strong>{nextTask ? nextTask.title : "Keep starter route stocked"}</strong>
         </div>
       </div>
+      {showAdvanced && (
+        <div className="dashboard-group-row" role="group" aria-label="Advanced dashboard sections">
+          {advancedGroupLabels.map((group) => (
+            <button
+              aria-pressed={advancedGroup === group.id}
+              className={advancedGroup === group.id ? "mini-button active" : "mini-button"}
+              key={group.id}
+              onClick={() => {
+                setAdvancedGroup(group.id);
+                if (advancedTabs.includes(tab) && advancedGroupForTab(tab) !== group.id) {
+                  setTab(advancedTabGroups[group.id][0]?.id ?? "machines");
+                }
+              }}
+              type="button"
+            >
+              {group.label}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="tab-row" role="tablist" aria-label="Operations dashboard">
         {visibleTabs.map((item) => (
           <DashboardTabButton active={tab === item.id} icon={item.icon} key={item.id} onClick={() => setTab(item.id)}>
@@ -1096,6 +1160,15 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
 
       {tab === "route" && (
         <div className="panel-list">
+          <article className={`route-task ${runChallenge.tone}`}>
+            <div>
+              <h3>{runChallenge.title}</h3>
+              <p>{runChallenge.detail}</p>
+              <p>{runModifier.name}: {runModifier.description}</p>
+            </div>
+            <strong>{runChallenge.progressLabel}</strong>
+          </article>
+
           {vehicle && (
             <article className="vehicle-card">
               <div className="vehicle-heading">
@@ -1703,6 +1776,7 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
               <div>
                 <h3>Run identity</h3>
                 <p>{runModifier.openingLine}</p>
+                <p>{runChallenge.title}: {runChallenge.detail}</p>
               </div>
             </div>
             <div className="report-grid">

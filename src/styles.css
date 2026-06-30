@@ -2986,6 +2986,21 @@ kbd {
   background: rgba(15, 23, 42, 0.98);
 }
 
+.dashboard-group-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 7px 8px;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.12);
+  background: rgba(15, 23, 42, 0.92);
+}
+
+.dashboard-group-row .mini-button {
+  min-height: 28px;
+  padding: 5px 8px;
+  font-size: 11px;
+}
+
 .graphics-quality-control {
   display: grid;
   grid-template-columns: auto 1fr;

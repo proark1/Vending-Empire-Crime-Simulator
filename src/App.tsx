@@ -18,6 +18,7 @@ import { clearModelConfig, loadModelConfig, MODEL_CONFIG_KEY, MODEL_CONFIG_UPDAT
 import { crimeContacts, districts, worldBounds, type WorldMapLayout } from "./game/content/world";
 import { endgamePaths, storyMissionArcs } from "./game/content/story";
 import { products } from "./game/content/products";
+import { chooseRunModifier } from "./game/content/replayability";
 import { clearWorldMapLayout, loadWorldMapLayout, normalizeLayout, saveWorldMapLayout } from "./game/world/mapLayoutStorage";
 import { machineServicePointForLocation } from "./game/world/locationGeometry";
 import { clearStoredGameSession, loadRemoteAudioConfig, loadRemoteGame, loadRemoteMapLayout, loadStoredGameSession, loginGame, registerGame, type GameSession } from "./game/save/api";
@@ -55,6 +56,34 @@ function targetLocationId(target: SceneTarget | null, state: GameState): Locatio
   }
 
   return null;
+}
+
+const GUIDANCE_INTERACTION_METERS = 2.4;
+
+function distanceMeters(a: Vec2, b: Vec2): number {
+  return Math.hypot(a.x - b.x, a.z - b.z);
+}
+
+function guidanceTargetForLocation(locationId: LocationId, state: GameState): SceneTarget | null {
+  if (locationId === "garage") {
+    return { type: "base", id: "garage", label: state.locations.garage?.name ?? "Storage Garage" };
+  }
+
+  if (locationId === "supplier") {
+    return { type: "supplier", id: "supplier", label: state.locations.supplier?.name ?? "Backdoor Supplier" };
+  }
+
+  const machine = Object.values(state.machines).find((candidate) => candidate.locationId === locationId && (candidate.placementStatus ?? "installed") === "installed");
+  if (machine) {
+    return { type: "machine", id: machine.id, label: machine.name };
+  }
+
+  const location = state.locations[locationId];
+  if (!location || location.kind === "garage" || location.kind === "supplier") {
+    return null;
+  }
+
+  return { type: "placement", id: location.id, label: location.name };
 }
 
 function createSceneFeedback(command: GameCommand, target: SceneTarget | null, state: GameState): Omit<SceneFeedbackEvent, "id"> | null {
@@ -681,11 +710,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
   const serviceHoldTimeoutRef = useRef<number | null>(null);
   const serviceHoldIntervalRef = useRef<number | null>(null);
   const serviceHoldInteractionRef = useRef<PrimaryInteraction | null>(null);
-  const activeTarget = entered ? target : null;
-  const activeTargetLocationId = useMemo(() => targetLocationId(activeTarget, state), [activeTarget, state]);
-  const primaryInteraction = useMemo(() => getPrimaryInteraction(state, activeTarget), [activeTarget, state]);
-  const primaryInteractionKey = useMemo(() => primaryInteractionSignature(primaryInteraction), [primaryInteraction]);
-  const holdPrimaryInteraction = Boolean(primaryInteraction?.durationMs && primaryInteraction.durationMs > 0 && !primaryInteraction.disabled);
+  const sceneTarget = entered ? target : null;
   const missionStep = useMemo(() => getStarterMissionStep(state, playerPosition), [playerPosition, state]);
   const routeTask = useMemo(() => selectedRouteTask(state), [state]);
   const activeAlarm = useMemo(() => activeMachineAlarms(state)[0], [state]);
@@ -697,6 +722,28 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
     const location = machine ? state.locations[machine.locationId] : undefined;
     return location ? machineServicePointForLocation(mapLayout, location) : undefined;
   }, [activeAlarm?.machineId, mapLayout, routeTask?.machineId, state]);
+  const guidanceFallbackTarget = useMemo(() => {
+    if (!entered || sceneTarget || !guidanceLocationId) {
+      return null;
+    }
+
+    const location = state.locations[guidanceLocationId];
+    if (!location) {
+      return null;
+    }
+
+    const targetPosition = guidanceTargetPosition ?? location.position;
+    if (distanceMeters(playerPosition, targetPosition) > GUIDANCE_INTERACTION_METERS) {
+      return null;
+    }
+
+    return guidanceTargetForLocation(guidanceLocationId, state);
+  }, [entered, guidanceLocationId, guidanceTargetPosition, playerPosition, sceneTarget, state]);
+  const activeTarget = sceneTarget ?? guidanceFallbackTarget;
+  const activeTargetLocationId = useMemo(() => targetLocationId(activeTarget, state), [activeTarget, state]);
+  const primaryInteraction = useMemo(() => getPrimaryInteraction(state, activeTarget), [activeTarget, state]);
+  const primaryInteractionKey = useMemo(() => primaryInteractionSignature(primaryInteraction), [primaryInteraction]);
+  const holdPrimaryInteraction = Boolean(primaryInteraction?.durationMs && primaryInteraction.durationMs > 0 && !primaryInteraction.disabled);
   const guidanceArrivedOverride = Boolean(guidanceLocationId && activeTargetLocationId === guidanceLocationId);
   const guidanceLabel = activeAlarm ? "Machine alarm" : routeTask?.title;
   const report = latestDayReport(state);
@@ -712,6 +759,8 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
     () => endgamePaths.find((path) => path.id === executedEnding?.pathId),
     [executedEnding?.pathId]
   );
+  const nextRunSeed = useMemo(() => Math.max(1, Math.abs(Math.trunc(state.replay?.runSeed ?? Date.now())) + 1), [state.replay?.runSeed]);
+  const nextRunModifier = useMemo(() => chooseRunModifier(nextRunSeed), [nextRunSeed]);
   const showDebugTools = useMemo(() => new URLSearchParams(window.location.search).has("debug"), []);
   const isLocalSession = session.local === true;
   const worldClockPaused = !entered || dashboardOpen || gameMenuOpen || showControls;
@@ -921,6 +970,11 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
     }
   }, [restart]);
 
+  const handlePlayAgain = useCallback(() => {
+    restart(nextRunSeed);
+    setDismissedEndingPathId(null);
+  }, [nextRunSeed, restart]);
+
   const handleManualSave = useCallback(() => {
     if (multiplayerStatus.role === "guest") {
       addToast({
@@ -935,11 +989,11 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
     save();
     addToast({
       title: "Game saved",
-      message: "Local save updated. Remote sync will run when the server is available.",
+      message: isLocalSession ? "Local save updated on this device." : "Local save updated. The save status shows whether remote sync is active.",
       tone: "good"
     });
     setGameMenuOpen(false);
-  }, [addToast, multiplayerStatus.role, save]);
+  }, [addToast, isLocalSession, multiplayerStatus.role, save]);
 
   const handleLogout = useCallback(() => {
     multiplayerClient.disconnect();
@@ -1328,6 +1382,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
             <span className="landing-kicker">Ending executed</span>
             <h2>{executedEndingPath.title}</h2>
             <p>{executedEnding.summary ?? executedEndingPath.consequence}</p>
+            <p>Next run preview: seed {nextRunSeed} starts with {nextRunModifier.name}. {nextRunModifier.description}</p>
             <div className="ending-stat-grid" aria-label="Run summary">
               <div>
                 <span>Cash</span>
@@ -1349,6 +1404,9 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
             <div className="ending-actions">
               <button onClick={() => setDismissedEndingPathId(executedEnding.pathId)} type="button">
                 Keep running route
+              </button>
+              <button onClick={handlePlayAgain} type="button">
+                Play again
               </button>
               <button className="danger" onClick={handleRestart} type="button">
                 Restart run
@@ -1758,7 +1816,7 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
   }, []);
 
   if (authState.status === "ready") {
-    return <GameApp key={authState.session.profile.id} initialState={authState.initialState} mapLayout={mapLayout} modelConfig={modelConfig} onLogout={handleLogout} session={authState.session} startEntered={authState.session.local === true} />;
+    return <GameApp key={authState.session.profile.id} initialState={authState.initialState} mapLayout={mapLayout} modelConfig={modelConfig} onLogout={handleLogout} session={authState.session} startEntered />;
   }
 
   return (

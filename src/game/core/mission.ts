@@ -174,7 +174,7 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
       id: "scout_industrial",
       title: "Scout Iron Yard",
       objective: "Map Iron Yard and prepare the first expansion route.",
-      guidance: "Follow the orange ping to Freight Depot and press E to scout the district.",
+      guidance: "Follow the orange ping to Freight Depot and hold E to scout the district.",
       targetLocationId: "freight_depot",
       progressLabel: "Expansion step 1 / 3",
       progressRatio: 0.82
@@ -211,7 +211,7 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
       id: "open_industrial",
       title: "Open Iron Yard",
       objective: "Pay the local setup cost and unlock Iron Yard pads.",
-      guidance: "Face the Freight Depot pad and press E to open the district.",
+      guidance: "Face the Freight Depot pad and hold E to open the district.",
       targetLocationId: "freight_depot",
       progressLabel: "Expansion step 2 / 3",
       progressRatio: 0.9
@@ -258,7 +258,7 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
       id: "repair_starter",
       title: "Repair Rusty Starter",
       objective: "Use the starter cash to fix the machine in your garage.",
-      guidance: "Face Storage Garage and press E to repair Rusty Starter.",
+      guidance: "Face Storage Garage and hold E to repair Rusty Starter.",
       targetLocationId: "garage",
       progressLabel: "Step 1 / 10",
       progressRatio: 1 / 10
@@ -282,7 +282,7 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
       id: "answer_undercut",
       title: "Stop Redline's undercut",
       objective: "Confront the undercut crew before the laundromat route loses ground.",
-      guidance: "Get to Foam & Fold and press E at Rusty Starter before the alarm expires.",
+      guidance: "Get to Foam & Fold and hold E at Rusty Starter before the alarm expires.",
       targetLocationId: firstMachine.locationId,
       progressLabel: "Step 8 / 10",
       progressRatio: 8 / 10
@@ -294,7 +294,7 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
       id: "answer_retaliation",
       title: "Survive retaliation",
       objective: "Stop Redline's retaliation at Rusty Starter.",
-      guidance: "Get to Foam & Fold and press E to fight the intruder.",
+      guidance: "Get to Foam & Fold and hold E to fight the intruder.",
       targetLocationId: firstMachine.locationId,
       progressLabel: "Step 9 / 10",
       progressRatio: 9 / 10
@@ -318,7 +318,7 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
       id: "buy_stock",
       title: "Get stock",
       objective: "Pick up a starter crate from Backdoor Supplier.",
-      guidance: "Follow the yellow ping to the supplier and press E to buy an affordable starter crate.",
+      guidance: "Follow the yellow ping to the supplier and hold E to buy an affordable starter crate.",
       targetLocationId: "supplier",
       progressLabel: "Step 3 / 10",
       progressRatio: 3 / 10
@@ -330,7 +330,7 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
       id: "deposit_stock",
       title: "Build the route",
       objective: "Store the supplier crate at your garage.",
-      guidance: "Carry the crate to Storage Garage and press E to stash it.",
+      guidance: "Carry the crate to Storage Garage and hold E to stash it.",
       targetLocationId: "garage",
       progressLabel: "Step 4 / 10",
       progressRatio: 4 / 10
@@ -342,7 +342,7 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
       id: "load_crate",
       title: "Load out",
       objective: "Take one crate from garage storage.",
-      guidance: "Face Storage Garage and press E to carry a crate for the route.",
+      guidance: "Face Storage Garage and hold E to carry a crate for the route.",
       targetLocationId: "garage",
       progressLabel: "Step 5 / 10",
       progressRatio: 5 / 10
@@ -354,7 +354,7 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
       id: "stock_machine",
       title: "Load Rusty Starter",
       objective: "Stock your first vending machine at Foam & Fold.",
-      guidance: "Carry the crate to Rusty Starter and press E to load it.",
+      guidance: "Carry the crate to Rusty Starter and hold E to load it.",
       targetLocationId: firstMachine.locationId,
       progressLabel: "Step 6 / 10",
       progressRatio: 6 / 10
@@ -366,7 +366,7 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
       id: "repair_machine",
       title: "Fix the asset",
       objective: "Repair Rusty Starter before rivals exploit it.",
-      guidance: "Face the machine and press E to spend cash on repairs.",
+      guidance: "Face the machine and hold E to spend cash on repairs.",
       targetLocationId: firstMachine.locationId,
       progressLabel: "Step 7 / 10",
       progressRatio: 7 / 10
@@ -378,7 +378,7 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
       id: "install_second",
       title: "Expand territory",
       objective: "Install a second machine at an open placement.",
-      guidance: "Follow the green ping to a placement pad and press E.",
+      guidance: "Follow the green ping to a placement pad and hold E.",
       targetLocationId: nearestOpenPlacement(state, playerPosition),
       progressLabel: "Step 10 / 10",
       progressRatio: 0.9
@@ -402,7 +402,7 @@ export function getStarterMissionStep(state: GameState, playerPosition: Vec2): M
       id: "install_second",
       title: "Expand territory",
       objective: "Install a second machine at an open placement.",
-      guidance: "Follow the green ping to a placement pad and press E.",
+      guidance: "Follow the green ping to a placement pad and hold E.",
       targetLocationId: nearestOpenPlacement(state, playerPosition),
       progressLabel: "Step 10 / 10",
       progressRatio: 0.9
