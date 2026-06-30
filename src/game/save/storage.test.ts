@@ -28,4 +28,15 @@ describe("save migration", () => {
 
     expect(migrated.factions.player.money).toBe(0);
   });
+
+  it("adds replay state to legacy saves", () => {
+    const legacy = createInitialState() as Partial<ReturnType<typeof createInitialState>>;
+    delete legacy.replay;
+
+    const migrated = migrateGameState(legacy as ReturnType<typeof createInitialState>);
+
+    expect(migrated.replay.modifier.id).toBeDefined();
+    expect(migrated.replay.machineHistory).toEqual({});
+    expect(migrated.replay.strategyUnlocks).toEqual([]);
+  });
 });

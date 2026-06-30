@@ -69,6 +69,7 @@ import { baseFacilityList } from "../game/content/baseFacilities";
 import { supplierDeals } from "../game/content/suppliers";
 import { vehicleUpgradeList } from "../game/content/vehicleUpgrades";
 import { buildPlaytestReport, playtestReportFilename } from "../game/core/playtestTelemetry";
+import { activeRunModifier, machineTraitDefinitions, machineTraitsFor } from "../game/content/replayability";
 
 type DashboardTab = "machines" | "fleet" | "base" | "empire" | "suppliers" | "catalog" | "finance" | "districts" | "rights" | "jobs" | "route" | "logistics" | "crew" | "law" | "heat" | "conflict" | "rival" | "story" | "debug" | "log";
 
@@ -281,6 +282,8 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
   const campaignProgress = useMemo(() => campaignMissionProgress(state), [state]);
   const endingScores = useMemo(() => endgamePathScores(state), [state]);
   const playtestReport = useMemo(() => buildPlaytestReport(state), [state]);
+  const runModifier = useMemo(() => activeRunModifier(state), [state]);
+  const strategyUnlocks = state.replay?.strategyUnlocks ?? [];
   const advancedTabs = useMemo<DashboardTab[]>(() => ["empire", "suppliers", "catalog", "finance", "logistics", "heat", "conflict", "rival", "story", ...(showDebug ? (["debug"] as DashboardTab[]) : [])], [showDebug]);
   const visibleTabs = useMemo<Array<{ icon: React.ReactNode; id: DashboardTab; label: string }>>(
     () => [
@@ -375,6 +378,13 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
 
       {tab === "machines" && (
         <div className="panel-list">
+          <article className="cargo-summary">
+            <Trophy size={18} aria-hidden="true" />
+            <span>
+              {runModifier.name} · {runModifier.description}
+              {strategyUnlocks.length > 0 ? ` · ${strategyUnlocks.slice(-3).join(" · ")}` : ""}
+            </span>
+          </article>
           {playerMachines.map((machine) => {
             const location = getMachineLocation(state, machine.id);
             const stock = machineStockUnits(machine);
@@ -386,6 +396,8 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
             const assignedCrew = assignedEmployeesForMachine(state, machine.id);
             const customerLoyalty = location ? state.economy.customers.loyaltyByLocation[location.id] ?? 0 : 0;
             const complaints = location ? state.economy.customers.complaintsByLocation[location.id] ?? 0 : 0;
+            const traits = machineTraitsFor(state, machine.id);
+            const history = state.replay?.machineHistory?.[machine.id] ?? [];
             return (
               <article className="machine-card" key={machine.id}>
                 <div>
@@ -397,6 +409,11 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
                   {assignedCrew.length > 0 && <p className="remote-chip">Crew: {assignedCrew.map((employee) => employee.name).join(", ")}</p>}
                   {pressure && pressure.reasons.length > 0 && <p className={`route-chip ${pressure.tone}`}>{pressure.reasons.join(" · ")}</p>}
                   {installed && <p className="remote-chip">Customers: {Math.round(customerLoyalty)} loyalty · {complaints.toFixed(1)} complaints</p>}
+                  {traits.length > 0 && (
+                    <p className="remote-chip">
+                      Traits: {traits.map((trait) => machineTraitDefinitions[trait.id]?.name ?? trait.id).join(" · ")}
+                    </p>
+                  )}
                 </div>
                 <div className="machine-metrics">
                   <span>${Math.round(machine.revenueStored)}</span>
@@ -417,6 +434,16 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
                         </span>
                       );
                     })}
+                  </div>
+                )}
+                {history.length > 0 && (
+                  <div className="storage-list">
+                    {history.slice(0, 3).map((entry, index) => (
+                      <article className={`event-row ${entry.tone}`} key={`${machine.id}_history_${entry.hour}_${index}`}>
+                        <time>{formatClock(entry.hour)}</time>
+                        <span>{entry.message}</span>
+                      </article>
+                    ))}
                   </div>
                 )}
               </article>
@@ -1563,6 +1590,8 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
           {rivalOrganizations.map((organization) => {
             const rival = state.factions[organization.factionId];
             const activeOperations = organization.operations.filter((operation) => !operation.resolvedHour);
+            const memory = state.replay?.rivalMemory?.[organization.factionId];
+            const memoryTotal = memory ? memory.undercut + memory.sabotage + memory.expansion + memory.negotiation + memory.exposure + memory.disruption + memory.alarmConfronted : 0;
             return (
               <article className="rival-panel" key={organization.factionId}>
                 <div className="rival-header">
@@ -1577,6 +1606,11 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
                 <p>{organization.agenda}</p>
                 <p className="rival-brief">{relationshipBrief(organization.relationship)}</p>
                 <p className="rival-intel">Likely next move: {rivalLikelyMove(state, organization.factionId)}</p>
+                {memory && memoryTotal > 0 && (
+                  <p className="rival-intel">
+                    History: {memory.undercut} undercuts · {memory.sabotage} sabotage · {memory.expansion} expands · {memory.negotiation + memory.exposure + memory.disruption} counters · {memory.alarmConfronted} alarms answered
+                  </p>
+                )}
                 <div className="storage-list">
                   {activeOperations.length === 0 ? (
                     <article className="inventory-row">
@@ -1652,8 +1686,31 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
           <article className="cargo-summary">
             <ClipboardList size={18} aria-hidden="true" />
             <span>
-              {campaignProgress.filter((progress) => progress.mission.completed).length}/{campaignProgress.length} chains · {storyProgress.length} arcs · leading ending {endingScores[0]?.path.title ?? "unknown"}
+              {runModifier.name} · {campaignProgress.filter((progress) => progress.mission.completed).length}/{campaignProgress.length} chains · {storyProgress.length} arcs · leading ending {endingScores[0]?.path.title ?? "unknown"}
             </span>
+          </article>
+
+          <article className="vehicle-card">
+            <div className="vehicle-heading">
+              <Trophy size={18} aria-hidden="true" />
+              <div>
+                <h3>Run identity</h3>
+                <p>{runModifier.openingLine}</p>
+              </div>
+            </div>
+            <div className="report-grid">
+              <span>Seed</span>
+              <strong>{Math.abs(Math.trunc(state.replay?.runSeed ?? 1))}</strong>
+              <span>Traits</span>
+              <strong>{Object.values(state.replay?.machineTraits ?? {}).reduce((sum, traits) => sum + traits.length, 0)}</strong>
+              <span>Rival history</span>
+              <strong>{Object.keys(state.replay?.rivalMemory ?? {}).length}</strong>
+              <span>Unlocks</span>
+              <strong>{strategyUnlocks.length}</strong>
+            </div>
+            {strategyUnlocks.length > 0 && (
+              <p className="rival-intel">Recent unlocks: {strategyUnlocks.slice(-5).join(" · ")}</p>
+            )}
           </article>
 
           <article className="vehicle-card pacing-card">
@@ -1710,6 +1767,7 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
                 const rival = state.factions[organization.factionId];
                 const quest = quests.find((candidate) => candidate.definition.factionId === organization.factionId);
                 const operation = organization.operations.find((candidate) => !candidate.resolvedHour);
+                const memory = state.replay?.rivalMemory?.[organization.factionId];
                 return (
                   <article className={`inventory-row ${organization.relationship === "hostile" ? "danger" : organization.relationship === "truce" ? "good" : "warning"}`} key={`boss_${organization.factionId}`}>
                     <div>
@@ -1720,6 +1778,7 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
                       <p>{quest?.definition.openingLine ?? organization.agenda}</p>
                       <p>{relationshipBrief(organization.relationship)}</p>
                       {operation && <p>Current scene pressure: {rivalOperationLabel(operation.kind)} at {state.locations[operation.locationId]?.name ?? operation.locationId}</p>}
+                      {memory && <p>Run memory: {memory.undercut} undercuts · {memory.sabotage} sabotage · {memory.negotiation + memory.exposure + memory.disruption} counters</p>}
                     </div>
                     <strong>{quest?.state.status ?? "dossier"}</strong>
                   </article>

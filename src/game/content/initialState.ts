@@ -14,6 +14,7 @@ import type {
 import { createInitialBaseFacilities } from "./baseFacilities";
 import { empireAssetList } from "./empire";
 import { products } from "./products";
+import { chooseRunModifier, createReplayState } from "./replayability";
 import { supplierDefinitions } from "./suppliers";
 import { districts, locations } from "./world";
 
@@ -372,7 +373,9 @@ function createInitialLocationRights(): Record<string, LocationRightsState> {
   );
 }
 
-export function createInitialState(): GameState {
+export function createInitialState(runSeed = 1): GameState {
+  const replay = createReplayState(runSeed);
+  const modifier = chooseRunModifier(runSeed);
   return {
     version: 1,
     worldTimeHours: 8,
@@ -510,6 +513,12 @@ export function createInitialState(): GameState {
     },
     eventLog: [
       {
+        id: "intro_modifier",
+        hour: 8,
+        tone: "warning",
+        message: `${modifier.name}: ${modifier.openingLine}`
+      },
+      {
         id: "intro_1",
         hour: 8,
         tone: "neutral",
@@ -531,6 +540,7 @@ export function createInitialState(): GameState {
     routePlan: {
       selectedTaskId: null
     },
+    replay,
     dayReports: [],
     progression: {
       contractsCompletedTotal: 0,

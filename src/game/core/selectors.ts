@@ -36,6 +36,7 @@ import { baseFacilities } from "../content/baseFacilities";
 import { empireAssets, type EmpireAssetEffects } from "../content/empire";
 import { machineModelList, machineModels } from "../content/machineModels";
 import { narrativeQuestDefinitions, type NarrativeQuestDefinition } from "../content/quests";
+import { activeRunModifier } from "../content/replayability";
 import { supplierDefinitions } from "../content/suppliers";
 import { endgamePaths, storyMissionArcs, type EndgamePath, type StoryMissionArc, type StoryMissionObjective } from "../content/story";
 
@@ -610,7 +611,8 @@ export function currentProductCost(state: GameState, productId: ProductId): numb
 
   const marketMultiplier = state.economy?.supply?.priceMultipliers?.[productId] ?? 1;
   const customizationCost = state.economy?.productCustomizations?.[productId]?.costDelta ?? 0;
-  return Math.max(1, Math.round((product.cost + customizationCost) * marketMultiplier * (1 - supplierDiscount(state))));
+  const runCostMultiplier = activeRunModifier(state).effects.supplierCostMultiplier ?? 1;
+  return Math.max(1, Math.round((product.cost + customizationCost) * marketMultiplier * runCostMultiplier * (1 - supplierDiscount(state))));
 }
 
 export function supplierRelationshipList(state: GameState): Array<SupplierRelationshipState & { label: string; description: string; available: boolean; productCount: number }> {

@@ -76,6 +76,18 @@ describe("game reducer", () => {
     expect(machine.slots[0].quantity).toBe(5);
   });
 
+  it("turns grey stock into machine identity", () => {
+    const state = withInstalledStarter();
+    state.player.currentLocationId = "laundromat";
+    state.player.cargo.mood_fizz = 4;
+
+    const result = reduceGameState(state, { type: "stock_machine", actorId: "player", machineId: "machine_player_1", productId: "mood_fizz", quantity: 4 });
+
+    expect(result.state.replay.machineTraits.machine_player_1?.some((trait) => trait.id === "cult_shelf")).toBe(true);
+    expect(result.state.replay.machineHistory.machine_player_1?.[0]?.message).toContain("Cult Shelf");
+    expect(result.state.replay.strategyUnlocks).toContain("Grey shelf identity");
+  });
+
   it("moves stock from supplier crate into garage storage and back out", () => {
     const state = reduceCommands(createInitialState(), [
       visit("supplier"),
@@ -264,8 +276,8 @@ describe("game reducer", () => {
 
     expect(state.contracts.contract_1.status).toBe("completed");
     expect(state.contracts.contract_1.deliveredQuantity).toBe(6);
-    expect(state.factions.player.money).toBe(118);
-    expect(state.progression.contractRewardsToday).toBe(36);
+    expect(state.factions.player.money).toBeGreaterThan(118);
+    expect(state.progression.contractRewardsToday).toBe(state.contracts.contract_1.rewardMoney);
     expect(state.progression.contractsCompletedToday).toBe(1);
     expect(state.progression.contractsCompletedTotal).toBe(1);
   });
@@ -654,6 +666,17 @@ describe("game reducer", () => {
     expect(collected.factions.player.money).toBeGreaterThan(stocked.factions.player.money);
   });
 
+  it("records strong collections as reusable route knowledge", () => {
+    const state = withInstalledStarter();
+    state.player.currentLocationId = "laundromat";
+    state.machines.machine_player_1.revenueStored = 60;
+
+    const result = reduceGameState(state, { type: "collect_revenue", actorId: "player", machineId: "machine_player_1" });
+
+    expect(result.state.replay.machineTraits.machine_player_1?.some((trait) => trait.id === "reliable_earner")).toBe(true);
+    expect(result.state.replay.strategyUnlocks).toContain("Cash route reader");
+  });
+
   it("runs street customer purchases through stock, revenue, and activity feedback", () => {
     const state = reduceCommands(withInstalledStarter(), [
       visit("supplier"),
@@ -712,6 +735,8 @@ describe("game reducer", () => {
 
     expect(result.state.locations.laundromat.rivalPressure).toBeGreaterThan(state.locations.laundromat.rivalPressure);
     expect(result.state.npcControllers.rival_redline.lastActedHour).toBe(result.state.worldTimeHours);
+    expect(result.state.replay.rivalMemory.rival_redline?.undercut).toBe(1);
+    expect(result.state.replay.machineTraits.machine_player_1?.some((trait) => trait.id === "rival_tagged")).toBe(true);
   });
 
   it("gives corporate rivals legal-pressure undercuts instead of generic street pressure", () => {

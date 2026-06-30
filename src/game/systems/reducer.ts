@@ -88,6 +88,17 @@ import { baseFacilities } from "../content/baseFacilities";
 import { employeeRoles } from "../content/employees";
 import { empireAssetList, empireAssets } from "../content/empire";
 import { narrativeQuestDefinitions, type NarrativeQuestDefinition, type NarrativeQuestStepDefinition } from "../content/quests";
+import {
+  activeRunModifier,
+  addMachineHistory,
+  addMachineTrait,
+  addStrategyUnlock,
+  createReplayState,
+  machineInspectionRiskMultiplier,
+  machineSabotageDamageMultiplier,
+  recordRivalMemory,
+  replayEndingSummary
+} from "../content/replayability";
 import { crimeContacts } from "../content/world";
 import { supplierDeals, supplierDefinitions, type SupplierDefinition } from "../content/suppliers";
 import { storyMissionArcs, type StoryMissionArc, type StoryMissionObjective } from "../content/story";
@@ -541,6 +552,15 @@ function ensureCampaignMissionState(state: GameState): void {
     state.mission.quests[quest.id].completedStepIds ??= [];
     state.mission.quests[quest.id].dialogueLog ??= [];
   }
+}
+
+function ensureReplayState(state: GameState): void {
+  state.replay ??= createReplayState();
+  state.replay.machineHistory ??= {};
+  state.replay.machineTraits ??= {};
+  state.replay.rivalMemory ??= {};
+  state.replay.strategyUnlocks ??= [];
+  state.replay.modifier ??= createReplayState(state.replay.runSeed ?? 1).modifier;
 }
 
 const insurancePlans: Record<InsurancePlan, { dailyCost: number; coverage: number; label: string }> = {
@@ -1070,7 +1090,13 @@ function expireMachineAlarm(state: GameState, events: GameEvent[], alarmId: stri
   const location = state.locations[alarm.locationId];
   const intruder = state.factions[alarm.intruderFactionId];
   const baseDamage = alarm.kind === "undercut" ? Math.max(6, Math.round(alarm.intensity * 0.45)) : alarm.intensity;
-  machine.damage = Math.min(100, machine.damage + sabotageDamage(baseDamage, machine));
+  const damage = Math.round(sabotageDamage(baseDamage, machine) * machineSabotageDamageMultiplier(state, machine));
+  machine.damage = Math.min(100, machine.damage + damage);
+  if (machine.ownerFactionId === state.playerFactionId) {
+    recordRivalMemory(state, alarm.intruderFactionId, alarm.kind === "undercut" ? "undercut" : "sabotage");
+    addMachineHistory(state, machine.id, "alarm", `${intruder?.name ?? "A rival"} finished a ${alarm.kind} alarm, adding ${damage}% damage.`, "danger");
+    addMachineTrait(state, machine, "rival_tagged", `${intruder?.name ?? "A rival"} left a visible mark.`);
+  }
 
   if (location) {
     location.rivalPressure = Math.min(1, location.rivalPressure + (alarm.kind === "undercut" ? 0.22 : 0.15));
@@ -2013,7 +2039,7 @@ function inspectionRiskScore(state: GameState, machine: VendingMachine): number 
 
   return Math.max(
     0,
-    stockRisk +
+    (stockRisk +
       heatRisk +
       policingRisk +
       visibilityRisk +
@@ -2023,7 +2049,7 @@ function inspectionRiskScore(state: GameState, machine: VendingMachine): number 
       permitShield -
       exclusiveShield -
       securityShield -
-      shellShield
+      shellShield) * machineInspectionRiskMultiplier(state, machine)
   );
 }
 
@@ -2171,7 +2197,8 @@ function maybeTriggerStarterUndercut(state: GameState, events: GameEvent[], play
   }
 
   const hasFirstCashSignal = machine.revenueStored >= 18 || state.progression.revenueCollectedToday >= 18 || playerEarned >= 18 || state.progression.contractsCompletedToday > 0;
-  const routeHasMatured = typeof state.progression.starterMachinePlacedHour !== "number" || state.worldTimeHours - state.progression.starterMachinePlacedHour >= FIRST_UNDERCUT_MIN_ROUTE_HOURS;
+  const undercutDelay = Math.max(6, FIRST_UNDERCUT_MIN_ROUTE_HOURS + (activeRunModifier(state).effects.redlineUndercutHoursDelta ?? 0));
+  const routeHasMatured = typeof state.progression.starterMachinePlacedHour !== "number" || state.worldTimeHours - state.progression.starterMachinePlacedHour >= undercutDelay;
   if (!hasFirstCashSignal || !routeHasMatured) {
     return;
   }
@@ -2601,6 +2628,7 @@ function createServiceContract(state: GameState, location: Location, productId: 
   const product = state.products[productId];
   const district = state.districts[location.districtId];
   const rentMultiplier = district?.rentMultiplier ?? 1;
+  const runRewardMultiplier = activeRunModifier(state).effects.contractRewardMultiplier ?? 1;
   const heatMultiplier = district ? Math.max(0.75, 1.35 - district.heatTolerance / 80) : 1;
   const contractNumber = state.progression.nextContractNumber;
   const id = `contract_${state.progression.nextContractNumber++}`;
@@ -2614,7 +2642,7 @@ function createServiceContract(state: GameState, location: Location, productId: 
       deliveredQuantity: 0,
       issuedHour: state.worldTimeHours,
       deadlineHour,
-      rewardMoney: 36,
+      rewardMoney: Math.round(36 * runRewardMultiplier),
       rewardPublicReputation: 2,
       rewardStreetReputation: 1,
       failureHeat: 3,
@@ -2632,7 +2660,7 @@ function createServiceContract(state: GameState, location: Location, productId: 
     deliveredQuantity: 0,
     issuedHour: state.worldTimeHours,
     deadlineHour,
-    rewardMoney: Math.round((requiredQuantity * product.basePrice + 14 + location.footTraffic * 10) * rentMultiplier),
+    rewardMoney: Math.round((requiredQuantity * product.basePrice + 14 + location.footTraffic * 10) * rentMultiplier * runRewardMultiplier),
     rewardPublicReputation: 1 + (location.safety >= 0.7 ? 1 : 0),
     rewardStreetReputation: location.rivalPressure >= 0.25 ? 2 : 1,
     failureHeat: Math.round((location.policePresence >= 0.25 ? 4 : 2) * heatMultiplier),
@@ -2701,6 +2729,21 @@ function completeContract(state: GameState, events: GameEvent[], contract: Servi
   const location = state.locations[contract.locationId];
   if (location) {
     location.rivalPressure = Math.max(0, location.rivalPressure - 0.08);
+  }
+
+  const contractMachine = installedMachines(state, state.playerFactionId).find((machine) => machine.locationId === contract.locationId);
+  if (contractMachine) {
+    addMachineHistory(state, contractMachine.id, "contract", `${contract.title} paid $${contract.rewardMoney}.`, "good");
+    if (contract.rewardPublicReputation >= 2) {
+      addMachineTrait(state, contractMachine, "local_favorite", `${location?.name ?? "This stop"} noticed reliable service.`);
+    }
+  }
+
+  if (state.progression.contractsCompletedTotal >= 3) {
+    addStrategyUnlock(state, "Contract operator");
+  }
+  if (state.progression.contractsCompletedTotal >= 8) {
+    addStrategyUnlock(state, "District closer");
   }
 
   log(state, events, `${contract.title} completed. $${contract.rewardMoney} bonus paid.`, "good");
@@ -3663,6 +3706,7 @@ function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number):
   ensureBaseState(state);
   ensureEconomyState(state);
   ensureEmpireState(state);
+  ensureReplayState(state);
   state.worldTimeHours += hours;
   updateDistrictEvents(state, events);
   shiftSupplierMarket(state, events);
@@ -3768,6 +3812,7 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
   ensureEconomyState(state);
   ensureEmpireState(state);
   ensureCampaignMissionState(state);
+  ensureReplayState(state);
   const actor = getFactionOrThrow(state, command.actorId);
 
   switch (command.type) {
@@ -4406,6 +4451,7 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       };
       if (wasNewDesign) {
         state.progression.productDesignsCompleted = (state.progression.productDesignsCompleted ?? 0) + 1;
+        addStrategyUnlock(state, `${mode.label} product lab`);
       }
       log(state, events, `${product.name} launched as ${mode.brandName}: ${mode.tagline}`, "good");
       break;
@@ -4516,13 +4562,14 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
         break;
       }
 
+      const summary = replayEndingSummary(state, ending.path.executionSummary);
       state.empire.endingExecutions[ending.path.id] = {
         executedHour: state.worldTimeHours,
         pathId: ending.path.id,
         status: "executed",
-        summary: ending.path.executionSummary
+        summary
       };
-      log(state, events, `ENDING EXECUTED: ${ending.path.title}. ${ending.path.executionSummary}`, "good");
+      log(state, events, `ENDING EXECUTED: ${ending.path.title}. ${summary}`, "good");
       break;
     }
 
@@ -4598,6 +4645,8 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
           addInventory(state.player.garageStorage, productId, Math.round(deal.value));
         }
       }
+
+      addStrategyUnlock(state, `${definition.label} ${deal.label}`);
 
       log(state, events, `${definition.label} accepted ${deal.label}. Loyalty ${Math.round(relationship.loyalty)} / trust ${Math.round(relationship.trust)}.`, "good");
       break;
@@ -4793,6 +4842,10 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
         employee.statusDetail = `Assigned to ${machine.name}.`;
         employee.routePhase = "idle";
         employee.routeTargetLocationId = machine.locationId;
+        addMachineHistory(state, machine.id, "crew", `${employee.name} assigned as ${employeeRoles[employee.role]?.title ?? employee.role}.`, "neutral");
+        if (employee.role === "guard" || employee.role === "technician" || employee.role === "runner") {
+          addMachineTrait(state, machine, "crew_protected", `${employee.name} made the stop harder to knock over.`);
+        }
         log(state, events, `${employee.name} assigned to ${machine.name}.`, "neutral");
       } else {
         assignments.delete(machine.id);
@@ -4845,6 +4898,14 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       slot.quantity += quantity;
       removeCarriedProduct(state, product.id, quantity);
       machine.lastServicedHour = state.worldTimeHours;
+      addMachineHistory(state, machine.id, "stocked", `Stocked ${quantity}x ${product.name}.`, "good");
+      if (product.category === "fictional-grey" || product.category === "fictional-contraband") {
+        addMachineTrait(state, machine, "cult_shelf", `${product.name} made this a whispered shelf.`);
+        addStrategyUnlock(state, "Grey shelf identity");
+      }
+      if (activeRunModifier(state).id === "student_rush" && product.demandTags.includes("student")) {
+        addMachineTrait(state, machine, "local_favorite", `${product.name} matched the student rush.`);
+      }
       log(state, events, `Loaded ${quantity}x ${product.name} into ${machine.name}.`, "good");
       applyContractDelivery(state, events, machine, product.id, quantity);
       maybeTriggerStarterUndercut(state, events);
@@ -4871,6 +4932,14 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       machine.lastServicedHour = state.worldTimeHours;
       if (actor.id === state.playerFactionId) {
         state.progression.revenueCollectedToday += amount;
+        addMachineHistory(state, machine.id, "collected", `Collected $${amount}.`, "good");
+        if (amount >= 50) {
+          addMachineTrait(state, machine, "reliable_earner", `$${amount} collection proved the route.`);
+          addStrategyUnlock(state, "Cash route reader");
+        }
+        if (amount >= 80 && machine.placementMethod === "legal_contract") {
+          addMachineTrait(state, machine, "local_favorite", "Regulars keep this legal stop busy.");
+        }
         maybeTriggerStarterUndercut(state, events, amount);
       }
       log(state, events, `Collected $${amount} from ${machine.name}.`, "good");
@@ -4999,6 +5068,19 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
 
       log(state, events, `${machine.name} installed at ${location.name} via ${quote.label.toLowerCase()}.`, actor.id === state.playerFactionId ? "good" : "danger");
       if (actor.id === state.playerFactionId) {
+        addMachineHistory(state, machine.id, "placed", `${machine.name} installed at ${location.name} via ${quote.label}.`, "good");
+        if (method === "legal_contract" && location.safety >= 0.65) {
+          addMachineTrait(state, machine, "local_favorite", `${location.name} gave the route a clean start.`);
+        }
+        if (method !== "legal_contract" || location.rivalPressure >= 0.35) {
+          addMachineTrait(state, machine, "rival_tagged", `${location.name} was already contested.`);
+        }
+        if (location.demandTags.includes("night") && method !== "legal_contract") {
+          addMachineTrait(state, machine, "cult_shelf", `${location.name} night traffic noticed the cabinet.`);
+        }
+        if (installedMachines(state, state.playerFactionId).length >= 3) {
+          addStrategyUnlock(state, "Three-stop route");
+        }
         issueDailyContracts(state, events);
         if (method === "rival_territory") {
           triggerStarterRetaliation(state, events, "you planted a machine on contested turf");
@@ -5088,6 +5170,10 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
 
       const damage = sabotageDamage(28, machine);
       machine.damage = Math.min(100, machine.damage + damage);
+      if (actor.id === state.playerFactionId) {
+        recordRivalMemory(state, machine.ownerFactionId, "sabotage");
+        addStrategyUnlock(state, "Direct sabotage");
+      }
       actor.heat += 8;
       actor.streetReputation += 2;
       const location = state.locations[machine.locationId];
@@ -5136,8 +5222,12 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       alarm.resolved = true;
       alarm.resolvedHour = state.worldTimeHours;
       alarm.outcome = "confronted";
-      machine.damage = Math.min(100, machine.damage + sabotageDamage(4, machine));
+      const damage = Math.round(sabotageDamage(4, machine) * machineSabotageDamageMultiplier(state, machine));
+      machine.damage = Math.min(100, machine.damage + damage);
       machine.lastServicedHour = state.worldTimeHours;
+      recordRivalMemory(state, alarm.intruderFactionId, "alarm_confronted");
+      addMachineHistory(state, machine.id, "alarm", `Confronted ${intruder?.name ?? "the intruder"} before they finished the job.`, "good");
+      addMachineTrait(state, machine, "rival_tagged", `${intruder?.name ?? "A rival"} now knows this route bites back.`);
       actor.streetReputation += 1;
       actor.heat += 1;
       if (intruder) {
@@ -5599,6 +5689,8 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       chargePlayer(state, command.approach === "disrupt" ? "sabotage" : "base", cost, `${operationKindLabel(operation.kind)} ${command.approach}`);
 
       if (command.approach === "negotiate") {
+        recordRivalMemory(state, operation.factionId, "negotiate");
+        addStrategyUnlock(state, "Truce broker");
         operation.progress = Math.max(0, operation.progress - 22);
         operation.strength = clamp01(operation.strength - 0.08);
         organization.relationship = "truce";
@@ -5609,6 +5701,8 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       }
 
       if (command.approach === "expose") {
+        recordRivalMemory(state, operation.factionId, "expose");
+        addStrategyUnlock(state, "Paper trail pressure");
         operation.exposed = true;
         operation.progress = Math.max(0, operation.progress - 28);
         operation.strength = clamp01(operation.strength - 0.1);
@@ -5622,6 +5716,8 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       }
 
       if (command.approach === "disrupt") {
+        recordRivalMemory(state, operation.factionId, "disrupt");
+        addStrategyUnlock(state, "Street disruption");
         operation.progress = Math.max(0, operation.progress - 36);
         operation.strength = clamp01(operation.strength - 0.22);
         organization.relationship = "hostile";
@@ -5657,11 +5753,14 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       if (command.action === "sabotage" && command.targetMachineId) {
         const target = state.machines[command.targetMachineId];
         if (target && target.ownerFactionId !== actor.id && isMachineInstalled(target)) {
+          recordRivalMemory(state, actor.id, "sabotage");
           if (controller) {
             controller.lastSabotagedHour = state.worldTimeHours;
           }
           const baseDamage = Math.max(8, 18 + Math.round((controller?.aggression ?? 0) * 8) + profile.sabotageBonus);
           if (target.ownerFactionId === state.playerFactionId) {
+            addMachineHistory(state, target.id, "rival", `${actor.name} sent a sabotage crew.`, "danger");
+            addMachineTrait(state, target, "rival_tagged", `${actor.name} marked this machine for pressure.`);
             createMachineAlarm(state, events, target, actor.id, "sabotage", baseDamage);
             log(state, events, rivalBossTaunt(state, actor.id, actor.archetype, actor.name, "sabotage"), "danger");
             break;
@@ -5676,6 +5775,7 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       if (command.action === "undercut" && command.targetMachineId) {
         const target = state.machines[command.targetMachineId];
         if (target && isMachineInstalled(target)) {
+          recordRivalMemory(state, actor.id, "undercut");
           const location = state.locations[target.locationId];
           location.rivalPressure = Math.min(1, location.rivalPressure + profile.undercutPressure);
           actor.money = Math.max(0, actor.money - profile.undercutCost);
@@ -5691,12 +5791,15 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
           }
           log(state, events, `${actor.name} is ${actor.archetype === "corporate" ? "pressuring permits" : "undercutting prices"} near ${location.name}.`, "warning");
           if (target.ownerFactionId === state.playerFactionId) {
+            addMachineHistory(state, target.id, "rival", `${actor.name} undercut prices near ${location.name}.`, "warning");
+            addMachineTrait(state, target, "rival_tagged", `${actor.name} is watching this stop.`);
             log(state, events, rivalBossTaunt(state, actor.id, actor.archetype, actor.name, "undercut"), "warning");
           }
         }
       }
 
       if (command.action === "expand" && command.locationId) {
+        recordRivalMemory(state, actor.id, "expand");
         const location = state.locations[command.locationId];
         if (location && !machineAtLocation(state, location.id) && isDistrictUnlockedForPlacement(state, location.districtId)) {
           const rights = state.economy.locationRights[location.id] ??= locationRightsFor(state, location.id);

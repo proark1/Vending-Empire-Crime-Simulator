@@ -1654,7 +1654,7 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
         setAuthState({
           status: "ready",
           session: { ...session, saveRevision: remote.save?.revision ?? null, saveUpdatedAt: remote.save?.updatedAt ?? null },
-          initialState: remote.save?.state ?? createInitialState()
+          initialState: remote.save?.state ?? createInitialState(Date.now())
         });
       })
       .catch(() => {
@@ -1682,7 +1682,7 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
           setAuthState({
             status: "ready",
             session: { profile: response.profile, saveRevision: response.save?.revision ?? null, saveUpdatedAt: response.save?.updatedAt ?? null, token: response.token },
-            initialState: response.save?.state ?? createInitialState()
+            initialState: response.save?.state ?? createInitialState(Date.now())
           });
         })
         .catch((error) => {

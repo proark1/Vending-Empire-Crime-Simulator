@@ -747,6 +747,14 @@ function addFacadeDetails(group: THREE.Group, width: number, depth: number, heig
   threshold.receiveShadow = true;
   group.add(threshold);
 
+  const doorMat = new THREE.Mesh(
+    new THREE.BoxGeometry(doorScale.frameWidth + 0.1, 0.018, 0.42),
+    new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.9, metalness: 0.02 })
+  );
+  doorMat.position.set(doorX, 0.025, frontZ - 0.44);
+  doorMat.receiveShadow = true;
+  group.add(doorMat);
+
   if (quality === "low") {
     return;
   }
@@ -778,6 +786,34 @@ function addFacadeDetails(group: THREE.Group, width: number, depth: number, heig
       slat.position.set(displayX, y, frontZ - 0.154);
       group.add(slat);
     }
+  } else {
+    const shelfMaterial = new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.45, metalness: 0.18 });
+    const displayAccent = new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.88 });
+    for (let shelfIndex = 0; shelfIndex < 2; shelfIndex += 1) {
+      const shelfY = storefrontWindow.sillHeight + 0.28 + shelfIndex * 0.34;
+      const shelf = new THREE.Mesh(new THREE.BoxGeometry(displayWidth * 0.82, 0.035, 0.06), shelfMaterial);
+      shelf.position.set(displayX, shelfY, frontZ - 0.14);
+      group.add(shelf);
+
+      for (let itemIndex = 0; itemIndex < 5; itemIndex += 1) {
+        const itemX = displayX - displayWidth * 0.32 + itemIndex * (displayWidth * 0.16);
+        const itemColor = itemIndex % 3 === 0 ? accent : itemIndex % 3 === 1 ? "#f8fafc" : "#fbbf24";
+        const material = itemIndex % 3 === 0 ? displayAccent : new THREE.MeshStandardMaterial({ color: itemColor, roughness: 0.52, metalness: 0.06 });
+        const item = itemIndex % 2 === 0
+          ? new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.16, 0.05), material)
+          : new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.17, 10), material);
+        item.position.set(itemX, shelfY + 0.09, frontZ - 0.16);
+        if (itemIndex % 2 !== 0) {
+          item.rotation.z = 0.05;
+        }
+        item.castShadow = true;
+        group.add(item);
+      }
+    }
+
+    const neonTrim = new THREE.Mesh(new THREE.BoxGeometry(displayWidth * 0.88, 0.035, 0.02), new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.9 }));
+    neonTrim.position.set(displayX, displayFrameY + storefrontWindow.frameHeight / 2 + 0.08, frontZ - 0.134);
+    group.add(neonTrim);
   }
 
   for (const x of [-width / 2 + 0.22, width / 2 - 0.22]) {
@@ -927,13 +963,41 @@ export function createBuilding(width: number, depth: number, height: number, sty
   });
   signMaterial.userData.nightEmissive = { day: 0.08, night: 0.42 };
   const signY = Math.min(visualHeight - 0.46, Math.max(2.52, WORLD_SCALE.building.door.frameHeight + 0.34));
-  addPlane(group, Math.min(width * 0.72, 3.8), 0.58, signMaterial, new THREE.Vector3(0, signY, -depth / 2 - 0.025), 0);
+  const signWidth = Math.min(width * 0.72, 3.8);
+  addPlane(group, signWidth, 0.58, signMaterial, new THREE.Vector3(0, signY, -depth / 2 - 0.025), 0);
+
+  if (quality !== "low") {
+    const signLampMaterial = new THREE.MeshBasicMaterial({ color: "#fde68a", transparent: true, opacity: 0.86 });
+    for (const x of [-signWidth * 0.32, signWidth * 0.32]) {
+      const lampArm = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.035, 0.24), new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.45, metalness: 0.34 }));
+      lampArm.position.set(x, signY + 0.43, -depth / 2 - 0.12);
+      group.add(lampArm);
+      const lamp = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.12, 14), signLampMaterial);
+      lamp.position.set(x, signY + 0.34, -depth / 2 - 0.24);
+      lamp.rotation.x = -Math.PI / 2;
+      group.add(lamp);
+    }
+  }
 
   const awningMaterial = new THREE.MeshStandardMaterial({ color: signAccent[style], roughness: 0.62, metalness: 0.08 });
-  const awning = new THREE.Mesh(new THREE.BoxGeometry(Math.min(width * 0.55, 3.2), 0.12, 0.48), awningMaterial);
+  const awningWidth = Math.min(width * 0.55, 3.2);
+  const awning = new THREE.Mesh(new THREE.BoxGeometry(awningWidth, 0.12, 0.48), awningMaterial);
   awning.position.set(0, Math.min(visualHeight - 0.95, WORLD_SCALE.building.door.frameHeight + 0.05), -depth / 2 - 0.22);
   awning.castShadow = true;
   group.add(awning);
+
+  if (quality !== "low") {
+    const stripeMaterial = new THREE.MeshBasicMaterial({ color: "#f8fafc", transparent: true, opacity: 0.76 });
+    const stripeCount = Math.max(3, Math.floor(awningWidth / 0.42));
+    for (let index = 0; index < stripeCount; index += 1) {
+      if (index % 2 !== 0) {
+        continue;
+      }
+      const stripe = new THREE.Mesh(new THREE.BoxGeometry(awningWidth / stripeCount * 0.72, 0.014, 0.5), stripeMaterial);
+      stripe.position.set(-awningWidth / 2 + (index + 0.5) * (awningWidth / stripeCount), awning.position.y + 0.07, awning.position.z);
+      group.add(stripe);
+    }
+  }
 
   return group;
 }
@@ -1625,6 +1689,54 @@ export function createStreetProps(options: { enableLocalLights?: boolean; maxNpc
     const sprite = createBillboardSprite(prop.kind, prop.w, prop.h);
     sprite.position.set(prop.x, prop.y, prop.z);
     group.add(sprite);
+  }
+
+  if (quality !== "low") {
+    const cardboardMaterial = new THREE.MeshStandardMaterial({ color: "#a16207", roughness: 0.78, metalness: 0.02 });
+    const tapeMaterial = new THREE.MeshBasicMaterial({ color: "#fef3c7", transparent: true, opacity: 0.78 });
+    const coneMaterial = new THREE.MeshStandardMaterial({ color: "#f97316", roughness: 0.48, metalness: 0.04 });
+    const coneStripeMaterial = new THREE.MeshBasicMaterial({ color: "#f8fafc" });
+    const boxPiles: Array<[number, number, number]> = [
+      [6.8, 5.85, 0.05],
+      [-36.6, 4.35, -0.08],
+      [24.1, 7.55, 0.12],
+      [13.2, -24.0, -0.06]
+    ];
+    for (const [x, z, rotation] of quality === "medium" ? boxPiles.slice(0, 3) : boxPiles) {
+      const pile = new THREE.Group();
+      pile.position.set(x, 0.16, z);
+      pile.rotation.y = rotation;
+      for (let i = 0; i < 3; i += 1) {
+        const box = new THREE.Mesh(new THREE.BoxGeometry(0.34 + i * 0.03, 0.23, 0.28), cardboardMaterial);
+        box.position.set((i - 1) * 0.19, i === 2 ? 0.24 : 0, i === 1 ? 0.13 : 0);
+        box.rotation.y = i % 2 === 0 ? 0.08 : -0.12;
+        box.castShadow = true;
+        box.receiveShadow = true;
+        pile.add(box);
+
+        const tape = new THREE.Mesh(new THREE.BoxGeometry(0.36 + i * 0.03, 0.022, 0.03), tapeMaterial);
+        tape.position.copy(box.position).add(new THREE.Vector3(0, 0.13, -0.13));
+        tape.rotation.y = box.rotation.y;
+        pile.add(tape);
+      }
+      group.add(pile);
+    }
+
+    for (const [x, z] of [[-2.25, -3.32], [7.82, -0.62], [24.55, -7.2], [-29.25, 8.75]] as Array<[number, number]>) {
+      const cone = new THREE.Group();
+      cone.position.set(x, 0, z);
+      const base = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.045, 0.32), new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.58, metalness: 0.08 }));
+      base.position.y = 0.025;
+      cone.add(base);
+      const body = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.44, 16), coneMaterial);
+      body.position.y = 0.265;
+      body.castShadow = true;
+      cone.add(body);
+      const stripe = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, 0.045, 16), coneStripeMaterial);
+      stripe.position.y = 0.28;
+      cone.add(stripe);
+      group.add(cone);
+    }
   }
 
   const npcs: Array<{

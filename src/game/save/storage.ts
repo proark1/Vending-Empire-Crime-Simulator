@@ -1,5 +1,6 @@
 import type { GameState } from "../core/types";
 import { createInitialState } from "../content/initialState";
+import { createReplayState } from "../content/replayability";
 
 const SAVE_KEY = "vendetta-vending.save.v1";
 
@@ -330,6 +331,14 @@ export function migrateGameState(parsed: GameState): GameState {
     routePlan: {
       ...baseline.routePlan,
       ...(parsed.routePlan ?? {})
+    },
+    replay: {
+      ...createReplayState(parsed.replay?.runSeed ?? baseline.replay.runSeed),
+      ...(parsed.replay ?? {}),
+      machineHistory: parsed.replay?.machineHistory ?? {},
+      machineTraits: parsed.replay?.machineTraits ?? {},
+      rivalMemory: parsed.replay?.rivalMemory ?? {},
+      strategyUnlocks: Array.isArray(parsed.replay?.strategyUnlocks) ? parsed.replay.strategyUnlocks : []
     },
     contracts: {
       ...baseline.contracts,

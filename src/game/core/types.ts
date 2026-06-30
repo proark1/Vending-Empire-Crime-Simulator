@@ -17,6 +17,9 @@ export type ProductId =
   | "night_syrup"
   | "focus_cubes";
 export type MachineUpgradeId = "reinforced_glass" | "smart_lock" | "security_camera" | "cashless_terminal" | "neon_sign" | "remote_monitor";
+export type RunModifierId = "inspection_crackdown" | "supplier_shortage" | "redline_price_war" | "night_market_boom" | "student_rush";
+export type MachineTraitId = "local_favorite" | "rival_tagged" | "reliable_earner" | "complaint_magnet" | "crew_protected" | "cult_shelf";
+export type RivalMemoryKind = "undercut" | "sabotage" | "expand" | "negotiate" | "expose" | "disrupt" | "alarm_confronted";
 export type VehicleUpgradeId = "cargo_rack" | "reinforced_locks" | "tuned_engine" | "cold_box";
 export type MachineModelId =
   | "basic_snack"
@@ -347,6 +350,45 @@ export interface ProgressionState {
   starterMachinePlacedHour?: number;
   firstUndercutTriggered: boolean;
   firstRetaliationTriggered: boolean;
+}
+
+export interface RunModifierState {
+  id: RunModifierId;
+  startedHour: number;
+}
+
+export interface MachineTraitState {
+  id: MachineTraitId;
+  acquiredHour: number;
+  source: string;
+}
+
+export interface MachineHistoryEvent {
+  hour: number;
+  message: string;
+  tone: GameEventTone;
+  type: "placed" | "stocked" | "collected" | "contract" | "alarm" | "trait" | "crew" | "rival";
+}
+
+export interface RivalMemoryState {
+  alarmConfronted: number;
+  disruption: number;
+  exposure: number;
+  expansion: number;
+  factionId: FactionId;
+  lastInteractionHour?: number;
+  negotiation: number;
+  sabotage: number;
+  undercut: number;
+}
+
+export interface ReplayState {
+  runSeed: number;
+  modifier: RunModifierState;
+  machineHistory: Record<MachineId, MachineHistoryEvent[]>;
+  machineTraits: Record<MachineId, MachineTraitState[]>;
+  rivalMemory: Record<FactionId, RivalMemoryState>;
+  strategyUnlocks: string[];
 }
 
 export type FinanceLedgerCategory =
@@ -840,6 +882,7 @@ export interface GameState {
   routePlan: RoutePlanState;
   dayReports: DayReport[];
   progression: ProgressionState;
+  replay: ReplayState;
 }
 
 export type GameCommand =

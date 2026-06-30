@@ -1,6 +1,7 @@
 import type { GameState, Location, Product, VendingMachine } from "../core/types";
 import { effectiveMachineDamage, effectiveMachineVisibility, getMachineUpgradeEffects, priceDemandMultiplier } from "../core/machineStats";
 import { locationRightsFor } from "../core/selectors";
+import { machineTraitMultiplier } from "../content/replayability";
 
 function tagDemandMultiplier(product: Product, location: Location): number {
   const tagMatches = product.demandTags.filter((tag) => location.demandTags.includes(tag)).length;
@@ -180,6 +181,7 @@ export function estimateMachineSalesPerHour(state: GameState, machine: VendingMa
       damageMultiplier *
       rivalMultiplier *
       starterRouteMomentumMultiplier(state, machine, location) *
+      machineTraitMultiplier(state, machine, product) *
       priceDemandMultiplier(slot.price, product.basePrice) *
       (1 + effects.salesMultiplier);
 

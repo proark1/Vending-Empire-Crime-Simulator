@@ -127,6 +127,28 @@ const productCrateColors: Record<ProductId, string> = {
   focus_cubes: "#67e8f9"
 };
 
+const productShortLabels: Record<ProductId, string> = {
+  soda: "SODA",
+  chips: "CHIP",
+  energy: "NRG",
+  water: "H2O",
+  protein_bar: "BAR",
+  coffee_can: "CAF",
+  instant_noodles: "NOOD",
+  phone_charger: "USB",
+  umbrella: "RAIN",
+  hygiene_kit: "KIT",
+  luxury_snack: "LUX",
+  mystery_capsules: "CAP",
+  mood_fizz: "FIZZ",
+  glitch_gum: "GUM",
+  night_syrup: "NITE",
+  focus_cubes: "FOCUS"
+};
+
+const productPackageTextureCache = new Map<string, THREE.CanvasTexture>();
+const crateLabelTextureCache = new Map<string, THREE.CanvasTexture>();
+
 const playerRadius = WORLD_SCALE.human.radius;
 const playerGroundY = 0;
 const playerJumpVelocity = 5.6;
@@ -843,6 +865,101 @@ function createMachineDisplayTexture(damage: number): THREE.CanvasTexture {
   return texture;
 }
 
+function createProductPackageTexture(productId: ProductId, color: string): THREE.CanvasTexture {
+  const cacheKey = `${productId}:${color}`;
+  const cached = productPackageTextureCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 192;
+  const context = canvas.getContext("2d");
+
+  if (context) {
+    const label = productShortLabels[productId] ?? productId.slice(0, 4).toUpperCase();
+    context.fillStyle = color;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    const shine = context.createLinearGradient(0, 0, canvas.width, canvas.height);
+    shine.addColorStop(0, "rgba(255, 255, 255, 0.42)");
+    shine.addColorStop(0.38, "rgba(255, 255, 255, 0.08)");
+    shine.addColorStop(1, "rgba(2, 6, 23, 0.28)");
+    context.fillStyle = shine;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "rgba(15, 23, 42, 0.88)";
+    context.fillRect(0, 0, canvas.width, 28);
+    context.fillRect(0, canvas.height - 26, canvas.width, 26);
+    context.fillStyle = "rgba(248, 250, 252, 0.92)";
+    context.beginPath();
+    context.roundRect(18, 48, 92, 72, 14);
+    context.fill();
+    context.fillStyle = "#020617";
+    context.font = "900 28px Inter, system-ui, sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(label, canvas.width / 2, 82, 80);
+    context.fillStyle = "rgba(2, 6, 23, 0.74)";
+    for (let i = 0; i < 7; i += 1) {
+      const width = i % 2 === 0 ? 4 : 2;
+      context.fillRect(26 + i * 10, 142, width, 25);
+    }
+    context.strokeStyle = "rgba(248, 250, 252, 0.55)";
+    context.lineWidth = 4;
+    context.strokeRect(8, 8, canvas.width - 16, canvas.height - 16);
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  productPackageTextureCache.set(cacheKey, texture);
+  return texture;
+}
+
+function createCrateLabelTexture(productId: ProductId, quantity: number, color: string): THREE.CanvasTexture {
+  const cacheKey = `${productId}:${quantity}:${color}`;
+  const cached = crateLabelTextureCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 160;
+  const context = canvas.getContext("2d");
+
+  if (context) {
+    const label = productShortLabels[productId] ?? "STK";
+    context.fillStyle = "#f8fafc";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = color;
+    context.fillRect(0, 0, canvas.width, 18);
+    context.fillRect(0, canvas.height - 18, canvas.width, 18);
+    context.strokeStyle = "#0f172a";
+    context.lineWidth = 5;
+    context.strokeRect(12, 12, canvas.width - 24, canvas.height - 24);
+    context.fillStyle = "#0f172a";
+    context.font = "900 34px Inter, system-ui, sans-serif";
+    context.textAlign = "left";
+    context.textBaseline = "middle";
+    context.fillText(label, 24, 58, 118);
+    context.font = "800 20px Inter, system-ui, sans-serif";
+    context.fillText(`QTY ${Math.max(1, Math.round(quantity))}`, 24, 94, 112);
+    context.textAlign = "right";
+    context.fillText("VEND-X", canvas.width - 24, 94, 82);
+    for (let i = 0; i < 10; i += 1) {
+      const width = i % 3 === 0 ? 5 : 2;
+      context.fillRect(142 + i * 8, 40, width, 36);
+    }
+    context.fillStyle = "rgba(15, 23, 42, 0.16)";
+    context.fillRect(22, 116, 210, 8);
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  crateLabelTextureCache.set(cacheKey, texture);
+  return texture;
+}
+
 function createLowMachineMesh(color: string, damage: number, installedUpgrades: MachineUpgradeId[] = [], stockRatio = 1, productIds: ProductId[] = []): THREE.Group {
   const group = new THREE.Group();
   const upgrades = new Set(installedUpgrades);
@@ -937,7 +1054,7 @@ export function createMachineMesh(color: string, damage: number, installedUpgrad
   });
 
   const base = new THREE.Mesh(
-    new THREE.BoxGeometry(0.88, 0.12, 0.58),
+    roundedBox(0.88, 0.12, 0.58, 0.035, quality),
     new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.55, metalness: 0.14 })
   );
   base.position.y = 0.06;
@@ -946,7 +1063,7 @@ export function createMachineMesh(color: string, damage: number, installedUpgrad
   group.add(base);
 
   const body = new THREE.Mesh(
-    new THREE.BoxGeometry(0.78, 1.62, 0.5),
+    roundedBox(0.78, 1.62, 0.5, 0.045, quality),
     trimMaterial
   );
   body.position.y = 0.92;
@@ -954,10 +1071,18 @@ export function createMachineMesh(color: string, damage: number, installedUpgrad
   body.receiveShadow = true;
   group.add(body);
 
-  const topCap = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.12, 0.58), bodyShadowMaterial);
+  const topCap = new THREE.Mesh(roundedBox(0.86, 0.12, 0.58, 0.035, quality), bodyShadowMaterial);
   topCap.position.y = 1.77;
   topCap.castShadow = true;
   group.add(topCap);
+
+  const crown = new THREE.Mesh(
+    roundedBox(0.68, 0.06, 0.48, 0.025, quality),
+    new THREE.MeshStandardMaterial({ color: "#1f2937", roughness: 0.36, metalness: 0.3 })
+  );
+  crown.position.set(0, 1.875, -0.01);
+  crown.castShadow = true;
+  group.add(crown);
 
   const kickPlate = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.16, 0.055), new THREE.MeshStandardMaterial({ color: "#1e293b", roughness: 0.42, metalness: 0.26 }));
   kickPlate.position.set(0, 0.22, -0.285);
@@ -969,6 +1094,12 @@ export function createMachineMesh(color: string, damage: number, installedUpgrad
     post.position.set(x, 0.96, -0.265);
     post.castShadow = true;
     group.add(post);
+  }
+
+  for (const x of [-0.385, 0.385]) {
+    const sideHighlight = new THREE.Mesh(new THREE.BoxGeometry(0.018, 1.4, 0.018), new THREE.MeshBasicMaterial({ color: "#f8fafc", transparent: true, opacity: 0.16 }));
+    sideHighlight.position.set(x, 1.0, -0.323);
+    group.add(sideHighlight);
   }
 
   const backPanel = new THREE.Mesh(new THREE.BoxGeometry(0.86, 1.56, 0.035), new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.46, metalness: 0.18 }));
@@ -1050,8 +1181,21 @@ export function createMachineMesh(color: string, damage: number, installedUpgrad
       group.add(product);
 
       const productLabel = new THREE.Mesh(new THREE.BoxGeometry(0.046, 0.022, 0.006), new THREE.MeshBasicMaterial({ color: "#f8fafc", transparent: true, opacity: filled ? 0.72 : 0.08 }));
-      productLabel.position.set(product.position.x, product.position.y + 0.012, -0.342);
+      productLabel.position.set(product.position.x, product.position.y + 0.012, -0.344);
       group.add(productLabel);
+
+      if (filled && productIds.length > 0) {
+        const packageLabel = new THREE.Mesh(
+          new THREE.PlaneGeometry(0.052, 0.082),
+          new THREE.MeshBasicMaterial({
+            map: createProductPackageTexture(productIds[(row * 2 + col) % productIds.length], productColors[(row * 2 + col) % productColors.length]),
+            transparent: true,
+            side: THREE.DoubleSide
+          })
+        );
+        packageLabel.position.set(product.position.x, product.position.y + 0.005, -0.347);
+        group.add(packageLabel);
+      }
 
       const coil = new THREE.Mesh(new THREE.TorusGeometry(0.035, 0.004, 6, 16), new THREE.MeshBasicMaterial({ color: filled ? "#cbd5e1" : "#334155", transparent: true, opacity: filled ? 1 : 0.34 }));
       coil.position.set(product.position.x, product.position.y - 0.085, -0.326);
@@ -1063,6 +1207,18 @@ export function createMachineMesh(color: string, damage: number, installedUpgrad
   const sidePanel = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.82, 0.035), darkMaterial);
   sidePanel.position.set(0.26, 1.1, -0.278);
   group.add(sidePanel);
+
+  const sidePanelTrimMaterial = new THREE.MeshStandardMaterial({ color: "#273449", roughness: 0.38, metalness: 0.24 });
+  for (const [x, y, w, h] of [
+    [0.17, 1.1, 0.018, 0.86],
+    [0.35, 1.1, 0.018, 0.86],
+    [0.26, 1.53, 0.18, 0.018],
+    [0.26, 0.67, 0.18, 0.018]
+  ] as Array<[number, number, number, number]>) {
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.018), sidePanelTrimMaterial);
+    rail.position.set(x, y, -0.315);
+    group.add(rail);
+  }
 
   const display = new THREE.Mesh(
     new THREE.BoxGeometry(0.12, 0.11, 0.023),
@@ -1140,6 +1296,16 @@ export function createMachineMesh(color: string, damage: number, installedUpgrad
   brandPuck.position.set(-0.33, 1.67, -0.326);
   brandPuck.rotation.x = Math.PI / 2;
   group.add(brandPuck);
+
+  const priceRail = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.035, 0.018), new THREE.MeshBasicMaterial({ color: "#f8fafc", transparent: true, opacity: 0.72 }));
+  priceRail.position.set(-0.08, 0.75, -0.342);
+  group.add(priceRail);
+
+  for (let i = 0; i < 4; i += 1) {
+    const priceTick = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.02, 0.008), new THREE.MeshBasicMaterial({ color: "#0f172a", transparent: true, opacity: 0.82 }));
+    priceTick.position.set(-0.23 + i * 0.1, 0.75, -0.352);
+    group.add(priceTick);
+  }
 
   const cableCurve = new THREE.CatmullRomCurve3([
     new THREE.Vector3(0.36, 0.18, 0.18),
@@ -1464,26 +1630,57 @@ function createMachinePlacementDressing(placement: { position: THREE.Vector3; ro
 export function createStockCrateMesh(productId: ProductId, quantity: number, compact = false, modelConfig?: ModelConfig): THREE.Group {
   const color = productCrateColors[productId] ?? "#94a3b8";
   const group = new THREE.Group();
+  const width = compact ? 0.34 : 0.58;
+  const height = compact ? 0.24 : 0.36;
+  const depth = compact ? 0.28 : 0.42;
+  const guardMaterial = new THREE.MeshStandardMaterial({ color: "#0f172a", roughness: 0.52, metalness: 0.1 });
+  const paperMaterial = new THREE.MeshBasicMaterial({
+    map: createCrateLabelTexture(productId, quantity, color),
+    transparent: true,
+    side: THREE.DoubleSide
+  });
   const crate = new THREE.Mesh(
-    new THREE.BoxGeometry(compact ? 0.34 : 0.58, compact ? 0.24 : 0.36, compact ? 0.28 : 0.42),
-    new THREE.MeshStandardMaterial({ color, roughness: 0.62, metalness: 0.04 })
+    roundedBox(width, height, depth, compact ? 0.018 : 0.028, "medium"),
+    new THREE.MeshStandardMaterial({ color, roughness: 0.58, metalness: 0.06 })
   );
   crate.castShadow = true;
   crate.receiveShadow = true;
   group.add(crate);
 
   const strapMaterial = new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.48, metalness: 0.08 });
-  const strapA = new THREE.Mesh(new THREE.BoxGeometry(compact ? 0.36 : 0.62, compact ? 0.035 : 0.045, compact ? 0.29 : 0.44), strapMaterial);
+  const strapA = new THREE.Mesh(new THREE.BoxGeometry(width + 0.04, compact ? 0.035 : 0.045, depth + 0.02), strapMaterial);
   strapA.position.y = compact ? 0.02 : 0.03;
   group.add(strapA);
 
-  const strapB = new THREE.Mesh(new THREE.BoxGeometry(compact ? 0.04 : 0.055, compact ? 0.25 : 0.37, compact ? 0.3 : 0.45), strapMaterial);
+  const strapB = new THREE.Mesh(new THREE.BoxGeometry(compact ? 0.04 : 0.055, height + 0.01, depth + 0.03), strapMaterial);
   group.add(strapB);
+
+  const tape = new THREE.Mesh(new THREE.BoxGeometry(width + 0.035, compact ? 0.024 : 0.032, 0.018), new THREE.MeshBasicMaterial({ color: "#fef3c7", transparent: true, opacity: 0.76 }));
+  tape.position.set(0, height * 0.18, -depth / 2 - 0.011);
+  group.add(tape);
+
+  const label = new THREE.Mesh(new THREE.PlaneGeometry(width * 0.55, height * 0.5), paperMaterial);
+  label.position.set(width * 0.1, height * 0.05, -depth / 2 - 0.015);
+  group.add(label);
+
+  for (const x of [-1, 1]) {
+    for (const y of [-1, 1]) {
+      const guard = new THREE.Mesh(new THREE.BoxGeometry(0.052, 0.052, 0.026), guardMaterial);
+      guard.position.set(x * (width / 2 - 0.032), y * (height / 2 - 0.032), -depth / 2 - 0.01);
+      group.add(guard);
+    }
+  }
+
+  for (const z of [-depth / 2 - 0.012, depth / 2 + 0.012]) {
+    const handle = new THREE.Mesh(new THREE.BoxGeometry(width * 0.22, height * 0.08, 0.014), new THREE.MeshBasicMaterial({ color: "#020617", transparent: true, opacity: 0.58 }));
+    handle.position.set(-width * 0.24, -height * 0.08, z);
+    group.add(handle);
+  }
 
   const countBars = Math.max(1, Math.min(4, Math.ceil(quantity / 4)));
   for (let index = 0; index < countBars; index += 1) {
     const bar = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.03, 0.018), new THREE.MeshBasicMaterial({ color: "#f8fafc" }));
-    bar.position.set(-0.12 + index * 0.08, compact ? 0.135 : 0.205, compact ? -0.151 : -0.226);
+    bar.position.set(-0.12 + index * 0.08, height / 2 + 0.025, -depth / 2 - 0.012);
     group.add(bar);
   }
 
