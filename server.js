@@ -16,7 +16,7 @@ const generatedAudioDir = path.join(__dirname, "generated-audio");
 const port = Number(process.env.PORT ?? 3000);
 const databaseUrl = process.env.DATABASE_URL;
 const isProductionRuntime = process.env.NODE_ENV === "production" || process.env.RAILWAY_ENVIRONMENT === "production" || process.env.RAILWAY_ENVIRONMENT_NAME === "production";
-const seedAdminName = process.env.ADMIN_NAME ?? (isProductionRuntime ? "" : "proark");
+const seedAdminName = process.env.ADMIN_NAME ?? (isProductionRuntime ? "" : "assad");
 const seedAdminPin = process.env.ADMIN_PIN ?? (isProductionRuntime ? "" : "4924");
 const sessionDays = Number(process.env.SESSION_DAYS ?? 14);
 const jsonLimitBytes = Number(process.env.JSON_LIMIT_BYTES ?? 8 * 1024 * 1024);
