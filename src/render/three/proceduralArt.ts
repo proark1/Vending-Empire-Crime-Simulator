@@ -232,18 +232,49 @@ function parkRandom(seed: number): () => number {
   return () => (s = (s * 16807) % 2147483647) / 2147483647;
 }
 
+function markModelPolishDetail<T extends THREE.Object3D>(object: T, detail: string): T {
+  object.userData.modelPolishDetail = detail;
+  return object;
+}
+
+function addModelPolishDetail<T extends THREE.Object3D>(group: THREE.Group, object: T, detail: string): T {
+  markModelPolishDetail(object, detail);
+  group.add(object);
+  return object;
+}
+
 export function createTree(quality: GraphicsQuality = "medium", seed = 1): THREE.Group {
   const rng = parkRandom(seed * 911 + 13);
   const group = new THREE.Group();
   const segs = quality === "low" ? 5 : quality === "high" ? 8 : 6;
   const trunkHeight = 1.25 + rng() * 1.0;
+  const trunkMaterial = new THREE.MeshStandardMaterial({ color: "#5b3b22", roughness: 0.92, metalness: 0.02 });
   const trunk = new THREE.Mesh(
     new THREE.CylinderGeometry(0.1, 0.18, trunkHeight, segs),
-    new THREE.MeshStandardMaterial({ color: "#5b3b22", roughness: 0.92, metalness: 0.02 })
+    trunkMaterial
   );
   trunk.position.y = trunkHeight / 2;
   trunk.castShadow = true;
-  group.add(trunk);
+  addModelPolishDetail(group, trunk, "tree-tapered-trunk");
+
+  for (let rootIndex = 0; rootIndex < 4; rootIndex += 1) {
+    const root = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.06, 0.42, 6), trunkMaterial);
+    root.position.set(Math.cos(rootIndex * Math.PI / 2) * 0.15, 0.09, Math.sin(rootIndex * Math.PI / 2) * 0.15);
+    root.rotation.z = Math.PI / 2;
+    root.rotation.y = rootIndex * Math.PI / 2;
+    root.castShadow = true;
+    addModelPolishDetail(group, root, "tree-root-flare");
+  }
+
+  if (quality !== "low") {
+    for (let ridgeIndex = 0; ridgeIndex < 5; ridgeIndex += 1) {
+      const ridge = new THREE.Mesh(new THREE.BoxGeometry(0.018, trunkHeight * 0.72, 0.012), new THREE.MeshBasicMaterial({ color: "#3f2717", transparent: true, opacity: 0.62 }));
+      const angle = ridgeIndex * ((Math.PI * 2) / 5);
+      ridge.position.set(Math.cos(angle) * 0.12, trunkHeight * 0.48, Math.sin(angle) * 0.12);
+      ridge.rotation.y = -angle;
+      addModelPolishDetail(group, ridge, "tree-bark-ridge");
+    }
+  }
 
   const greens = ["#2f6b34", "#387a3c", "#356b39", "#43824a", "#2c5f31"];
   const blobCount = quality === "low" ? 1 : 2 + Math.floor(rng() * 2);
@@ -258,6 +289,19 @@ export function createTree(quality: GraphicsQuality = "medium", seed = 1): THREE
     foliage.position.set((rng() - 0.5) * 0.55, trunkHeight + radius * 0.5 + i * baseRadius * 0.48, (rng() - 0.5) * 0.55);
     foliage.castShadow = true;
     group.add(foliage);
+  }
+
+  if (quality !== "low") {
+    const branchMaterial = new THREE.MeshStandardMaterial({ color: "#4a2f1c", roughness: 0.88, metalness: 0.02 });
+    for (let branchIndex = 0; branchIndex < 3; branchIndex += 1) {
+      const branch = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.055, 0.7, 7), branchMaterial);
+      const angle = branchIndex * ((Math.PI * 2) / 3) + rng() * 0.35;
+      branch.position.set(Math.cos(angle) * 0.22, trunkHeight * (0.62 + branchIndex * 0.08), Math.sin(angle) * 0.22);
+      branch.rotation.z = Math.PI / 2.8;
+      branch.rotation.y = -angle;
+      branch.castShadow = true;
+      addModelPolishDetail(group, branch, "tree-visible-branch");
+    }
   }
 
   group.scale.setScalar(0.82 + rng() * 0.5);
@@ -280,6 +324,15 @@ export function createBush(quality: GraphicsQuality = "medium", seed = 1): THREE
     blob.castShadow = true;
     group.add(blob);
   }
+  if (quality !== "low") {
+    const highlightMaterial = new THREE.MeshBasicMaterial({ color: "#bbf7d0", transparent: true, opacity: 0.76 });
+    for (let leafIndex = 0; leafIndex < 5; leafIndex += 1) {
+      const leaf = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.12, 5), highlightMaterial);
+      leaf.position.set((rng() - 0.5) * 0.55, 0.42 + rng() * 0.18, (rng() - 0.5) * 0.55);
+      leaf.rotation.set(rng() * 0.5, rng() * Math.PI * 2, -0.35 + rng() * 0.7);
+      addModelPolishDetail(group, leaf, "bush-highlight-leaf");
+    }
+  }
   group.rotation.y = rng() * Math.PI * 2;
   return group;
 }
@@ -296,10 +349,28 @@ export function createParkBench(): THREE.Group {
   back.position.set(0, 0.7, -0.21);
   back.castShadow = true;
   group.add(back);
+  for (let index = 0; index < 4; index += 1) {
+    const slat = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.028, 0.045), wood);
+    slat.position.set(0, 0.505, -0.18 + index * 0.12);
+    slat.castShadow = true;
+    addModelPolishDetail(group, slat, "bench-seat-slat");
+  }
+  for (const side of [-1, 1]) {
+    const armRest = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.08, 0.62), frame);
+    armRest.position.set(side * 0.82, 0.62, 0);
+    armRest.castShadow = true;
+    addModelPolishDetail(group, armRest, "bench-metal-armrest");
+  }
   for (const side of [-0.62, 0.62]) {
     const leg = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.45, 0.46), frame);
     leg.position.set(side, 0.225, 0);
     group.add(leg);
+    for (const z of [-0.16, 0.16]) {
+      const bolt = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.012, 10), new THREE.MeshBasicMaterial({ color: "#e2e8f0" }));
+      bolt.position.set(side, 0.47, z);
+      bolt.rotation.x = Math.PI / 2;
+      addModelPolishDetail(group, bolt, "bench-bolt-head");
+    }
   }
   return group;
 }
@@ -317,7 +388,18 @@ export function createParkLamp(enableLight = false): THREE.Group {
   const glassMat = new THREE.MeshBasicMaterial({ color: "#ffe7ad" });
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), glassMat);
   head.position.y = height + 0.06;
-  group.add(head);
+  addModelPolishDetail(group, head, "lamp-glass-globe");
+  for (let barIndex = 0; barIndex < 4; barIndex += 1) {
+    const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.012, 0.46, 6), new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.44, metalness: 0.5 }));
+    const angle = barIndex * (Math.PI / 2);
+    bar.position.set(Math.cos(angle) * 0.18, height + 0.06, Math.sin(angle) * 0.18);
+    bar.castShadow = true;
+    addModelPolishDetail(group, bar, "lamp-cage-bar");
+  }
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.012, 8, 24), new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.44, metalness: 0.5 }));
+  ring.position.y = height + 0.06;
+  ring.rotation.x = Math.PI / 2;
+  addModelPolishDetail(group, ring, "lamp-protective-ring");
   const cap = new THREE.Mesh(
     new THREE.ConeGeometry(0.26, 0.22, 8),
     new THREE.MeshStandardMaterial({ color: "#141a24", roughness: 0.5, metalness: 0.6 })
@@ -736,6 +818,17 @@ function addFacadeDetails(group: THREE.Group, width: number, depth: number, heig
   door.position.set(doorX, doorY, frontZ - 0.106);
   group.add(door);
 
+  for (const [x, y, w, h] of [
+    [doorX, doorY + doorScale.height / 2 + 0.03, doorScale.width + 0.1, 0.025],
+    [doorX, doorY - doorScale.height / 2 - 0.03, doorScale.width + 0.1, 0.025],
+    [doorX - doorScale.width / 2 - 0.03, doorY, 0.025, doorScale.height + 0.08],
+    [doorX + doorScale.width / 2 + 0.03, doorY, 0.025, doorScale.height + 0.08]
+  ] as Array<[number, number, number, number]>) {
+    const doorGasket = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.018), darkMaterial);
+    doorGasket.position.set(x, y, frontZ - 0.119);
+    addModelPolishDetail(group, doorGasket, "building-door-gasket");
+  }
+
   const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.18, 8), new THREE.MeshBasicMaterial({ color: "#f8fafc" }));
   handle.position.set(doorX + doorScale.width * 0.32, 1.08, frontZ - 0.13);
   handle.rotation.x = Math.PI / 2;
@@ -771,6 +864,17 @@ function addFacadeDetails(group: THREE.Group, width: number, depth: number, heig
   const displayGlass = new THREE.Mesh(new THREE.BoxGeometry(displayWidth, storefrontWindow.height, 0.034), glassMaterial);
   displayGlass.position.set(displayX, displayGlassY, frontZ - 0.104);
   group.add(displayGlass);
+
+  for (const [x, y, w, h] of [
+    [displayX, displayFrameY + storefrontWindow.frameHeight / 2 - 0.04, displayWidth + 0.18, 0.025],
+    [displayX, displayFrameY - storefrontWindow.frameHeight / 2 + 0.04, displayWidth + 0.18, 0.025],
+    [displayX - displayWidth / 2 - 0.04, displayGlassY, 0.025, storefrontWindow.height],
+    [displayX + displayWidth / 2 + 0.04, displayGlassY, 0.025, storefrontWindow.height]
+  ] as Array<[number, number, number, number]>) {
+    const gasket = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.018), darkMaterial);
+    gasket.position.set(x, y, frontZ - 0.133);
+    addModelPolishDetail(group, gasket, "building-window-gasket");
+  }
 
   const displayGlare = new THREE.Mesh(new THREE.BoxGeometry(0.035, storefrontWindow.height * 0.86, 0.012), new THREE.MeshBasicMaterial({ color: "#f8fafc", transparent: true, opacity: 0.18 }));
   displayGlare.position.set(displayX - displayWidth * 0.32, displayGlassY, frontZ - 0.126);
@@ -841,12 +945,19 @@ function addFacadeDetails(group: THREE.Group, width: number, depth: number, heig
   const hvac = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.35, 0.58), new THREE.MeshStandardMaterial({ color: "#475569", roughness: 0.62, metalness: 0.22 }));
   hvac.position.set(width / 2 - 0.85, height + 0.42, 0.1);
   hvac.castShadow = true;
-  group.add(hvac);
+  addModelPolishDetail(group, hvac, "building-rooftop-hvac");
 
   const fan = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.015, 8, 26), darkMaterial);
   fan.position.set(hvac.position.x, hvac.position.y + 0.01, hvac.position.z - 0.3);
   fan.rotation.x = Math.PI / 2;
-  group.add(fan);
+  addModelPolishDetail(group, fan, "building-hvac-fan");
+  for (let bladeIndex = 0; bladeIndex < 4; bladeIndex += 1) {
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.15, 0.018), new THREE.MeshBasicMaterial({ color: "#020617", transparent: true, opacity: 0.82 }));
+    blade.position.copy(fan.position);
+    blade.rotation.x = Math.PI / 2;
+    blade.rotation.z = bladeIndex * Math.PI / 4;
+    addModelPolishDetail(group, blade, "building-hvac-blade");
+  }
 
   const roofVentMaterial = new THREE.MeshStandardMaterial({ color: "#94a3b8", roughness: 0.46, metalness: 0.36 });
   for (const x of [-width * 0.22, width * 0.18]) {
@@ -919,7 +1030,7 @@ function addFacadeDetails(group: THREE.Group, width: number, depth: number, heig
     const sideSign = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.5, 0.82), new THREE.MeshBasicMaterial({ color: accent }));
     sideSign.position.set(-width / 2 - 0.08, Math.min(height - 0.55, 2.35), frontZ - 0.36);
     sideSign.castShadow = true;
-    group.add(sideSign);
+    addModelPolishDetail(group, sideSign, "building-blade-sign");
   }
 }
 
@@ -964,7 +1075,19 @@ export function createBuilding(width: number, depth: number, height: number, sty
   signMaterial.userData.nightEmissive = { day: 0.08, night: 0.42 };
   const signY = Math.min(visualHeight - 0.46, Math.max(2.52, WORLD_SCALE.building.door.frameHeight + 0.34));
   const signWidth = Math.min(width * 0.72, 3.8);
-  addPlane(group, signWidth, 0.58, signMaterial, new THREE.Vector3(0, signY, -depth / 2 - 0.025), 0);
+  const sign = addPlane(group, signWidth, 0.58, signMaterial, new THREE.Vector3(0, signY, -depth / 2 - 0.025), 0);
+  sign.userData.modelPolishDetail = "building-lit-sign-face";
+  const signTrimMaterial = new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.42, metalness: 0.24 });
+  for (const [x, y, w, h] of [
+    [0, signY + 0.31, signWidth + 0.1, 0.035],
+    [0, signY - 0.31, signWidth + 0.1, 0.035],
+    [-signWidth / 2 - 0.035, signY, 0.035, 0.64],
+    [signWidth / 2 + 0.035, signY, 0.035, 0.64]
+  ] as Array<[number, number, number, number]>) {
+    const signTrim = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.04), signTrimMaterial);
+    signTrim.position.set(x, y, -depth / 2 - 0.04);
+    addModelPolishDetail(group, signTrim, "building-sign-trim");
+  }
 
   if (quality !== "low") {
     const signLampMaterial = new THREE.MeshBasicMaterial({ color: "#fde68a", transparent: true, opacity: 0.86 });
@@ -984,7 +1107,7 @@ export function createBuilding(width: number, depth: number, height: number, sty
   const awning = new THREE.Mesh(new THREE.BoxGeometry(awningWidth, 0.12, 0.48), awningMaterial);
   awning.position.set(0, Math.min(visualHeight - 0.95, WORLD_SCALE.building.door.frameHeight + 0.05), -depth / 2 - 0.22);
   awning.castShadow = true;
-  group.add(awning);
+  addModelPolishDetail(group, awning, "building-awning-body");
 
   if (quality !== "low") {
     const stripeMaterial = new THREE.MeshBasicMaterial({ color: "#f8fafc", transparent: true, opacity: 0.76 });
@@ -997,6 +1120,21 @@ export function createBuilding(width: number, depth: number, height: number, sty
       stripe.position.set(-awningWidth / 2 + (index + 0.5) * (awningWidth / stripeCount), awning.position.y + 0.07, awning.position.z);
       group.add(stripe);
     }
+    for (let index = 0; index < stripeCount; index += 1) {
+      const scallop = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, awningWidth / stripeCount * 0.62, 12), awningMaterial);
+      scallop.position.set(-awningWidth / 2 + (index + 0.5) * (awningWidth / stripeCount), awning.position.y - 0.065, awning.position.z - 0.24);
+      scallop.rotation.z = Math.PI / 2;
+      addModelPolishDetail(group, scallop, "building-awning-scallop");
+    }
+
+    const securityCamera = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.08, 0.12), new THREE.MeshStandardMaterial({ color: "#e2e8f0", roughness: 0.36, metalness: 0.22 }));
+    securityCamera.position.set(width / 2 - 0.28, 2.18, -depth / 2 - 0.16);
+    securityCamera.castShadow = true;
+    addModelPolishDetail(group, securityCamera, "building-security-camera");
+    const cameraLens = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.08, 14), new THREE.MeshBasicMaterial({ color: "#38bdf8" }));
+    cameraLens.position.set(width / 2 - 0.28, 2.18, -depth / 2 - 0.24);
+    cameraLens.rotation.x = Math.PI / 2;
+    addModelPolishDetail(group, cameraLens, "building-security-camera-lens");
   }
 
   return group;
@@ -1339,7 +1477,10 @@ function createLegRig(side: -1 | 1, pantsMaterial: THREE.Material, shoeMaterial:
   shoe.position.set(0, -0.005, -0.055);
   shoe.castShadow = true;
   shoe.receiveShadow = true;
-  wrist.add(shoe);
+  wrist.add(markModelPolishDetail(shoe, "npc-shoe-upper"));
+  const sole = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.018, 0.26), new THREE.MeshBasicMaterial({ color: "#0f172a" }));
+  sole.position.set(0, -0.043, -0.055);
+  wrist.add(markModelPolishDetail(sole, "npc-shoe-sole"));
   lower.add(wrist);
 
   upper.add(lower);
@@ -1530,7 +1671,18 @@ export function createNpcCharacter(variant: NpcVariant, quality: GraphicsQuality
 
   const badge = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.05, 0.025), new THREE.MeshBasicMaterial({ color: palette.accent }));
   badge.position.set(0.08, 1.0, -0.215);
-  group.add(badge);
+  addModelPolishDetail(group, badge, "npc-name-badge");
+
+  const jacketZip = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.42, 0.018), new THREE.MeshBasicMaterial({ color: "#e2e8f0", transparent: true, opacity: 0.72 }));
+  jacketZip.position.set(0, 0.86, -0.226);
+  addModelPolishDetail(group, jacketZip, "npc-jacket-zipper");
+
+  for (const side of [-1, 1] as const) {
+    const sleeveStripe = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.12, 0.018), new THREE.MeshBasicMaterial({ color: palette.accent, transparent: true, opacity: 0.76 }));
+    sleeveStripe.position.set(side * 0.31, 0.91, -0.09);
+    sleeveStripe.rotation.z = side * 0.18;
+    addModelPolishDetail(group, sleeveStripe, "npc-sleeve-patch");
+  }
 
   const carryMount = new THREE.Group();
   carryMount.position.set(0, 0.82, -0.29);
@@ -1539,17 +1691,20 @@ export function createNpcCharacter(variant: NpcVariant, quality: GraphicsQuality
   if (variant === "rival") {
     const cap = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.055, 0.26), new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.45 }));
     cap.position.set(0, 0.29, -0.035);
-    headPivot.add(cap);
+    headPivot.add(markModelPolishDetail(cap, "npc-cap-crown"));
+    const capBrim = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.024, 0.16), new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.45 }));
+    capBrim.position.set(0, 0.26, -0.16);
+    headPivot.add(markModelPolishDetail(capBrim, "npc-cap-brim"));
 
     const chain = new THREE.Mesh(new THREE.TorusGeometry(0.13, 0.011, 8, 20), new THREE.MeshBasicMaterial({ color: "#facc15" }));
     chain.position.set(0, 1.15, -0.19);
     chain.rotation.x = Math.PI / 2;
-    group.add(chain);
+    addModelPolishDetail(group, chain, "npc-chain");
 
     const phone = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.09, 0.015), new THREE.MeshBasicMaterial({ color: "#020617" }));
     phone.position.set(0.02, -0.015, -0.07);
     phone.rotation.x = 0.18;
-    leftArm.wrist.add(phone);
+    leftArm.wrist.add(markModelPolishDetail(phone, "npc-phone"));
   }
 
   if (variant === "worker") {
@@ -1557,18 +1712,25 @@ export function createNpcCharacter(variant: NpcVariant, quality: GraphicsQuality
     crate.position.set(0, 0, 0);
     crate.rotation.z = 0.04;
     crate.castShadow = true;
-    carryMount.add(crate);
+    carryMount.add(markModelPolishDetail(crate, "npc-worker-crate"));
 
     const strap = new THREE.Mesh(new THREE.BoxGeometry(0.37, 0.035, 0.235), new THREE.MeshStandardMaterial({ color: "#451a03", roughness: 0.7 }));
     strap.position.y = 0.015;
-    carryMount.add(strap);
+    carryMount.add(markModelPolishDetail(strap, "npc-worker-crate-strap"));
+    const label = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.07, 0.012), new THREE.MeshBasicMaterial({ color: "#fef3c7", transparent: true, opacity: 0.86 }));
+    label.position.set(0.05, 0.04, -0.118);
+    carryMount.add(markModelPolishDetail(label, "npc-worker-crate-label"));
   }
 
   if (variant === "scout") {
     const tablet = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.16, 0.025), new THREE.MeshBasicMaterial({ color: "#38bdf8" }));
     tablet.position.set(0.025, -0.015, -0.08);
     tablet.rotation.set(0.35, -0.08, -0.12);
-    rightArm.wrist.add(tablet);
+    rightArm.wrist.add(markModelPolishDetail(tablet, "npc-tablet-screen"));
+    const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.008, 0.16, 6), new THREE.MeshBasicMaterial({ color: "#93c5fd" }));
+    antenna.position.set(0.1, 0.065, -0.08);
+    antenna.rotation.z = -0.35;
+    rightArm.wrist.add(markModelPolishDetail(antenna, "npc-tablet-antenna"));
   }
 
   if (variant === "customer") {
@@ -1576,11 +1738,14 @@ export function createNpcCharacter(variant: NpcVariant, quality: GraphicsQuality
     const bagBody = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.18, 0.075), new THREE.MeshStandardMaterial({ color: palette.accent, roughness: 0.72 }));
     bagBody.position.y = -0.12;
     bagBody.castShadow = true;
-    bag.add(bagBody);
+    bag.add(markModelPolishDetail(bagBody, "npc-shopping-bag-body"));
     const handle = new THREE.Mesh(new THREE.TorusGeometry(0.07, 0.008, 6, 18, Math.PI), new THREE.MeshStandardMaterial({ color: "#e0f2fe", roughness: 0.52 }));
     handle.position.y = -0.025;
     handle.rotation.z = Math.PI;
-    bag.add(handle);
+    bag.add(markModelPolishDetail(handle, "npc-shopping-bag-handle"));
+    const label = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.045, 0.012), new THREE.MeshBasicMaterial({ color: "#f8fafc", transparent: true, opacity: 0.82 }));
+    label.position.set(0, -0.12, -0.045);
+    bag.add(markModelPolishDetail(label, "npc-shopping-bag-label"));
     bag.position.set(-0.015, -0.03, 0.025);
     leftArm.wrist.add(bag);
   }
@@ -1588,26 +1753,26 @@ export function createNpcCharacter(variant: NpcVariant, quality: GraphicsQuality
   if (quality === "high") {
     const zipper = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.5, 0.018), new THREE.MeshBasicMaterial({ color: "#e2e8f0", transparent: true, opacity: 0.78 }));
     zipper.position.set(0, 0.84, -0.228);
-    group.add(zipper);
+    addModelPolishDetail(group, zipper, "npc-high-detail-zipper");
 
     for (const side of [-1, 1] as const) {
       const shoulderPatch = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.055, 0.026), new THREE.MeshBasicMaterial({ color: palette.accent }));
       shoulderPatch.position.set(side * 0.23, 1.08, -0.17);
       shoulderPatch.rotation.z = side * 0.12;
-      group.add(shoulderPatch);
+      addModelPolishDetail(group, shoulderPatch, "npc-shoulder-patch");
     }
 
     if (variant === "worker") {
       const clipboard = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.19, 0.018), new THREE.MeshBasicMaterial({ color: "#f8fafc" }));
       clipboard.position.set(-0.02, -0.03, -0.08);
       clipboard.rotation.x = 0.18;
-      rightArm.wrist.add(clipboard);
+      rightArm.wrist.add(markModelPolishDetail(clipboard, "npc-clipboard"));
     }
 
     if (variant === "scout") {
       const earpiece = new THREE.Mesh(new THREE.SphereGeometry(0.025, 8, 6), new THREE.MeshBasicMaterial({ color: "#38bdf8" }));
       earpiece.position.set(0.18, 0.13, -0.03);
-      headPivot.add(earpiece);
+      headPivot.add(markModelPolishDetail(earpiece, "npc-earpiece"));
     }
   }
 
@@ -1688,6 +1853,7 @@ export function createStreetProps(options: { enableLocalLights?: boolean; maxNpc
   for (const prop of visibleProps) {
     const sprite = createBillboardSprite(prop.kind, prop.w, prop.h);
     sprite.position.set(prop.x, prop.y, prop.z);
+    markModelPolishDetail(sprite, `street-${prop.kind}-billboard`);
     group.add(sprite);
   }
 
@@ -1712,13 +1878,19 @@ export function createStreetProps(options: { enableLocalLights?: boolean; maxNpc
         box.rotation.y = i % 2 === 0 ? 0.08 : -0.12;
         box.castShadow = true;
         box.receiveShadow = true;
-        pile.add(box);
+        pile.add(markModelPolishDetail(box, "street-cardboard-box"));
 
         const tape = new THREE.Mesh(new THREE.BoxGeometry(0.36 + i * 0.03, 0.022, 0.03), tapeMaterial);
         tape.position.copy(box.position).add(new THREE.Vector3(0, 0.13, -0.13));
         tape.rotation.y = box.rotation.y;
-        pile.add(tape);
+        pile.add(markModelPolishDetail(tape, "street-box-tape"));
+
+        const label = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.065, 0.012), new THREE.MeshBasicMaterial({ color: "#f8fafc", transparent: true, opacity: 0.84 }));
+        label.position.copy(box.position).add(new THREE.Vector3(0.04, 0.02, -0.148));
+        label.rotation.y = box.rotation.y;
+        pile.add(markModelPolishDetail(label, "street-box-label"));
       }
+      pile.userData.modelPolishDetail = "street-box-pile";
       group.add(pile);
     }
 
@@ -1727,14 +1899,14 @@ export function createStreetProps(options: { enableLocalLights?: boolean; maxNpc
       cone.position.set(x, 0, z);
       const base = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.045, 0.32), new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.58, metalness: 0.08 }));
       base.position.y = 0.025;
-      cone.add(base);
+      cone.add(markModelPolishDetail(base, "street-cone-rubber-base"));
       const body = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.44, 16), coneMaterial);
       body.position.y = 0.265;
       body.castShadow = true;
-      cone.add(body);
+      cone.add(markModelPolishDetail(body, "street-cone-body"));
       const stripe = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, 0.045, 16), coneStripeMaterial);
       stripe.position.y = 0.28;
-      cone.add(stripe);
+      cone.add(markModelPolishDetail(stripe, "street-cone-reflective-band"));
       group.add(cone);
     }
   }
@@ -1966,25 +2138,36 @@ export function createStreetProps(options: { enableLocalLights?: boolean; maxNpc
   const shelterRoof = new THREE.Mesh(new THREE.BoxGeometry(2.3, 0.12, 0.74), metalMaterial);
   shelterRoof.position.set(0, 2.12, 0);
   shelterRoof.castShadow = true;
-  busShelter.add(shelterRoof);
+  busShelter.add(markModelPolishDetail(shelterRoof, "street-bus-shelter-roof"));
   const shelterBack = new THREE.Mesh(new THREE.BoxGeometry(2.12, 1.52, 0.045), glassMaterial);
   shelterBack.position.set(0, 1.22, 0.34);
-  busShelter.add(shelterBack);
+  busShelter.add(markModelPolishDetail(shelterBack, "street-bus-shelter-glass"));
   for (const x of [-1.02, 1.02]) {
     const post = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.04, 2.15, 10), metalMaterial);
     post.position.set(x, 1.05, 0.34);
     post.castShadow = true;
-    busShelter.add(post);
+    busShelter.add(markModelPolishDetail(post, "street-bus-shelter-post"));
   }
   const bench = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.12, 0.34), new THREE.MeshStandardMaterial({ color: "#7c2d12", roughness: 0.62, metalness: 0.04 }));
   bench.position.set(0, 0.55, 0.05);
   bench.castShadow = true;
-  busShelter.add(bench);
+  busShelter.add(markModelPolishDetail(bench, "street-bus-shelter-bench"));
   for (const x of [-0.62, 0.62]) {
     const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.5, 8), metalMaterial);
     leg.position.set(x, 0.28, 0.05);
     busShelter.add(leg);
   }
+  const routeMap = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.66, 0.018), new THREE.MeshBasicMaterial({ color: "#e0f2fe", transparent: true, opacity: 0.9 }));
+  routeMap.position.set(-0.58, 1.28, 0.305);
+  busShelter.add(markModelPolishDetail(routeMap, "street-bus-route-map"));
+  for (let lineIndex = 0; lineIndex < 4; lineIndex += 1) {
+    const line = new THREE.Mesh(new THREE.BoxGeometry(0.38 - lineIndex * 0.045, 0.025, 0.012), new THREE.MeshBasicMaterial({ color: lineIndex % 2 === 0 ? "#0ea5e9" : "#f97316" }));
+    line.position.set(-0.58, 1.43 - lineIndex * 0.12, 0.292);
+    busShelter.add(markModelPolishDetail(line, "street-bus-route-line"));
+  }
+  const busSign = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.16, 0.035), new THREE.MeshBasicMaterial({ color: "#facc15" }));
+  busSign.position.set(0.72, 1.78, 0.3);
+  busShelter.add(markModelPolishDetail(busSign, "street-bus-stop-sign"));
   group.add(busShelter);
 
   const utilityMaterial = new THREE.MeshStandardMaterial({ color: "#475569", roughness: 0.68, metalness: 0.12 });
@@ -2001,14 +2184,21 @@ export function createStreetProps(options: { enableLocalLights?: boolean; maxNpc
     box.position.set(x, 0.36, z);
     box.castShadow = true;
     box.receiveShadow = true;
-    group.add(box);
+    addModelPolishDetail(group, box, "street-utility-box");
     const label = new THREE.Mesh(new THREE.BoxGeometry(0.23, 0.14, 0.018), new THREE.MeshBasicMaterial({ color }));
     label.position.set(x, 0.53, z - 0.18);
-    group.add(label);
+    addModelPolishDetail(group, label, "street-utility-label");
+    const hinge = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.5, 6), metalMaterial);
+    hinge.position.set(x - 0.165, 0.36, z - 0.19);
+    addModelPolishDetail(group, hinge, "street-utility-hinge");
+    const handle = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.018, 0.018), new THREE.MeshBasicMaterial({ color: "#e2e8f0", transparent: true, opacity: 0.74 }));
+    handle.position.set(x + 0.08, 0.36, z - 0.19);
+    addModelPolishDetail(group, handle, "street-utility-handle");
   }
 
   const planterMaterial = new THREE.MeshStandardMaterial({ color: "#78350f", roughness: 0.72, metalness: 0.03 });
   const leafMaterial = new THREE.MeshStandardMaterial({ color: "#15803d", roughness: 0.74 });
+  const planterRimMaterial = new THREE.MeshStandardMaterial({ color: "#451a03", roughness: 0.68, metalness: 0.04 });
   const planterPositions: Array<[number, number]> = [
     [-4.1, -3.75],
     [3.35, -4.55],
@@ -2023,12 +2213,22 @@ export function createStreetProps(options: { enableLocalLights?: boolean; maxNpc
     const planter = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.26, 0.34), planterMaterial);
     planter.position.set(x, 0.13, z);
     planter.castShadow = true;
-    group.add(planter);
+    addModelPolishDetail(group, planter, "street-planter-box");
+    for (const offsetZ of [-0.18, 0.18]) {
+      const rim = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.045, 0.045), planterRimMaterial);
+      rim.position.set(x, 0.285, z + offsetZ);
+      addModelPolishDetail(group, rim, "street-planter-rim");
+    }
+    for (const offsetX of [-0.385, 0.385]) {
+      const rim = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.045, 0.34), planterRimMaterial);
+      rim.position.set(x + offsetX, 0.285, z);
+      addModelPolishDetail(group, rim, "street-planter-rim");
+    }
     for (let i = 0; i < 5; i += 1) {
       const leaf = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.34, 5), leafMaterial);
       leaf.position.set(x - 0.24 + i * 0.12, 0.42, z + (i % 2 === 0 ? 0.03 : -0.04));
       leaf.rotation.z = -0.28 + i * 0.14;
-      group.add(leaf);
+      addModelPolishDetail(group, leaf, "street-planter-leaf");
     }
   }
 
@@ -2049,10 +2249,13 @@ export function createStreetProps(options: { enableLocalLights?: boolean; maxNpc
     const bollard = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.065, 0.54, 12), metalMaterial);
     bollard.position.set(x, 0.27, z);
     bollard.castShadow = true;
-    group.add(bollard);
+    addModelPolishDetail(group, bollard, "street-bollard-post");
+    const reflectiveBand = new THREE.Mesh(new THREE.CylinderGeometry(0.059, 0.059, 0.04, 12), new THREE.MeshBasicMaterial({ color: "#fde68a", transparent: true, opacity: 0.84 }));
+    reflectiveBand.position.set(x, 0.39, z);
+    addModelPolishDetail(group, reflectiveBand, "street-bollard-reflective-band");
     const cap = new THREE.Mesh(new THREE.SphereGeometry(0.066, 12, 8), new THREE.MeshBasicMaterial({ color: "#facc15" }));
     cap.position.set(x, 0.56, z);
-    group.add(cap);
+    addModelPolishDetail(group, cap, "street-bollard-cap");
   }
 
   const lampMaterial = new THREE.MeshStandardMaterial({ color: "#1e293b", roughness: 0.5, metalness: 0.35 });
@@ -2072,11 +2275,15 @@ export function createStreetProps(options: { enableLocalLights?: boolean; maxNpc
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 3.4, 10), lampMaterial);
     pole.position.copy(position).add(new THREE.Vector3(0, 1.7, 0));
     pole.castShadow = true;
-    group.add(pole);
+    addModelPolishDetail(group, pole, "street-lamp-pole");
 
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.18, 16, 10), glowMaterial);
     head.position.copy(position).add(new THREE.Vector3(0, 3.45, 0));
-    group.add(head);
+    addModelPolishDetail(group, head, "street-lamp-globe");
+    const lampRing = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.009, 8, 24), lampMaterial);
+    lampRing.position.copy(head.position);
+    lampRing.rotation.x = Math.PI / 2;
+    addModelPolishDetail(group, lampRing, "street-lamp-glass-ring");
 
     if (enableLocalLights) {
       const light = new THREE.PointLight("#fde68a", 9, 8, 1.6);
@@ -2096,10 +2303,10 @@ export function createStreetProps(options: { enableLocalLights?: boolean; maxNpc
       const stand = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.48, 0.28), newspaperMaterial);
       stand.position.set(x, 0.24, z);
       stand.castShadow = true;
-      group.add(stand);
+      addModelPolishDetail(group, stand, "street-newspaper-stand");
       const placard = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.12, 0.018), new THREE.MeshBasicMaterial({ color }));
       placard.position.set(x, 0.36, z - 0.15);
-      group.add(placard);
+      addModelPolishDetail(group, placard, "street-newspaper-placard");
     }
 
     const rackMaterial = new THREE.MeshStandardMaterial({ color: "#94a3b8", roughness: 0.38, metalness: 0.42 });
@@ -2110,7 +2317,7 @@ export function createStreetProps(options: { enableLocalLights?: boolean; maxNpc
         const hoop = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.012, 6, 20), rackMaterial);
         hoop.position.set((loop - 1) * 0.22, 0.2, 0);
         hoop.rotation.x = Math.PI / 2;
-        rack.add(hoop);
+        rack.add(markModelPolishDetail(hoop, "street-bike-rack-hoop"));
       }
       group.add(rack);
     }

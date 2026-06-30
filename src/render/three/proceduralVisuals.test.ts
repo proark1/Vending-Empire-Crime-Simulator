@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MachineModelId } from "../../game/core/types";
+import { createBuilding, createBush, createNpcCharacter, createParkBench, createParkLamp, createStreetProps, createTree } from "./proceduralArt";
 import { createMachineMesh, createStockCrateMesh, createVehicleMesh } from "./ThreeScene";
 
 function createCanvasContextStub(): Record<string, unknown> {
@@ -109,13 +110,56 @@ describe("procedural visual assets", () => {
     expect(detailTags).toContain("vehicle-license-plate");
   });
 
-  it("builds stock crates with labels, tape, handles, and corner guards", () => {
+  it("builds stock crates with labels, tape, handles, guards, and barcode details", () => {
     const crate = createStockCrateMesh("energy", 9);
     const detailTags = collectUserDataValues(crate, "stockCrateDetail");
 
     expect(detailTags).toContain("shipping-label");
     expect(detailTags).toContain("packing-tape");
+    expect(detailTags).toContain("barcode-sticker");
+    expect(detailTags).toContain("barcode-line");
+    expect(detailTags).toContain("quantity-count-bar");
+    expect(detailTags.filter((tag) => tag === "reinforced-strap")).toHaveLength(2);
     expect(detailTags.filter((tag) => tag === "corner-guard")).toHaveLength(4);
     expect(detailTags.filter((tag) => tag === "carry-handle")).toHaveLength(2);
+  });
+
+  it("adds polished real-world cues to shared procedural city models", () => {
+    const modelTags = [
+      ...collectUserDataValues(createTree("medium", 4), "modelPolishDetail"),
+      ...collectUserDataValues(createBush("medium", 4), "modelPolishDetail"),
+      ...collectUserDataValues(createParkBench(), "modelPolishDetail"),
+      ...collectUserDataValues(createParkLamp(false), "modelPolishDetail"),
+      ...collectUserDataValues(createNpcCharacter("worker", "medium"), "modelPolishDetail"),
+      ...collectUserDataValues(createNpcCharacter("scout", "medium"), "modelPolishDetail"),
+      ...collectUserDataValues(createNpcCharacter("customer", "medium"), "modelPolishDetail"),
+      ...collectUserDataValues(createBuilding(4, 3, 4, "laundromat", "SOAP", "medium"), "modelPolishDetail"),
+      ...collectUserDataValues(createStreetProps({ enableLocalLights: false, maxNpcs: 0, quality: "medium" }), "modelPolishDetail")
+    ];
+
+    expect(modelTags).toContain("tree-root-flare");
+    expect(modelTags).toContain("tree-bark-ridge");
+    expect(modelTags).toContain("tree-visible-branch");
+    expect(modelTags).toContain("bush-highlight-leaf");
+    expect(modelTags).toContain("bench-seat-slat");
+    expect(modelTags).toContain("bench-metal-armrest");
+    expect(modelTags).toContain("lamp-cage-bar");
+    expect(modelTags).toContain("npc-jacket-zipper");
+    expect(modelTags).toContain("npc-shoe-sole");
+    expect(modelTags).toContain("npc-worker-crate-label");
+    expect(modelTags).toContain("npc-tablet-antenna");
+    expect(modelTags).toContain("npc-shopping-bag-label");
+    expect(modelTags).toContain("building-door-gasket");
+    expect(modelTags).toContain("building-window-gasket");
+    expect(modelTags).toContain("building-sign-trim");
+    expect(modelTags).toContain("building-awning-scallop");
+    expect(modelTags).toContain("building-security-camera");
+    expect(modelTags).toContain("street-box-label");
+    expect(modelTags).toContain("street-cone-reflective-band");
+    expect(modelTags).toContain("street-bus-route-map");
+    expect(modelTags).toContain("street-utility-hinge");
+    expect(modelTags).toContain("street-planter-rim");
+    expect(modelTags).toContain("street-bollard-reflective-band");
+    expect(modelTags).toContain("street-lamp-glass-ring");
   });
 });

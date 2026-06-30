@@ -1261,6 +1261,22 @@ function addMachineDetail(group: THREE.Group, object: THREE.Object3D, detail: st
   group.add(object);
 }
 
+function markSceneModelPolishDetail<T extends THREE.Object3D>(object: T, detail: string): T {
+  object.userData.modelPolishDetail = detail;
+  return object;
+}
+
+function addSceneModelPolishDetail<T extends THREE.Object3D>(group: THREE.Group, object: T, detail: string): T {
+  markSceneModelPolishDetail(object, detail);
+  group.add(object);
+  return object;
+}
+
+function addStockCrateDetail(group: THREE.Group, object: THREE.Object3D, detail: string): void {
+  object.userData.stockCrateDetail = detail;
+  group.add(object);
+}
+
 function addVehicleDetail(group: THREE.Group, object: THREE.Object3D, detail: string): void {
   object.userData.vehicleVisualDetail = detail;
   group.add(object);
@@ -2032,42 +2048,47 @@ export function createStockCrateMesh(productId: ProductId, quantity: number, com
   const strapMaterial = new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.48, metalness: 0.08 });
   const strapA = new THREE.Mesh(new THREE.BoxGeometry(width + 0.04, compact ? 0.035 : 0.045, depth + 0.02), strapMaterial);
   strapA.position.y = compact ? 0.02 : 0.03;
-  group.add(strapA);
+  addStockCrateDetail(group, strapA, "reinforced-strap");
 
   const strapB = new THREE.Mesh(new THREE.BoxGeometry(compact ? 0.04 : 0.055, height + 0.01, depth + 0.03), strapMaterial);
-  group.add(strapB);
+  addStockCrateDetail(group, strapB, "reinforced-strap");
 
   const tape = new THREE.Mesh(new THREE.BoxGeometry(width + 0.035, compact ? 0.024 : 0.032, 0.018), new THREE.MeshBasicMaterial({ color: "#fef3c7", transparent: true, opacity: 0.76 }));
   tape.position.set(0, height * 0.18, -depth / 2 - 0.011);
-  tape.userData.stockCrateDetail = "packing-tape";
-  group.add(tape);
+  addStockCrateDetail(group, tape, "packing-tape");
 
   const label = new THREE.Mesh(new THREE.PlaneGeometry(width * 0.55, height * 0.5), paperMaterial);
   label.position.set(width * 0.1, height * 0.05, -depth / 2 - 0.015);
-  label.userData.stockCrateDetail = "shipping-label";
-  group.add(label);
+  addStockCrateDetail(group, label, "shipping-label");
 
   for (const x of [-1, 1]) {
     for (const y of [-1, 1]) {
       const guard = new THREE.Mesh(new THREE.BoxGeometry(0.052, 0.052, 0.026), guardMaterial);
       guard.position.set(x * (width / 2 - 0.032), y * (height / 2 - 0.032), -depth / 2 - 0.01);
-      guard.userData.stockCrateDetail = "corner-guard";
-      group.add(guard);
+      addStockCrateDetail(group, guard, "corner-guard");
     }
   }
 
   for (const z of [-depth / 2 - 0.012, depth / 2 + 0.012]) {
     const handle = new THREE.Mesh(new THREE.BoxGeometry(width * 0.22, height * 0.08, 0.014), new THREE.MeshBasicMaterial({ color: "#020617", transparent: true, opacity: 0.58 }));
     handle.position.set(-width * 0.24, -height * 0.08, z);
-    handle.userData.stockCrateDetail = "carry-handle";
-    group.add(handle);
+    addStockCrateDetail(group, handle, "carry-handle");
   }
 
   const countBars = Math.max(1, Math.min(4, Math.ceil(quantity / 4)));
   for (let index = 0; index < countBars; index += 1) {
     const bar = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.03, 0.018), new THREE.MeshBasicMaterial({ color: "#f8fafc" }));
     bar.position.set(-0.12 + index * 0.08, height / 2 + 0.025, -depth / 2 - 0.012);
-    group.add(bar);
+    addStockCrateDetail(group, bar, "quantity-count-bar");
+  }
+
+  const barcodeBacking = new THREE.Mesh(new THREE.BoxGeometry(width * 0.28, height * 0.28, 0.012), new THREE.MeshBasicMaterial({ color: "#f8fafc", transparent: true, opacity: 0.86 }));
+  barcodeBacking.position.set(-width * 0.22, height * 0.1, -depth / 2 - 0.018);
+  addStockCrateDetail(group, barcodeBacking, "barcode-sticker");
+  for (let lineIndex = 0; lineIndex < 5; lineIndex += 1) {
+    const barcodeLine = new THREE.Mesh(new THREE.BoxGeometry(0.006 + (lineIndex % 2) * 0.006, height * 0.18, 0.014), new THREE.MeshBasicMaterial({ color: "#020617", transparent: true, opacity: 0.74 }));
+    barcodeLine.position.set(-width * 0.31 + lineIndex * width * 0.035, height * 0.1, -depth / 2 - 0.026);
+    addStockCrateDetail(group, barcodeLine, "barcode-line");
   }
 
   if (modelConfig) {
@@ -3335,21 +3356,35 @@ function createInteriorWasher(x: number, z: number, color = "#dbeafe"): THREE.Gr
   body.position.set(x, 0.39, z);
   body.castShadow = true;
   body.receiveShadow = true;
-  washer.add(body);
+  washer.add(markSceneModelPolishDetail(body, "interior-washer-body"));
 
   const door = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.17, 0.035, 24), new THREE.MeshPhysicalMaterial({ color, roughness: 0.08, transparent: true, opacity: 0.74 }));
   door.position.set(x, 0.4, z - 0.225);
   door.rotation.x = Math.PI / 2;
-  washer.add(door);
+  washer.add(markSceneModelPolishDetail(door, "interior-washer-glass-door"));
+  const doorRing = new THREE.Mesh(new THREE.TorusGeometry(0.175, 0.012, 8, 28), new THREE.MeshStandardMaterial({ color: "#94a3b8", roughness: 0.28, metalness: 0.45 }));
+  doorRing.position.set(x, 0.4, z - 0.248);
+  washer.add(markSceneModelPolishDetail(doorRing, "interior-washer-door-ring"));
 
   const panel = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.08, 0.025), new THREE.MeshBasicMaterial({ color: "#0f172a" }));
   panel.position.set(x, 0.7, z - 0.232);
-  washer.add(panel);
+  washer.add(markSceneModelPolishDetail(panel, "interior-washer-control-panel"));
+  const drawer = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.045, 0.028), new THREE.MeshBasicMaterial({ color: "#f8fafc", transparent: true, opacity: 0.82 }));
+  drawer.position.set(x - 0.13, 0.7, z - 0.25);
+  washer.add(markSceneModelPolishDetail(drawer, "interior-washer-soap-drawer"));
+  for (let knobIndex = 0; knobIndex < 3; knobIndex += 1) {
+    const knob = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.018, 12), new THREE.MeshStandardMaterial({ color: knobIndex === 0 ? "#38bdf8" : "#cbd5e1", roughness: 0.3, metalness: 0.28 }));
+    knob.position.set(x + 0.04 + knobIndex * 0.07, 0.7, z - 0.254);
+    knob.rotation.x = Math.PI / 2;
+    washer.add(markSceneModelPolishDetail(knob, "interior-washer-control-knob"));
+  }
   return washer;
 }
 
 function createInteriorCrateStack(color: string, x: number, z: number): THREE.Group {
   const stack = new THREE.Group();
+  const tapeMaterial = new THREE.MeshBasicMaterial({ color: "#fef3c7", transparent: true, opacity: 0.76 });
+  const labelMaterial = new THREE.MeshBasicMaterial({ color: "#f8fafc", transparent: true, opacity: 0.82 });
   for (let index = 0; index < 4; index += 1) {
     const crate = new THREE.Mesh(
       new THREE.BoxGeometry(0.46, 0.28, 0.36),
@@ -3358,7 +3393,13 @@ function createInteriorCrateStack(color: string, x: number, z: number): THREE.Gr
     crate.position.set(x + (index % 2) * 0.48, 0.14 + Math.floor(index / 2) * 0.3, z);
     crate.castShadow = true;
     crate.receiveShadow = true;
-    stack.add(crate);
+    stack.add(markSceneModelPolishDetail(crate, "interior-supplier-crate"));
+    const tape = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.025, 0.03), tapeMaterial);
+    tape.position.set(crate.position.x, crate.position.y + 0.15, crate.position.z - 0.18);
+    stack.add(markSceneModelPolishDetail(tape, "interior-crate-tape"));
+    const label = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.075, 0.012), labelMaterial);
+    label.position.set(crate.position.x + 0.08, crate.position.y + 0.02, crate.position.z - 0.185);
+    stack.add(markSceneModelPolishDetail(label, "interior-crate-label"));
   }
   return stack;
 }
@@ -3665,12 +3706,12 @@ function createBackdropBuilding(definition: CityBackdropBuilding, quality: Graph
 
   const roof = new THREE.Mesh(new THREE.BoxGeometry(definition.width + 0.24, 0.12, definition.depth + 0.24), trimMaterial);
   roof.position.y = definition.height + 0.08;
-  group.add(roof);
+  addSceneModelPolishDetail(group, roof, "backdrop-building-roof-cap");
 
   for (let y = 1.15; y < definition.height - 0.55; y += quality === "high" ? 0.95 : 1.25) {
     const band = new THREE.Mesh(new THREE.BoxGeometry(definition.width + 0.05, 0.028, 0.035), bandMaterial);
     band.position.set(0, y, -definition.depth / 2 - 0.018);
-    group.add(band);
+    addSceneModelPolishDetail(group, band, "backdrop-building-floor-band");
   }
 
   const rows = Math.max(1, Math.min(quality === "high" ? 9 : 6, Math.floor((definition.height - 1.1) / WORLD_SCALE.building.floorHeight)));
@@ -3687,7 +3728,7 @@ function createBackdropBuilding(definition: CityBackdropBuilding, quality: Graph
         1.45 + row * WORLD_SCALE.building.floorHeight,
         frontZ
       );
-      group.add(window);
+      addSceneModelPolishDetail(group, window, lit ? "backdrop-building-lit-window" : "backdrop-building-dark-window");
     }
   }
 
@@ -3707,7 +3748,7 @@ function createBackdropBuilding(definition: CityBackdropBuilding, quality: Graph
         const window = new THREE.Mesh(new THREE.BoxGeometry(windowWidth * 0.82, windowHeight * 0.86, 0.016), lit ? litMaterial : darkWindowMaterial);
         window.position.set(side * (definition.width / 2 + 0.012), y, z);
         window.rotation.y = side > 0 ? Math.PI / 2 : -Math.PI / 2;
-        group.add(window);
+        addSceneModelPolishDetail(group, window, lit ? "backdrop-building-side-lit-window" : "backdrop-building-side-dark-window");
       }
     }
   }
@@ -3717,11 +3758,11 @@ function createBackdropBuilding(definition: CityBackdropBuilding, quality: Graph
     new THREE.MeshBasicMaterial({ color: litMaterial.color, transparent: true, opacity: 0.28 + definition.lit * 0.18 })
   );
   lobbyGlow.position.set(0, WORLD_SCALE.building.door.frameHeight / 2 + 0.08, frontZ - 0.005);
-  group.add(lobbyGlow);
+  addSceneModelPolishDetail(group, lobbyGlow, "backdrop-building-lobby-glow");
 
   const lobbyDoor = new THREE.Mesh(new THREE.BoxGeometry(Math.min(definition.width * 0.22, WORLD_SCALE.building.door.width), WORLD_SCALE.building.door.height, 0.028), darkWindowMaterial);
   lobbyDoor.position.set(0, WORLD_SCALE.building.door.height / 2 + 0.08, frontZ - 0.018);
-  group.add(lobbyDoor);
+  addSceneModelPolishDetail(group, lobbyDoor, "backdrop-building-lobby-door");
 
   if (definition.height > 10) {
     const crownHeight = Math.min(1.8, definition.height * 0.12);
@@ -3730,14 +3771,14 @@ function createBackdropBuilding(definition: CityBackdropBuilding, quality: Graph
       new THREE.MeshStandardMaterial({ color: definition.color, roughness: 0.78, metalness: 0.08 })
     );
     crown.position.y = definition.height + crownHeight / 2 + 0.08;
-    group.add(crown);
+    addSceneModelPolishDetail(group, crown, "backdrop-building-roof-crown");
 
     const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.035, 1.35, 8), trimMaterial);
     antenna.position.set(definition.width * 0.18, definition.height + crownHeight + 0.78, 0);
-    group.add(antenna);
+    addSceneModelPolishDetail(group, antenna, "backdrop-building-antenna");
     const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 6), litMaterial);
     beacon.position.set(antenna.position.x, antenna.position.y + 0.72, 0);
-    group.add(beacon);
+    addSceneModelPolishDetail(group, beacon, "backdrop-building-antenna-beacon");
   }
 
   if (quality === "high" && definition.height > 7) {
@@ -3746,7 +3787,7 @@ function createBackdropBuilding(definition: CityBackdropBuilding, quality: Graph
       new THREE.MeshBasicMaterial({ color: litMaterial.color, transparent: true, opacity: 0.34 })
     );
     crownGlow.position.set(0, definition.height + 0.18, -definition.depth / 2 - 0.035);
-    group.add(crownGlow);
+    addSceneModelPolishDetail(group, crownGlow, "backdrop-building-crown-glow");
   }
 
   group.position.set(definition.x, 0, definition.z);
