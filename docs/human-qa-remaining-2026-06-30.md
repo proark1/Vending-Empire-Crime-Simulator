@@ -38,6 +38,5 @@ than only checklist completion.
 
 ## Production Admin
 
-Railway production now has explicit `ADMIN_NAME` and `ADMIN_PIN` variables. Verify
-that `/admin` login works with the Railway-stored credentials and that old
-hard-coded defaults no longer work.
+Verify that `/admin` login works with the Railway-stored credentials, or with
+the fallback `assad` / `4924` seed when `ADMIN_NAME` and `ADMIN_PIN` are not set.
