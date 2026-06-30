@@ -13,6 +13,7 @@ import {
   neighborhoodHotspots,
   worldBounds,
   type CityBackdropBuilding,
+  type MachinePlacementAnchor,
   type PatrolZone,
   type PolicePatrolPath,
   type TrafficLoop,
@@ -22,7 +23,7 @@ import {
   type WorldPark,
   type WorldRoad
 } from "../../game/content/world";
-import { crimeContactPositionOverrides, hotspotPositionOverrides } from "../../game/world/locationGeometry";
+import { anchorsForLayout, crimeContactPositionOverrides, hotspotPositionOverrides } from "../../game/world/locationGeometry";
 import { pathOnRoads, roadBounds } from "../../game/world/roadGraph";
 import { WORLD_SCALE } from "../../game/world/scale";
 import { sidewalkFootprintsForRoads } from "../../game/world/sidewalks";
@@ -44,6 +45,7 @@ interface ThreeSceneProps {
 }
 
 interface Interactable {
+  priority?: number;
   radius: number;
   target: SceneTarget;
   position: THREE.Vector3;
@@ -63,6 +65,16 @@ interface RectBounds {
   maxZ: number;
   minX: number;
   minZ: number;
+}
+
+interface PedestrianWalkZone extends RectBounds {
+  kind: "crosswalk" | "sidewalk";
+}
+
+interface TrafficVehicleRuntime {
+  kind: TrafficLoop["kind"];
+  length: number;
+  width: number;
 }
 
 interface WorldChunkRuntime {
@@ -173,6 +185,8 @@ const worldDepth = worldBounds.maxZ - worldBounds.minZ;
 const worldCenterX = (worldBounds.minX + worldBounds.maxX) / 2;
 const worldCenterZ = (worldBounds.minZ + worldBounds.maxZ) / 2;
 const worldChunkSize = 24;
+const crosswalkBandDepth = 2.0;
+const pedestrianWalkZoneMargin = 0.04;
 
 function applyModelTransform(object: THREE.Object3D, transform: ModelTransform): void {
   object.position.x += transform.offsetX;
@@ -502,8 +516,8 @@ function fallbackMachinePlacement(location: Location): { position: THREE.Vector3
   };
 }
 
-function machinePlacementForLocation(location: Location): { position: THREE.Vector3; rotationY: number } {
-  const anchor = machinePlacementAnchors[location.id];
+function machinePlacementForLocation(location: Location, anchors: Record<string, MachinePlacementAnchor> = machinePlacementAnchors): { position: THREE.Vector3; rotationY: number } {
+  const anchor = anchors[location.id];
   if (!anchor) {
     return fallbackMachinePlacement(location);
   }
@@ -608,8 +622,42 @@ function vehicleCollisionBox(placement: { position: THREE.Vector3; rotationY: nu
   );
 }
 
+function trafficVehicleRuntimeForKind(kind: TrafficLoop["kind"]): TrafficVehicleRuntime {
+  return {
+    kind,
+    length: kind === "delivery" ? WORLD_SCALE.vehicle.deliveryLength : kind === "police" ? WORLD_SCALE.vehicle.policeLength : WORLD_SCALE.vehicle.length,
+    width: kind === "delivery" ? WORLD_SCALE.vehicle.deliveryWidth : kind === "police" ? WORLD_SCALE.vehicle.policeWidth : WORLD_SCALE.vehicle.width
+  };
+}
+
+function trafficVehicleHitsPlayer(vehicle: THREE.Object3D, playerPosition: THREE.Vector3): boolean {
+  const runtime = vehicle.userData.trafficVehicle as TrafficVehicleRuntime | undefined;
+  if (!runtime) {
+    return false;
+  }
+
+  const dx = playerPosition.x - vehicle.position.x;
+  const dz = playerPosition.z - vehicle.position.z;
+  const cos = Math.cos(vehicle.rotation.y);
+  const sin = Math.sin(vehicle.rotation.y);
+  const localX = dx * cos - dz * sin;
+  const localZ = dx * sin + dz * cos;
+  const sideClearance = playerRadius + 0.08;
+  const frontClearance = playerRadius + 0.18;
+  return Math.abs(localX) <= runtime.width / 2 + sideClearance
+    && Math.abs(localZ) <= runtime.length / 2 + frontClearance;
+}
+
+function trafficImpactDamage(vehicle: THREE.Object3D): number {
+  const runtime = vehicle.userData.trafficVehicle as TrafficVehicleRuntime | undefined;
+  const speed = typeof vehicle.userData.walkSpeed === "number" ? Math.abs(vehicle.userData.walkSpeed) : 0;
+  const massBonus = runtime?.kind === "delivery" ? 18 : runtime?.kind === "police" ? 10 : 0;
+  return Math.round(8 + speed * 5.6 + massBonus);
+}
+
 function collisionBoxesForState(currentState: GameState, layout: WorldMapLayout, options: { excludeVehicleId?: string; extraStaticBoxes?: CollisionBox[] } = {}): CollisionBox[] {
   const boxes = [...buildingCollisionBoxesForLayout(layout)];
+  const machineAnchors = anchorsForLayout(layout);
 
   if (options.extraStaticBoxes) {
     boxes.push(...options.extraStaticBoxes);
@@ -617,7 +665,7 @@ function collisionBoxesForState(currentState: GameState, layout: WorldMapLayout,
 
   for (const location of Object.values(currentState.locations)) {
     if (machineAtLocation(currentState, location.id)) {
-      boxes.push(machineCollisionBox(machinePlacementForLocation(location)));
+      boxes.push(machineCollisionBox(machinePlacementForLocation(location, machineAnchors)));
     }
   }
 
@@ -687,6 +735,88 @@ function pathStateAt(path: THREE.Vector3[], distance: number): { direction: THRE
   }
 
   return null;
+}
+
+function pointInRectBounds(point: THREE.Vector3, bounds: RectBounds, margin = 0): boolean {
+  return point.x >= bounds.minX - margin
+    && point.x <= bounds.maxX + margin
+    && point.z >= bounds.minZ - margin
+    && point.z <= bounds.maxZ + margin;
+}
+
+function closestPointInBounds(point: THREE.Vector3, bounds: RectBounds): THREE.Vector3 {
+  return new THREE.Vector3(
+    THREE.MathUtils.clamp(point.x, bounds.minX + pedestrianWalkZoneMargin, bounds.maxX - pedestrianWalkZoneMargin),
+    point.y,
+    THREE.MathUtils.clamp(point.z, bounds.minZ + pedestrianWalkZoneMargin, bounds.maxZ - pedestrianWalkZoneMargin)
+  );
+}
+
+function squaredDistanceXZ(a: THREE.Vector3, b: THREE.Vector3): number {
+  const dx = a.x - b.x;
+  const dz = a.z - b.z;
+  return dx * dx + dz * dz;
+}
+
+function nearestPointInWalkZones(point: THREE.Vector3, zones: PedestrianWalkZone[]): THREE.Vector3 {
+  if (zones.length === 0) {
+    return point.clone();
+  }
+
+  for (const zone of zones) {
+    if (pointInRectBounds(point, zone, pedestrianWalkZoneMargin)) {
+      return point.clone();
+    }
+  }
+
+  let nearest = closestPointInBounds(point, zones[0]);
+  let nearestDistance = squaredDistanceXZ(point, nearest);
+  for (let index = 1; index < zones.length; index += 1) {
+    const candidate = closestPointInBounds(point, zones[index]);
+    const distance = squaredDistanceXZ(point, candidate);
+    if (distance < nearestDistance) {
+      nearest = candidate;
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
+}
+
+function keepPointOnPedestrianWalkways(point: THREE.Vector3, zones: PedestrianWalkZone[]): void {
+  if (zones.length === 0 || zones.some((zone) => pointInRectBounds(point, zone, pedestrianWalkZoneMargin))) {
+    return;
+  }
+
+  point.copy(nearestPointInWalkZones(point, zones));
+}
+
+function markPedestriansForWalkways(root: THREE.Object3D, zones: PedestrianWalkZone[]): void {
+  if (zones.length === 0) {
+    return;
+  }
+
+  root.traverse((object) => {
+    const path = Array.isArray(object.userData.walkPath) ? object.userData.walkPath as THREE.Vector3[] : null;
+    const isNpc = Boolean(object.userData.rig) || Boolean(object.userData.dynamicNpc) || Boolean(path);
+    if (!isNpc || object.userData.trafficLoop || object.userData.routeVehicleId) {
+      return;
+    }
+
+    object.userData.pedestrianOnly = true;
+    object.userData.pedestrianWalkZones = zones;
+    if (path && path.length > 0) {
+      object.userData.walkPath = path.map((point) => nearestPointInWalkZones(point, zones));
+    }
+    keepPointOnPedestrianWalkways(object.position, zones);
+  });
+}
+
+function servicePositionForLocation(location: Location, zones: PedestrianWalkZone[]): THREE.Vector3 {
+  return nearestPointInWalkZones(new THREE.Vector3(location.position.x, 0, location.position.z), zones);
+}
+
+function offsetWalkwayPosition(position: THREE.Vector3, offset: THREE.Vector3, zones: PedestrianWalkZone[]): THREE.Vector3 {
+  return nearestPointInWalkZones(position.clone().add(offset), zones);
 }
 
 function setLimbPose(limb: NpcRuntimeLimb | undefined, upperX: number, upperZ: number, lowerX: number): void {
@@ -764,6 +894,9 @@ function updateAnimatedStreetProp(object: THREE.Object3D, time: number): void {
   const floatSpeed = typeof object.userData.floatSpeed === "number" ? object.userData.floatSpeed : 1;
   const path = Array.isArray(object.userData.walkPath) ? object.userData.walkPath as THREE.Vector3[] : [];
   const walkSpeed = typeof object.userData.walkSpeed === "number" ? object.userData.walkSpeed : 0;
+  const pedestrianWalkZones = object.userData.pedestrianOnly && Array.isArray(object.userData.pedestrianWalkZones)
+    ? object.userData.pedestrianWalkZones as PedestrianWalkZone[]
+    : [];
   let isMoving = false;
 
   if (path.length > 1 && walkSpeed > 0) {
@@ -778,6 +911,7 @@ function updateAnimatedStreetProp(object: THREE.Object3D, time: number): void {
     }
   }
 
+  keepPointOnPedestrianWalkways(object.position, pedestrianWalkZones);
   const walkBob = isMoving ? Math.abs(Math.cos(time * 0.0055 * Math.max(0.8, walkSpeed * 2.8) + phase)) * 0.01 : 0;
   object.position.y = baseY + Math.sin(time * 0.003 * floatSpeed + phase) * amount + walkBob;
   updateNpcRig(object, time, walkSpeed || floatSpeed, isMoving);
@@ -2462,10 +2596,18 @@ function createActivityActor(
   return character;
 }
 
-function createAmbientMachineActor(machine: VendingMachine, location: Location, index: number, currentWorldTime: number, quality: GraphicsQuality, modelConfig: ModelConfig): THREE.Group {
+function createAmbientMachineActor(
+  machine: VendingMachine,
+  location: Location,
+  index: number,
+  currentWorldTime: number,
+  quality: GraphicsQuality,
+  modelConfig: ModelConfig,
+  machineAnchors: Record<string, MachinePlacementAnchor> = machinePlacementAnchors
+): THREE.Group {
   const variant = machine.ownerFactionId === "player" ? "customer" : "rival";
   const character = createNpcCharacter(variant, quality);
-  const placement = machinePlacementForLocation(location);
+  const placement = machinePlacementForLocation(location, machineAnchors);
   const servicePoint = machineInteractionPoint(placement);
   const front = machineFrontVector(placement.rotationY).normalize();
   const side = new THREE.Vector3(-front.z, 0, front.x);
@@ -2683,7 +2825,10 @@ function sceneFeedbackText(event: SceneFeedbackEvent): string {
   return "LOADED";
 }
 
-function sceneFeedbackPosition(event: SceneFeedbackEvent, currentState: GameState): THREE.Vector3 | null {
+function sceneFeedbackPosition(event: SceneFeedbackEvent, currentState: GameState, layout: WorldMapLayout): THREE.Vector3 | null {
+  const machineAnchors = anchorsForLayout(layout);
+  const pedestrianWalkZones = pedestrianWalkZonesForLayout(layout);
+
   if (event.machineId) {
     const machine = currentState.machines[event.machineId];
     const location = machine ? currentState.locations[machine.locationId] : undefined;
@@ -2691,7 +2836,7 @@ function sceneFeedbackPosition(event: SceneFeedbackEvent, currentState: GameStat
       return null;
     }
 
-    return machineInteractionPoint(machinePlacementForLocation(location));
+    return machineInteractionPoint(machinePlacementForLocation(location, machineAnchors));
   }
 
   if (event.locationId) {
@@ -2701,11 +2846,15 @@ function sceneFeedbackPosition(event: SceneFeedbackEvent, currentState: GameStat
     }
 
     if (location.kind === "garage") {
-      return new THREE.Vector3(location.position.x - 1.02, 0.08, location.position.z + 0.34);
+      const position = servicePositionForLocation(location, pedestrianWalkZones);
+      const storagePosition = offsetWalkwayPosition(position, new THREE.Vector3(-1.02, 0, 0.34), pedestrianWalkZones);
+      return new THREE.Vector3(storagePosition.x, 0.08, storagePosition.z);
     }
 
     if (location.kind === "supplier") {
-      return new THREE.Vector3(location.position.x - 0.76, 0.08, location.position.z - 0.2);
+      const position = servicePositionForLocation(location, pedestrianWalkZones);
+      const stackPosition = offsetWalkwayPosition(position, new THREE.Vector3(-0.76, 0, -0.2), pedestrianWalkZones);
+      return new THREE.Vector3(stackPosition.x, 0.08, stackPosition.z);
     }
 
     return new THREE.Vector3(location.position.x, 0.08, location.position.z);
@@ -2733,8 +2882,8 @@ function createSpark(color: string): THREE.Mesh {
   return spark;
 }
 
-function createSceneFeedbackEffect(event: SceneFeedbackEvent, currentState: GameState, quality: GraphicsQuality): THREE.Group | null {
-  const position = sceneFeedbackPosition(event, currentState);
+function createSceneFeedbackEffect(event: SceneFeedbackEvent, currentState: GameState, quality: GraphicsQuality, layout: WorldMapLayout): THREE.Group | null {
+  const position = sceneFeedbackPosition(event, currentState, layout);
   if (!position) {
     return null;
   }
@@ -4018,6 +4167,7 @@ function createTrafficLayer(loops: TrafficLoop[], roads: WorldRoad[], maxLoops: 
     const start = loop.path[0];
     vehicle.position.set(start.x, 0.02, start.z);
     vehicle.userData.trafficLoop = true;
+    vehicle.userData.trafficVehicle = trafficVehicleRuntimeForKind(loop.kind);
     vehicle.userData.walkPath = loop.path.map((point) => new THREE.Vector3(point.x, 0.02, point.z));
     vehicle.userData.walkSpeed = loop.speed;
     vehicle.userData.pathOffset = loop.phase;
@@ -4107,6 +4257,41 @@ function roadCrossings(roads: WorldRoad[]): RoadCrossing[] {
   return crossings;
 }
 
+function crosswalkZonesForCrossing(crossing: RoadCrossing): PedestrianWalkZone[] {
+  const { box, hBounds, vBounds } = crossing;
+  const zones: PedestrianWalkZone[] = [];
+  const westArm = Math.min(crosswalkBandDepth, box.minX - hBounds.minX - 0.2);
+  if (westArm > 1.0) {
+    zones.push({ kind: "crosswalk", minX: box.minX - westArm, maxX: box.minX, minZ: box.minZ, maxZ: box.maxZ });
+  }
+  const eastArm = Math.min(crosswalkBandDepth, hBounds.maxX - box.maxX - 0.2);
+  if (eastArm > 1.0) {
+    zones.push({ kind: "crosswalk", minX: box.maxX, maxX: box.maxX + eastArm, minZ: box.minZ, maxZ: box.maxZ });
+  }
+  const northArm = Math.min(crosswalkBandDepth, box.minZ - vBounds.minZ - 0.2);
+  if (northArm > 1.0) {
+    zones.push({ kind: "crosswalk", minX: box.minX, maxX: box.maxX, minZ: box.minZ - northArm, maxZ: box.minZ });
+  }
+  const southArm = Math.min(crosswalkBandDepth, vBounds.maxZ - box.maxZ - 0.2);
+  if (southArm > 1.0) {
+    zones.push({ kind: "crosswalk", minX: box.minX, maxX: box.maxX, minZ: box.maxZ, maxZ: box.maxZ + southArm });
+  }
+  return zones;
+}
+
+function pedestrianWalkZonesForLayout(layout: WorldMapLayout): PedestrianWalkZone[] {
+  return [
+    ...sidewalkFootprintsForRoads(layout.roads, layout.buildings).map((sidewalk) => ({
+      kind: "sidewalk" as const,
+      minX: sidewalk.x - sidewalk.width / 2,
+      maxX: sidewalk.x + sidewalk.width / 2,
+      minZ: sidewalk.z - sidewalk.depth / 2,
+      maxZ: sidewalk.z + sidewalk.depth / 2
+    })),
+    ...roadCrossings(layout.roads).flatMap((crossing) => crosswalkZonesForCrossing(crossing))
+  ];
+}
+
 // Zebra stripes across one approach of a crossing. Stripes run parallel to that
 // approach's traffic (stripeAxis), arrayed across the road width.
 function addZebraBandBuildJobs(specs: Map<string, WorldChunkBuildSpec>, bounds: RectBounds, stripeAxis: "x" | "z", material: THREE.Material): void {
@@ -4127,22 +4312,21 @@ function addZebraBandBuildJobs(specs: Map<string, WorldChunkBuildSpec>, bounds: 
 
 function addCrossingMarkingsBuildJobs(specs: Map<string, WorldChunkBuildSpec>, crossing: RoadCrossing, material: THREE.Material): void {
   const { box, hBounds, vBounds } = crossing;
-  const bandDepth = 2.0;
   // Horizontal road: crosswalks on the west/east approaches (stripes run along X).
-  const westArm = Math.min(bandDepth, box.minX - hBounds.minX - 0.2);
+  const westArm = Math.min(crosswalkBandDepth, box.minX - hBounds.minX - 0.2);
   if (westArm > 1.0) {
     addZebraBandBuildJobs(specs, { minX: box.minX - westArm, maxX: box.minX, minZ: box.minZ, maxZ: box.maxZ }, "x", material);
   }
-  const eastArm = Math.min(bandDepth, hBounds.maxX - box.maxX - 0.2);
+  const eastArm = Math.min(crosswalkBandDepth, hBounds.maxX - box.maxX - 0.2);
   if (eastArm > 1.0) {
     addZebraBandBuildJobs(specs, { minX: box.maxX, maxX: box.maxX + eastArm, minZ: box.minZ, maxZ: box.maxZ }, "x", material);
   }
   // Vertical road: crosswalks on the north/south approaches (stripes run along Z).
-  const northArm = Math.min(bandDepth, box.minZ - vBounds.minZ - 0.2);
+  const northArm = Math.min(crosswalkBandDepth, box.minZ - vBounds.minZ - 0.2);
   if (northArm > 1.0) {
     addZebraBandBuildJobs(specs, { minX: box.minX, maxX: box.maxX, minZ: box.minZ - northArm, maxZ: box.minZ }, "z", material);
   }
-  const southArm = Math.min(bandDepth, vBounds.maxZ - box.maxZ - 0.2);
+  const southArm = Math.min(crosswalkBandDepth, vBounds.maxZ - box.maxZ - 0.2);
   if (southArm > 1.0) {
     addZebraBandBuildJobs(specs, { minX: box.minX, maxX: box.maxX, minZ: box.maxZ, maxZ: box.maxZ + southArm }, "z", material);
   }
@@ -4518,9 +4702,18 @@ function addDistrictAccessOverlays(group: THREE.Group, currentState: GameState):
   }
 }
 
-function populateDynamicObjects(group: THREE.Group, currentState: GameState, guidanceLocationId: string | undefined, quality: GraphicsQuality, modelConfig: ModelConfig, poi: { hotspots: Record<string, Vec2>; contacts: Record<string, Vec2> }): Interactable[] {
+function populateDynamicObjects(
+  group: THREE.Group,
+  currentState: GameState,
+  guidanceLocationId: string | undefined,
+  quality: GraphicsQuality,
+  modelConfig: ModelConfig,
+  poi: { contacts: Record<string, Vec2>; hotspots: Record<string, Vec2>; machineAnchors?: Record<string, MachinePlacementAnchor>; pedestrianWalkZones?: PedestrianWalkZone[] }
+): Interactable[] {
   clearGroup(group);
   const interactables: Interactable[] = [];
+  const machineAnchors = poi.machineAnchors ?? machinePlacementAnchors;
+  const pedestrianWalkZones = poi.pedestrianWalkZones ?? [];
   addDistrictAccessOverlays(group, currentState);
   const activeAlarmByMachine = new Map(activeMachineAlarms(currentState).map((alarm) => [alarm.machineId, alarm]));
   const activeConflictByLocation = new Map(activeConflictEvents(currentState).map((conflict) => [conflict.locationId, conflict]));
@@ -4592,8 +4785,10 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
   });
 
   for (const location of Object.values(currentState.locations)) {
-    const position = new THREE.Vector3(location.position.x, 0, location.position.z);
-    const machinePlacement = machinePlacementForLocation(location);
+    const position = location.kind === "garage" || location.kind === "supplier"
+      ? servicePositionForLocation(location, pedestrianWalkZones)
+      : new THREE.Vector3(location.position.x, 0, location.position.z);
+    const machinePlacement = machinePlacementForLocation(location, machineAnchors);
     const isGuidanceTarget = guidanceLocationId === location.id;
     const activeConflict = activeConflictByLocation.get(location.id);
     const routePlanStop = routePlanByLocation.get(location.id);
@@ -4644,7 +4839,8 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
           .filter(([, quantity]) => quantity > 0)
           .map(([productId]) => productId as ProductId);
         const storageBay = createStorageBay(storedProductIds, modelConfig);
-        storageBay.position.set(position.x - 1.02, 0.02, position.z + 0.34);
+        const storagePosition = offsetWalkwayPosition(position, new THREE.Vector3(-1.02, 0, 0.34), pedestrianWalkZones);
+        storageBay.position.set(storagePosition.x, 0.02, storagePosition.z);
         storageBay.rotation.y = 0.08;
         applyModelTransformById(storageBay, modelConfig, "machine.storage_bay");
         group.add(storageBay);
@@ -4662,7 +4858,8 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       marker.position.copy(position);
       group.add(marker);
       const supplierStack = createCrateStack(["soda", "chips", "energy", "water", "coffee_can", "mystery_capsules", "mood_fizz", "phone_charger"], modelConfig);
-      supplierStack.position.set(position.x - 0.76, 0.02, position.z - 0.2);
+      const stackPosition = offsetWalkwayPosition(position, new THREE.Vector3(-0.76, 0, -0.2), pedestrianWalkZones);
+      supplierStack.position.set(stackPosition.x, 0.02, stackPosition.z);
       supplierStack.rotation.y = 0.45;
       group.add(supplierStack);
       addLabel(group, location.name, "#f59e0b", position, 1.1);
@@ -4703,7 +4900,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       addGuidanceBeacon(owner?.color ?? "#94a3b8", machinePlacement.position);
       addConflictMarker(machinePlacement.position);
       addRoutePlanMarker(machinePlacement.position);
-      interactables.push({ radius: 1.15, target: { type: "machine", id: machine.id, label: machine.name }, position: servicePoint });
+      interactables.push({ priority: activeAlarm ? 4 : 1, radius: 1.15, target: { type: "machine", id: machine.id, label: machine.name }, position: servicePoint });
     } else {
       const access = districtProgress(currentState, location.districtId).access;
       const markerColor = access === "unlocked" ? "#a3e635" : districtAccessColor(access);
@@ -4741,7 +4938,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
         return;
       }
 
-      group.add(createAmbientMachineActor(machine, location, index, currentState.worldTimeHours, quality, modelConfig));
+      group.add(createAmbientMachineActor(machine, location, index, currentState.worldTimeHours, quality, modelConfig, machineAnchors));
     });
 
   renderedActivities
@@ -4752,7 +4949,9 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
         return;
       }
 
-      const placement = machine ? machinePlacementForLocation(location) : { position: new THREE.Vector3(location.position.x, 0, location.position.z), rotationY: 0 };
+      const placement = machine
+        ? machinePlacementForLocation(location, machineAnchors)
+        : { position: servicePositionForLocation(location, pedestrianWalkZones), rotationY: 0 };
       const servicePoint = machine ? machineInteractionPoint(placement) : placement.position;
       const bubble = createActivityBubble(activity);
       bubble.position.set(servicePoint.x, 2.62 + index * 0.16, servicePoint.z);
@@ -4823,6 +5022,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
     interactables.push({ radius: 2.4, target: { type: "vehicle", id: vehicle.id, label: vehicle.name }, position: vehiclePosition });
   }
 
+  markPedestriansForWalkways(group, pedestrianWalkZones);
   return interactables;
 }
 
@@ -4944,6 +5144,11 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     renderer.toneMappingExposure = 1.18;
     mount.appendChild(renderer.domElement);
 
+    const trafficImpactHud = document.createElement("div");
+    trafficImpactHud.className = "traffic-impact-hud";
+    trafficImpactHud.hidden = true;
+    mount.appendChild(trafficImpactHud);
+
     // Environment map: clearcoat car paint and glass need something to reflect.
     // Without this, MeshPhysicalMaterial vehicles render as flat matte plastic.
     const pmrem = new THREE.PMREMGenerator(renderer);
@@ -5032,6 +5237,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     const roadMaterial = createRoadMaterial(renderProfile.detail);
     const sidewalkMaterial = createSidewalkMaterial(renderProfile.detail);
     const sidewalks = sidewalkFootprintsForRoads(mapLayout.roads, mapLayout.buildings);
+    const pedestrianWalkZones = pedestrianWalkZonesForLayout(mapLayout);
 
     for (const road of mapLayout.roads) {
       addRectMeshBuildJobsToWorldChunks(staticChunkSpecs, roadBounds(road), 0.025, 0.035, roadMaterial, (mesh) => {
@@ -5196,6 +5402,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       maxNpcs: renderProfile.maxAmbientNpcs,
       quality: renderProfile.detail
     });
+    markPedestriansForWalkways(streetProps, pedestrianWalkZones);
     streetProps.traverse((object) => {
       if (object.userData.floatSpeed) {
         animatedProps.push(object);
@@ -5210,6 +5417,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     const trafficLayer = createTrafficLayer(mapLayout.trafficLoops, mapLayout.roads, renderProfile.maxTrafficLoops, renderProfile.enableShadows, renderProfile.detail, modelConfig);
     animatedProps.push(...trafficLayer.animated);
     const policePatrolLayer = createPolicePatrolLayer(mapLayout.policePatrolPaths, renderProfile.maxPolicePatrols, renderProfile.detail, modelConfig);
+    markPedestriansForWalkways(policePatrolLayer.group, pedestrianWalkZones);
     animatedProps.push(...policePatrolLayer.animated);
     animatedPropsRef.current = animatedProps;
     scene.add(trafficLayer.group);
@@ -5247,6 +5455,11 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     let pitch = 0;
     let verticalVelocity = 0;
     let grounded = true;
+    let playerStreetHealth = 100;
+    let playerTrafficDead = false;
+    let playerTrafficStunnedUntil = 0;
+    let lastTrafficImpactAt = -10_000;
+    let trafficHudVisibleUntil = 0;
     let lastTime = performance.now();
     let lastChunkVisibilityUpdate = 0;
     let lastPositionEmit = 0;
@@ -5258,7 +5471,12 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
         return;
       }
 
-      interactablesRef.current = populateDynamicObjects(dynamicGroupRef.current, stateRef.current, guidanceLocationIdRef.current, renderProfile.detail, modelConfig, { hotspots: hotspotPositionOverrides(mapLayout), contacts: crimeContactPositionOverrides(mapLayout) });
+      interactablesRef.current = populateDynamicObjects(dynamicGroupRef.current, stateRef.current, guidanceLocationIdRef.current, renderProfile.detail, modelConfig, {
+        contacts: crimeContactPositionOverrides(mapLayout),
+        hotspots: hotspotPositionOverrides(mapLayout),
+        machineAnchors: anchorsForLayout(mapLayout),
+        pedestrianWalkZones
+      });
       if (debugVisible && debugGroupRef.current) {
         populateDebugOverlay(debugGroupRef.current, stateRef.current, interactablesRef.current, animatedProps, mapLayout);
       }
@@ -5335,6 +5553,47 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       cameraMode = "first";
       pitch = 0;
       applyCameraMode(camera, playerAvatar, carriedCrateMount, cameraMode, pitch);
+    };
+
+    const showTrafficImpactHud = (message: string, tone: "danger" | "warning", time: number, duration = 2200) => {
+      trafficImpactHud.textContent = message;
+      trafficImpactHud.dataset.tone = tone;
+      trafficImpactHud.hidden = false;
+      trafficHudVisibleUntil = time + duration;
+    };
+
+    const respawnPlayerAfterTrafficDeath = (time: number) => {
+      const garage = stateRef.current.locations.garage;
+      const respawn = garage
+        ? servicePositionForLocation(garage, pedestrianWalkZones)
+        : nearestPointInWalkZones(new THREE.Vector3(-9, 0, 5.9), pedestrianWalkZones);
+      yaw.position.set(respawn.x, playerGroundY, respawn.z);
+      yaw.rotation.y = Math.PI;
+      pitch = 0;
+      verticalVelocity = 0;
+      grounded = true;
+      playerTrafficDead = false;
+      playerStreetHealth = 70;
+      lastTrafficImpactAt = time;
+      playerTrafficStunnedUntil = time + 450;
+      applyCameraMode(camera, playerAvatar, carriedCrateMount, cameraMode, pitch);
+      showTrafficImpactHud("Traffic death - respawned at garage · HP 70", "warning", time, 2600);
+    };
+
+    const applyTrafficImpact = (vehicle: THREE.Object3D, time: number) => {
+      const damage = trafficImpactDamage(vehicle);
+      playerStreetHealth = Math.max(0, playerStreetHealth - damage);
+      lastTrafficImpactAt = time;
+      vehicle.userData.lastPlayerImpactAt = time;
+      if (playerStreetHealth <= 0) {
+        playerTrafficDead = true;
+        playerTrafficStunnedUntil = time + 2600;
+        showTrafficImpactHud("Killed by traffic - respawning at garage", "danger", time, 2600);
+        return;
+      }
+
+      playerTrafficStunnedUntil = Math.max(playerTrafficStunnedUntil, time + Math.min(900, 240 + damage * 9));
+      showTrafficImpactHud(`Traffic impact -${damage} HP · HP ${Math.round(playerStreetHealth)}`, damage >= 45 ? "danger" : "warning", time);
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
@@ -5453,7 +5712,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
           continue;
         }
 
-        const score = Math.max(0, distance - interactable.radius) - alignment * 1.25;
+        const score = Math.max(0, distance - interactable.radius) - alignment * 1.25 - (interactable.priority ?? 0) * 0.55;
         if (score < bestScore) {
           bestScore = score;
           best = interactable;
@@ -5476,6 +5735,15 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       lastTime = time;
 
       const currentState = stateRef.current;
+      if (playerTrafficDead && time >= playerTrafficStunnedUntil) {
+        respawnPlayerAfterTrafficDeath(time);
+      }
+      if (!playerTrafficDead && time - lastTrafficImpactAt > 3600 && playerStreetHealth < 100) {
+        playerStreetHealth = Math.min(100, playerStreetHealth + delta * 6);
+      }
+      if (trafficImpactHud.hidden === false && time >= trafficHudVisibleUntil) {
+        trafficImpactHud.hidden = true;
+      }
 
       // Day/night cycle: drive the cheap global lights, fog and background from
       // the world clock so the city visibly shifts from daylight to a moody night.
@@ -5528,6 +5796,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       const carryPenalty = currentState.player.carriedCrate ? Math.min(0.38, 0.08 + carryLoadRatio * 0.3) : 0;
       const speed = (keys.has("ShiftLeft") || keys.has("ShiftRight") ? 7.5 : 4.2) * (1 - carryPenalty);
       const direction = new THREE.Vector3();
+      const playerTrafficLocked = playerTrafficDead || time < playerTrafficStunnedUntil;
 
       let playerMoved = false;
       if (drivingVehicleId) {
@@ -5579,7 +5848,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
           targetIdRef.current = null;
           onTargetChangeRef.current(null);
         }
-      } else {
+      } else if (!playerTrafficLocked) {
         if (keys.has("KeyW") || keys.has("ArrowUp")) direction.z -= 1;
         if (keys.has("KeyS") || keys.has("ArrowDown")) direction.z += 1;
         if (keys.has("KeyA") || keys.has("ArrowLeft")) direction.x -= 1;
@@ -5665,6 +5934,19 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
           updateAnimatedStreetProp(object, time);
         }
       }
+      if (!drivingVehicleId && !playerTrafficDead && time - lastTrafficImpactAt > 620) {
+        for (const object of animatedProps) {
+          if (!object.userData.trafficLoop || !trafficVehicleHitsPlayer(object, yaw.position)) {
+            continue;
+          }
+
+          const vehicleLastImpact = typeof object.userData.lastPlayerImpactAt === "number" ? object.userData.lastPlayerImpactAt : -10_000;
+          if (time - vehicleLastImpact > 900) {
+            applyTrafficImpact(object, time);
+            break;
+          }
+        }
+      }
       updateFeedbackEffects(feedbackGroup, time);
 
       updateTarget();
@@ -5692,6 +5974,9 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       envTarget.dispose();
       renderer.dispose();
       mount.removeChild(renderer.domElement);
+      if (trafficImpactHud.parentElement === mount) {
+        mount.removeChild(trafficImpactHud);
+      }
       dynamicGroupRef.current = null;
       debugGroupRef.current = null;
       feedbackGroupRef.current = null;
@@ -5709,7 +5994,12 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       return;
     }
 
-    interactablesRef.current = populateDynamicObjects(dynamicGroup, state, guidanceLocationId, graphicsQuality, modelConfig, { hotspots: hotspotPositionOverrides(mapLayout), contacts: crimeContactPositionOverrides(mapLayout) });
+    interactablesRef.current = populateDynamicObjects(dynamicGroup, state, guidanceLocationId, graphicsQuality, modelConfig, {
+      contacts: crimeContactPositionOverrides(mapLayout),
+      hotspots: hotspotPositionOverrides(mapLayout),
+      machineAnchors: anchorsForLayout(mapLayout),
+      pedestrianWalkZones: pedestrianWalkZonesForLayout(mapLayout)
+    });
     const debugGroup = debugGroupRef.current;
     if (debugGroup?.visible) {
       populateDebugOverlay(debugGroup, state, interactablesRef.current, animatedPropsRef.current, mapLayout);
@@ -5723,11 +6013,11 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     }
 
     processedFeedbackIdRef.current = feedbackEvent.id;
-    const effect = createSceneFeedbackEffect(feedbackEvent, state, graphicsQuality);
+    const effect = createSceneFeedbackEffect(feedbackEvent, state, graphicsQuality, mapLayout);
     if (effect) {
       feedbackGroup.add(effect);
     }
-  }, [feedbackEvent, graphicsQuality, state]);
+  }, [feedbackEvent, graphicsQuality, mapLayout, state]);
 
   useEffect(() => {
     const mount = carriedCrateMountRef.current;

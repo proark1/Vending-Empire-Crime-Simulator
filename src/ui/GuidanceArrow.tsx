@@ -3,9 +3,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { GameState, LocationId, Vec2 } from "../game/core/types";
 
 interface GuidanceArrowProps {
+  arrivedOverride?: boolean;
   label?: string;
   state: GameState;
   targetLocationId?: LocationId;
+  targetPosition?: Vec2;
   playerHeadingDegrees: number;
   playerPosition: Vec2;
 }
@@ -47,6 +49,7 @@ const ROTATION_SMOOTHING = 0.22;
 const DISTANCE_SMOOTHING = 0.18;
 
 interface GuidanceArrowReadoutProps {
+  arrivedOverride?: boolean;
   label?: string;
   locationName: string;
   targetLocationId: LocationId;
@@ -55,13 +58,13 @@ interface GuidanceArrowReadoutProps {
   targetPosition: Vec2;
 }
 
-function GuidanceArrowReadout({ label, locationName, playerHeadingDegrees, playerPosition, targetLocationId, targetPosition }: GuidanceArrowReadoutProps) {
+function GuidanceArrowReadout({ arrivedOverride = false, label, locationName, playerHeadingDegrees, playerPosition, targetLocationId, targetPosition }: GuidanceArrowReadoutProps) {
   const targetMeters = useMemo(() => distanceMeters(playerPosition, targetPosition), [playerPosition, targetPosition]);
   const targetRotation = useMemo(() => guidanceRotationDegrees(playerPosition, targetPosition, playerHeadingDegrees), [playerHeadingDegrees, playerPosition, targetPosition]);
   const previousTargetIdRef = useRef<LocationId | undefined>(targetLocationId);
   const [displayMeters, setDisplayMeters] = useState(targetMeters);
   const [displayRotation, setDisplayRotation] = useState(targetRotation);
-  const arrived = targetMeters <= ARRIVED_METERS;
+  const arrived = arrivedOverride || targetMeters <= ARRIVED_METERS;
 
   useEffect(() => {
     const targetChanged = previousTargetIdRef.current !== targetLocationId;
@@ -96,7 +99,7 @@ function GuidanceArrowReadout({ label, locationName, playerHeadingDegrees, playe
   );
 }
 
-export function GuidanceArrow({ label, state, targetLocationId, playerHeadingDegrees, playerPosition }: GuidanceArrowProps) {
+export function GuidanceArrow({ arrivedOverride, label, state, targetLocationId, targetPosition, playerHeadingDegrees, playerPosition }: GuidanceArrowProps) {
   if (!targetLocationId) {
     return null;
   }
@@ -108,12 +111,13 @@ export function GuidanceArrow({ label, state, targetLocationId, playerHeadingDeg
 
   return (
     <GuidanceArrowReadout
+      arrivedOverride={arrivedOverride}
       label={label}
       locationName={location.name}
       playerHeadingDegrees={playerHeadingDegrees}
       playerPosition={playerPosition}
       targetLocationId={targetLocationId}
-      targetPosition={location.position}
+      targetPosition={targetPosition ?? location.position}
     />
   );
 }

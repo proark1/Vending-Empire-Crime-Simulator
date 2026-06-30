@@ -7,7 +7,7 @@
 // while leaving the hand-authored default untouched (buildings without `anchor`
 // fall back to the constants).
 
-import type { Bounds2, Vec2 } from "../core/types";
+import type { Bounds2, Location, Vec2 } from "../core/types";
 import {
   buildingFootprintExtents,
   crimeContacts,
@@ -93,6 +93,33 @@ export function anchorsForLayout(layout: WorldMapLayout): Record<string, Machine
     }
   }
   return result;
+}
+
+function fallbackMachineAnchor(location: Location): MachinePlacementAnchor {
+  const directionToStreet = { x: -location.position.x, z: -location.position.z };
+  const length = Math.hypot(directionToStreet.x, directionToStreet.z);
+  if (length < 0.001) {
+    return { x: location.position.x, z: location.position.z, rotationY: 0 };
+  }
+
+  const normalized = { x: directionToStreet.x / length, z: directionToStreet.z / length };
+  return {
+    x: location.position.x,
+    z: location.position.z,
+    rotationY: Math.atan2(-normalized.x, -normalized.z)
+  };
+}
+
+export function machineAnchorForLocation(layout: WorldMapLayout, location: Location): MachinePlacementAnchor {
+  return anchorsForLayout(layout)[location.id] ?? fallbackMachineAnchor(location);
+}
+
+export function machineServicePointForLocation(layout: WorldMapLayout, location: Location): Vec2 {
+  const anchor = machineAnchorForLocation(layout, location);
+  return {
+    x: anchor.x - Math.sin(anchor.rotationY) * 0.82,
+    z: anchor.z - Math.cos(anchor.rotationY) * 0.82
+  };
 }
 
 // Location foot-traffic centres overridden by generated location buildings only

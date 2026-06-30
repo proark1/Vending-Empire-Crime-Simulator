@@ -19,6 +19,7 @@ import { crimeContacts, districts, worldBounds, type WorldMapLayout } from "./ga
 import { endgamePaths, storyMissionArcs } from "./game/content/story";
 import { products } from "./game/content/products";
 import { clearWorldMapLayout, loadWorldMapLayout, normalizeLayout, saveWorldMapLayout } from "./game/world/mapLayoutStorage";
+import { machineServicePointForLocation } from "./game/world/locationGeometry";
 import { clearStoredGameSession, loadRemoteAudioConfig, loadRemoteGame, loadRemoteMapLayout, loadStoredGameSession, loginGame, registerGame, type GameSession } from "./game/save/api";
 import { loadGame } from "./game/save/storage";
 import { createInitialState } from "./game/content/initialState";
@@ -681,6 +682,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
   const serviceHoldIntervalRef = useRef<number | null>(null);
   const serviceHoldInteractionRef = useRef<PrimaryInteraction | null>(null);
   const activeTarget = entered ? target : null;
+  const activeTargetLocationId = useMemo(() => targetLocationId(activeTarget, state), [activeTarget, state]);
   const primaryInteraction = useMemo(() => getPrimaryInteraction(state, activeTarget), [activeTarget, state]);
   const primaryInteractionKey = useMemo(() => primaryInteractionSignature(primaryInteraction), [primaryInteraction]);
   const holdPrimaryInteraction = Boolean(primaryInteraction?.durationMs && primaryInteraction.durationMs > 0 && !primaryInteraction.disabled);
@@ -689,6 +691,13 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
   const activeAlarm = useMemo(() => activeMachineAlarms(state)[0], [state]);
   const conflicts = useMemo(() => activeConflictEvents(state), [state]);
   const guidanceLocationId = activeAlarm?.locationId ?? routeTask?.locationId ?? missionStep.targetLocationId;
+  const guidanceTargetPosition = useMemo(() => {
+    const machineId = activeAlarm?.machineId ?? routeTask?.machineId;
+    const machine = machineId ? state.machines[machineId] : undefined;
+    const location = machine ? state.locations[machine.locationId] : undefined;
+    return location ? machineServicePointForLocation(mapLayout, location) : undefined;
+  }, [activeAlarm?.machineId, mapLayout, routeTask?.machineId, state]);
+  const guidanceArrivedOverride = Boolean(guidanceLocationId && activeTargetLocationId === guidanceLocationId);
   const guidanceLabel = activeAlarm ? "Machine alarm" : routeTask?.title;
   const report = latestDayReport(state);
   const playerFaction = state.factions[state.playerFactionId];
@@ -880,14 +889,14 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
   }, [addToast, missionStep.id, missionStep.objective]);
 
   useEffect(() => {
-    const nextLocationId = entered ? targetLocationId(target, state) : null;
+    const nextLocationId = entered ? activeTargetLocationId : null;
     if (nextLocationId === lastServiceLocationIdRef.current) {
       return;
     }
 
     lastServiceLocationIdRef.current = nextLocationId;
     sendCommand({ type: "set_player_location", actorId: state.playerFactionId, locationId: nextLocationId });
-  }, [entered, sendCommand, state, target]);
+  }, [activeTargetLocationId, entered, sendCommand, state]);
 
   useEffect(() => {
     if (!report || report.id === lastReportIdRef.current) {
@@ -1485,7 +1494,17 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
           </div>
         )}
       </div>
-      {entered && <GuidanceArrow label={guidanceLabel} state={state} targetLocationId={guidanceLocationId} playerHeadingDegrees={playerHeadingDegrees} playerPosition={playerPosition} />}
+      {entered && (
+        <GuidanceArrow
+          arrivedOverride={guidanceArrivedOverride}
+          label={guidanceLabel}
+          state={state}
+          targetLocationId={guidanceLocationId}
+          targetPosition={guidanceTargetPosition}
+          playerHeadingDegrees={playerHeadingDegrees}
+          playerPosition={playerPosition}
+        />
+      )}
       {entered && activeTarget && primaryInteraction && (
         <div className={`target-prompt ${primaryInteraction.disabled ? "disabled" : ""} ${serviceHold ? "working" : ""}`}>
           <span className="target-action">
@@ -1517,80 +1536,86 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
       {!entered && (
         <section className="entry-overlay landing-overlay" aria-label="Vendetta Vending landing page">
           <div className="landing-panel">
-            <div className="landing-copy">
-              <span className="landing-kicker">Vending crime, but make it snack beef</span>
-              <h1>Vendetta Vending</h1>
-              <p>
-                Build the least reasonable snack empire in town. Fix busted machines, sell products with suspicious names, dodge rival nonsense, and defend every cabinet like it just posted about you.
-              </p>
-              <div className="landing-quip-row" aria-label="Game highlights">
-                <span>
-                  <Map size={15} aria-hidden="true" />
-                  6 petty districts
-                </span>
-                <span>
-                  <Zap size={15} aria-hidden="true" />
-                  Legal-ish choices
-                </span>
-                <span>
-                  <Sparkles size={15} aria-hidden="true" />
-                  Cabinet beef simulator
-                </span>
-              </div>
-              <div className="landing-viral-strip" aria-label="Landing page hooks">
-                <span>one busted machine</span>
-                <span>zero chill</span>
-                <span>infinite sidewalk drama</span>
-              </div>
-              <button className="entry-button landing-primary" onClick={handleEnterDistrict} type="button">
-                <Play size={18} aria-hidden="true" />
-                Start Snack Beef
-              </button>
+            <section className="landing-hero-stage" aria-label="Vendetta Vending cinematic introduction">
               <Suspense fallback={<div className="landing-cinematic-placeholder" aria-hidden="true" />}>
                 <LandingCinematicScene modelConfig={modelConfig} />
               </Suspense>
-              <LandingQuickFacts state={state} />
-              <LandingFeatureGrid />
-              <LandingGameLoop />
-              <LandingCampaignBoard limit={3} state={state} />
-              <div className="landing-story-beats" aria-label="Opening story beats">
-                {starterArc.beats.slice(0, 5).map((beat, index) => (
-                  <div className="landing-beat" key={beat}>
-                    <span>{index + 1}</span>
-                    <strong>{beat}</strong>
+              <div className="landing-copy landing-hero-content">
+                <span className="landing-kicker">Vending crime, but make it snack beef</span>
+                <h1>Vendetta Vending</h1>
+                <p>
+                  Build the least reasonable snack empire in town. Fix busted machines, sell products with suspicious names, dodge rival nonsense, and defend every cabinet like it just posted about you.
+                </p>
+                <div className="landing-quip-row" aria-label="Game highlights">
+                  <span>
+                    <Map size={15} aria-hidden="true" />
+                    6 petty districts
+                  </span>
+                  <span>
+                    <Zap size={15} aria-hidden="true" />
+                    Legal-ish choices
+                  </span>
+                  <span>
+                    <Sparkles size={15} aria-hidden="true" />
+                    Cabinet beef simulator
+                  </span>
+                </div>
+                <div className="landing-viral-strip" aria-label="Landing page hooks">
+                  <span>one busted machine</span>
+                  <span>zero chill</span>
+                  <span>infinite sidewalk drama</span>
+                </div>
+                <button className="entry-button landing-primary" onClick={handleEnterDistrict} type="button">
+                  <Play size={18} aria-hidden="true" />
+                  Start Snack Beef
+                </button>
+                <LandingQuickFacts state={state} />
+              </div>
+            </section>
+            <div className="landing-lower-grid">
+              <div className="landing-main-column">
+                <LandingFeatureGrid />
+                <LandingGameLoop />
+                <LandingCampaignBoard limit={3} state={state} />
+                <div className="landing-story-beats" aria-label="Opening story beats">
+                  {starterArc.beats.slice(0, 5).map((beat, index) => (
+                    <div className="landing-beat" key={beat}>
+                      <span>{index + 1}</span>
+                      <strong>{beat}</strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="landing-side">
+                <LandingWorldPreview mapLayout={mapLayout} state={state} />
+                <LandingScreenshotGallery />
+                <div className="landing-intel-grid" aria-label="Current route status">
+                  <div>
+                    <span>Bankroll</span>
+                    <strong>${Math.round(playerFaction.money)}</strong>
                   </div>
-                ))}
-              </div>
-            </div>
-            <div className="landing-side">
-              <LandingWorldPreview mapLayout={mapLayout} state={state} />
-              <LandingScreenshotGallery />
-              <div className="landing-intel-grid" aria-label="Current route status">
-                <div>
-                  <span>Bankroll</span>
-                  <strong>${Math.round(playerFaction.money)}</strong>
+                  <div>
+                    <span>Your machines</span>
+                    <strong>{installedPlayerMachines}</strong>
+                  </div>
+                  <div>
+                    <span>Rival claims</span>
+                    <strong>{rivalMachines}</strong>
+                  </div>
                 </div>
-                <div>
-                  <span>Your machines</span>
-                  <strong>{installedPlayerMachines}</strong>
+                <LandingProductShelf state={state} />
+                <LandingRivalBoard />
+                <LandingEndgamePaths />
+                <LandingFunBoard />
+                <div className="landing-arc-list" aria-label="Story districts">
+                  {storyMissionArcs.slice(1, 4).map((arc) => (
+                    <article className="landing-arc" key={arc.id}>
+                      <span>{state.districts[arc.districtId]?.name ?? arc.title}</span>
+                      <h2>{arc.title}</h2>
+                      <p>{arc.reward}</p>
+                    </article>
+                  ))}
                 </div>
-                <div>
-                  <span>Rival claims</span>
-                  <strong>{rivalMachines}</strong>
-                </div>
-              </div>
-              <LandingProductShelf state={state} />
-              <LandingRivalBoard />
-              <LandingEndgamePaths />
-              <LandingFunBoard />
-              <div className="landing-arc-list" aria-label="Story districts">
-                {storyMissionArcs.slice(1, 4).map((arc) => (
-                  <article className="landing-arc" key={arc.id}>
-                    <span>{state.districts[arc.districtId]?.name ?? arc.title}</span>
-                    <h2>{arc.title}</h2>
-                    <p>{arc.reward}</p>
-                  </article>
-                ))}
               </div>
             </div>
           </div>
@@ -1739,88 +1764,90 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
   return (
     <main className="access-shell">
       <section className="access-landing" aria-label="Vendetta Vending access">
-        <div className="access-hero">
-          <span className="landing-kicker">First-person vending crime comedy</span>
-          <h1>Vendetta Vending</h1>
-          <p className="access-story">
-            Start with a clattering route van, one busted snack machine, and a business plan that should not have survived breakfast. Stock weird products, answer alarms, outplay rivals, and make every corner smell like profit and bad decisions.
-          </p>
-          <div className="landing-quip-row" aria-label="Game highlights">
-            <span>
-              <Truck size={15} aria-hidden="true" />
-              Drive the chaos van
-            </span>
-            <span>
-              <ShieldAlert size={15} aria-hidden="true" />
-              Defend petty cabinets
-            </span>
-            <span>
-              <Sparkles size={15} aria-hidden="true" />
-              Sell suspicious gum
-            </span>
-          </div>
-          <div className="landing-viral-strip" aria-label="Landing page hooks">
-            <span>one busted machine</span>
-            <span>zero chill</span>
-            <span>infinite sidewalk drama</span>
-          </div>
+        <section className="access-cinematic-stage landing-hero-stage" aria-label="Vendetta Vending cinematic access">
           <LandingCinematicScene modelConfig={modelConfig} />
-          <LandingQuickFacts />
-        </div>
-        <form className="access-panel" onSubmit={handleLogin}>
-          <div>
-            <h2>Start a Route</h2>
-            <span>{authState.status === "loading" ? "Loading protected save" : accessMode === "register" ? "Create game profile" : "Load game profile"}</span>
+          <div className="access-hero landing-copy landing-hero-content">
+            <span className="landing-kicker">First-person vending crime comedy</span>
+            <h1>Vendetta Vending</h1>
+            <p className="access-story">
+              Start with a clattering route van, one busted snack machine, and a business plan that should not have survived breakfast. Stock weird products, answer alarms, outplay rivals, and make every corner smell like profit and bad decisions.
+            </p>
+            <div className="landing-quip-row" aria-label="Game highlights">
+              <span>
+                <Truck size={15} aria-hidden="true" />
+                Drive the chaos van
+              </span>
+              <span>
+                <ShieldAlert size={15} aria-hidden="true" />
+                Defend petty cabinets
+              </span>
+              <span>
+                <Sparkles size={15} aria-hidden="true" />
+                Sell suspicious gum
+              </span>
+            </div>
+            <div className="landing-viral-strip" aria-label="Landing page hooks">
+              <span>one busted machine</span>
+              <span>zero chill</span>
+              <span>infinite sidewalk drama</span>
+            </div>
+            <LandingQuickFacts />
           </div>
-          <div className="access-mode-tabs" aria-label="Game access mode">
-            <button
-              aria-pressed={accessMode === "login"}
-              disabled={busy}
-              onClick={() => switchAccessMode("login")}
-              type="button"
-            >
-              Return
+          <form className="access-panel" onSubmit={handleLogin}>
+            <div>
+              <h2>Start a Route</h2>
+              <span>{authState.status === "loading" ? "Loading protected save" : accessMode === "register" ? "Create game profile" : "Load game profile"}</span>
+            </div>
+            <div className="access-mode-tabs" aria-label="Game access mode">
+              <button
+                aria-pressed={accessMode === "login"}
+                disabled={busy}
+                onClick={() => switchAccessMode("login")}
+                type="button"
+              >
+                Return
+              </button>
+              <button
+                aria-pressed={accessMode === "register"}
+                disabled={busy}
+                onClick={() => switchAccessMode("register")}
+                type="button"
+              >
+                New profile
+              </button>
+            </div>
+            <label>
+              Player name
+              <input
+                autoComplete="username"
+                disabled={busy}
+                maxLength={36}
+                value={credentials.name}
+                onChange={(event) => setCredentials((current) => ({ ...current, name: event.target.value }))}
+              />
+            </label>
+            <label>
+              PIN
+              <input
+                autoComplete={accessMode === "register" ? "new-password" : "current-password"}
+                disabled={busy}
+                inputMode="numeric"
+                maxLength={12}
+                type="password"
+                value={credentials.pin}
+                onChange={(event) => setCredentials((current) => ({ ...current, pin: event.target.value }))}
+              />
+            </label>
+            {authState.status === "login" && authState.message && <p>{authState.message}</p>}
+            <button disabled={busy} type="submit">
+              {submitting ? `${actionLabel}...` : actionLabel}
             </button>
-            <button
-              aria-pressed={accessMode === "register"}
-              disabled={busy}
-              onClick={() => switchAccessMode("register")}
-              type="button"
-            >
-              New profile
+            <button className="access-demo-button" disabled={busy} onClick={handleQuickStart} type="button">
+              Quick Start: Cause Problems
             </button>
-          </div>
-          <label>
-            Player name
-            <input
-              autoComplete="username"
-              disabled={busy}
-              maxLength={36}
-              value={credentials.name}
-              onChange={(event) => setCredentials((current) => ({ ...current, name: event.target.value }))}
-            />
-          </label>
-          <label>
-            PIN
-            <input
-              autoComplete={accessMode === "register" ? "new-password" : "current-password"}
-              disabled={busy}
-              inputMode="numeric"
-              maxLength={12}
-              type="password"
-              value={credentials.pin}
-              onChange={(event) => setCredentials((current) => ({ ...current, pin: event.target.value }))}
-            />
-          </label>
-          {authState.status === "login" && authState.message && <p>{authState.message}</p>}
-          <button disabled={busy} type="submit">
-            {submitting ? `${actionLabel}...` : actionLabel}
-          </button>
-          <button className="access-demo-button" disabled={busy} onClick={handleQuickStart} type="button">
-            Quick Start: Cause Problems
-          </button>
-          <span className="access-demo-note">Instant local save. No database required.</span>
-        </form>
+            <span className="access-demo-note">Instant local save. No database required.</span>
+          </form>
+        </section>
         <div className="access-longform">
           <LandingFeatureGrid />
           <LandingGameLoop />

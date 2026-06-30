@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { regenerateCity } from "./cityRegenerator";
-import { crimeContactPositionOverrides, hotspotPositionOverrides, resyncLocationGeometry } from "./locationGeometry";
-import { crimeContacts, defaultWorldMapLayout, neighborhoodHotspots, worldBounds, type WorldBuilding } from "../content/world";
+import { crimeContactPositionOverrides, hotspotPositionOverrides, machineServicePointForLocation, resyncLocationGeometry } from "./locationGeometry";
+import { crimeContacts, defaultWorldMapLayout, locations, neighborhoodHotspots, worldBounds, type WorldBuilding } from "../content/world";
 
 const inBounds = (p: { x: number; z: number }) =>
   p.x >= worldBounds.minX && p.x <= worldBounds.maxX && p.z >= worldBounds.minZ && p.z <= worldBounds.maxZ;
@@ -55,6 +55,16 @@ describe("POI (hotspot / crime-contact) position overrides", () => {
   it("is deterministic for a given seed", () => {
     expect(hotspotPositionOverrides(regenerateCity("seed-poi-3"))).toEqual(hotspotPositionOverrides(regenerateCity("seed-poi-3")));
     expect(crimeContactPositionOverrides(regenerateCity("seed-poi-3"))).toEqual(crimeContactPositionOverrides(regenerateCity("seed-poi-3")));
+  });
+});
+
+describe("machine service points", () => {
+  it("uses the authored machine anchor instead of the broad location center", () => {
+    const servicePoint = machineServicePointForLocation(defaultWorldMapLayout, locations.laundromat);
+
+    expect(servicePoint.x).toBeCloseTo(-5.65);
+    expect(servicePoint.z).toBeCloseTo(-4.13);
+    expect(servicePoint).not.toEqual(locations.laundromat.position);
   });
 });
 
