@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
-import type { DistrictAccess, DistrictEvent, Employee, GameState, GameEventTone, Location, MachineId, MachineUpgradeId, ProductId, RivalOperation, RouteVehicle, StockCrate, StreetActivity, Vec2, VehicleId, VendingMachine } from "../../game/core/types";
+import type { DistrictAccess, DistrictEvent, Employee, GameState, GameEventTone, Location, MachineId, MachineModelId, MachineUpgradeId, ProductId, RivalOperation, RouteVehicle, StockCrate, StreetActivity, Vec2, VehicleId, VendingMachine } from "../../game/core/types";
 import { activeConflictEvents, activeDistrictEvents, activeMachineAlarms, activeVehicle, carriedCrateUnits, districtProgress, garageStorageUnits, machineAtLocation, machineRoutePressure, optimizedRoutePlan } from "../../game/core/selectors";
 import { modelTransformFor, type ModelConfig, type ModelTransform } from "../../game/content/modelConfig";
 import {
@@ -1032,9 +1032,108 @@ function createLowMachineMesh(color: string, damage: number, installedUpgrades: 
   return group;
 }
 
-export function createMachineMesh(color: string, damage: number, installedUpgrades: MachineUpgradeId[] = [], quality: GraphicsQuality = "medium", stockRatio = 1, productIds: ProductId[] = []): THREE.Group {
+function addMachineDetail(group: THREE.Group, object: THREE.Object3D, detail: string): void {
+  object.userData.machineVisualDetail = detail;
+  group.add(object);
+}
+
+function addMachineModelIdentity(group: THREE.Group, modelId: MachineModelId, color: string, quality: GraphicsQuality): void {
+  const accentMaterial = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 });
+  const darkMaterial = new THREE.MeshStandardMaterial({ color: "#020617", roughness: 0.5, metalness: 0.18 });
+  const chromeMaterial = new THREE.MeshStandardMaterial({ color: "#e2e8f0", roughness: 0.18, metalness: 0.78 });
+  const rubberMaterial = new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.7, metalness: 0.08 });
+
+  group.userData.machineModelId = modelId;
+
+  if (modelId === "armored_unit") {
+    for (const x of [-0.43, 0.43]) {
+      const armor = new THREE.Mesh(new THREE.BoxGeometry(0.055, 1.28, 0.11), new THREE.MeshStandardMaterial({ color: "#475569", roughness: 0.46, metalness: 0.42 }));
+      armor.position.set(x, 0.98, -0.32);
+      armor.castShadow = true;
+      addMachineDetail(group, armor, "armor-rail");
+    }
+    for (let index = 0; index < 6; index += 1) {
+      const rivet = new THREE.Mesh(new THREE.SphereGeometry(0.026, 10, 8), chromeMaterial);
+      rivet.position.set(index % 2 === 0 ? -0.43 : 0.43, 0.48 + Math.floor(index / 2) * 0.42, -0.382);
+      addMachineDetail(group, rivet, "armor-rivet");
+    }
+    const crashBar = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.065, 0.08), darkMaterial);
+    crashBar.position.set(0, 0.58, -0.37);
+    addMachineDetail(group, crashBar, "armor-crash-bar");
+  }
+
+  if (modelId === "luxury_vendor") {
+    const halo = new THREE.Mesh(new THREE.TorusGeometry(0.45, 0.012, 8, 64), new THREE.MeshBasicMaterial({ color: "#fef3c7", transparent: true, opacity: 0.95 }));
+    halo.position.set(-0.08, 1.1, -0.353);
+    halo.scale.y = 1.05;
+    addMachineDetail(group, halo, "luxury-glow-halo");
+    for (const x of [-0.37, 0.21]) {
+      const chromeStrip = new THREE.Mesh(new THREE.BoxGeometry(0.024, 1.02, 0.024), chromeMaterial);
+      chromeStrip.position.set(x, 1.1, -0.354);
+      addMachineDetail(group, chromeStrip, "luxury-chrome-strip");
+    }
+    const plinth = new THREE.Mesh(roundedBox(0.66, 0.08, 0.48, 0.035, quality), chromeMaterial);
+    plinth.position.set(0, 0.15, -0.015);
+    addMachineDetail(group, plinth, "luxury-plinth");
+  }
+
+  if (modelId === "smart_vendor") {
+    const telemetryPanel = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.2, 0.024), new THREE.MeshBasicMaterial({ color: "#38bdf8" }));
+    telemetryPanel.position.set(0.255, 0.76, -0.346);
+    addMachineDetail(group, telemetryPanel, "smart-telemetry-panel");
+    for (let index = 0; index < 3; index += 1) {
+      const arc = new THREE.Mesh(new THREE.TorusGeometry(0.09 + index * 0.04, 0.004, 6, 24, Math.PI), accentMaterial);
+      arc.position.set(-0.3, 2.03 + index * 0.025, -0.02);
+      arc.rotation.z = Math.PI;
+      addMachineDetail(group, arc, "smart-signal-arc");
+    }
+  }
+
+  if (modelId === "mobile_vendor") {
+    for (const x of [-0.32, 0.32]) {
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.045, 16), rubberMaterial);
+      wheel.position.set(x, 0.08, 0.24);
+      wheel.rotation.x = Math.PI / 2;
+      addMachineDetail(group, wheel, "mobile-wheel");
+    }
+    const towHandle = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.012, 8, 28, Math.PI), chromeMaterial);
+    towHandle.position.set(0, 0.52, 0.31);
+    towHandle.rotation.x = Math.PI / 2;
+    addMachineDetail(group, towHandle, "mobile-tow-handle");
+  }
+
+  if (modelId === "discreet_black_market" || modelId === "hidden_wall_unit" || modelId === "fake_broken_front") {
+    for (let index = 0; index < 5; index += 1) {
+      const louver = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.026, 0.026), darkMaterial);
+      louver.position.set(-0.08, 0.84 + index * 0.12, -0.352);
+      louver.rotation.x = -0.25;
+      addMachineDetail(group, louver, "stealth-louver");
+    }
+    const falsePanel = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.18, 0.024), new THREE.MeshStandardMaterial({ color: "#334155", roughness: 0.72, metalness: 0.08 }));
+    falsePanel.position.set(0.26, 1.42, -0.348);
+    addMachineDetail(group, falsePanel, "stealth-false-panel");
+  }
+
+  if (modelId === "drink_machine") {
+    for (let index = 0; index < 3; index += 1) {
+      const chillCoil = new THREE.Mesh(new THREE.TorusGeometry(0.055, 0.006, 6, 20), new THREE.MeshBasicMaterial({ color: "#bae6fd", transparent: true, opacity: 0.9 }));
+      chillCoil.position.set(-0.24 + index * 0.16, 1.42, -0.348);
+      addMachineDetail(group, chillCoil, "drink-chill-coil");
+    }
+  }
+
+  if (modelId === "combo_machine") {
+    const divider = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.86, 0.026), accentMaterial);
+    divider.position.set(-0.08, 1.1, -0.352);
+    addMachineDetail(group, divider, "combo-divider");
+  }
+}
+
+export function createMachineMesh(color: string, damage: number, installedUpgrades: MachineUpgradeId[] = [], quality: GraphicsQuality = "medium", stockRatio = 1, productIds: ProductId[] = [], machineModelId: MachineModelId = "basic_snack"): THREE.Group {
   if (quality === "low") {
-    return createLowMachineMesh(color, damage, installedUpgrades, stockRatio, productIds);
+    const lowMachine = createLowMachineMesh(color, damage, installedUpgrades, stockRatio, productIds);
+    lowMachine.userData.machineModelId = machineModelId;
+    return lowMachine;
   }
 
   const group = new THREE.Group();
@@ -1437,6 +1536,8 @@ export function createMachineMesh(color: string, damage: number, installedUpgrad
     }
   }
 
+  addMachineModelIdentity(group, machineModelId, color, quality);
+
   return group;
 }
 
@@ -1657,16 +1758,19 @@ export function createStockCrateMesh(productId: ProductId, quantity: number, com
 
   const tape = new THREE.Mesh(new THREE.BoxGeometry(width + 0.035, compact ? 0.024 : 0.032, 0.018), new THREE.MeshBasicMaterial({ color: "#fef3c7", transparent: true, opacity: 0.76 }));
   tape.position.set(0, height * 0.18, -depth / 2 - 0.011);
+  tape.userData.stockCrateDetail = "packing-tape";
   group.add(tape);
 
   const label = new THREE.Mesh(new THREE.PlaneGeometry(width * 0.55, height * 0.5), paperMaterial);
   label.position.set(width * 0.1, height * 0.05, -depth / 2 - 0.015);
+  label.userData.stockCrateDetail = "shipping-label";
   group.add(label);
 
   for (const x of [-1, 1]) {
     for (const y of [-1, 1]) {
       const guard = new THREE.Mesh(new THREE.BoxGeometry(0.052, 0.052, 0.026), guardMaterial);
       guard.position.set(x * (width / 2 - 0.032), y * (height / 2 - 0.032), -depth / 2 - 0.01);
+      guard.userData.stockCrateDetail = "corner-guard";
       group.add(guard);
     }
   }
@@ -1674,6 +1778,7 @@ export function createStockCrateMesh(productId: ProductId, quantity: number, com
   for (const z of [-depth / 2 - 0.012, depth / 2 + 0.012]) {
     const handle = new THREE.Mesh(new THREE.BoxGeometry(width * 0.22, height * 0.08, 0.014), new THREE.MeshBasicMaterial({ color: "#020617", transparent: true, opacity: 0.58 }));
     handle.position.set(-width * 0.24, -height * 0.08, z);
+    handle.userData.stockCrateDetail = "carry-handle";
     group.add(handle);
   }
 
@@ -2562,7 +2667,7 @@ function createSceneFeedbackEffect(event: SceneFeedbackEvent, currentState: Game
   }
 
   if (event.kind === "install") {
-    const ghost = createMachineMesh("#2dd4bf", 0, [], quality);
+    const ghost = createMachineMesh("#2dd4bf", 0, [], quality, 1, [], "basic_snack");
     ghost.position.y = 0.08;
     ghost.scale.setScalar(0.72);
     ghost.traverse((child) => {
@@ -2957,7 +3062,7 @@ function addInteriorProps(group: THREE.Group, interior: WorldInterior, quality: 
   toolChest.castShadow = true;
   group.add(toolChest);
 
-  const shell = createMachineMesh("#64748b", 82, [], quality);
+  const shell = createMachineMesh("#64748b", 82, [], quality, 0.2, [], "fake_broken_front");
   shell.position.set(0.55, 0.02, -0.65);
   shell.rotation.y = 0.08;
   shell.scale.setScalar(0.62);
@@ -4382,7 +4487,7 @@ function populateDynamicObjects(group: THREE.Group, currentState: GameState, gui
       const pad = createMachinePlacementDressing(machinePlacement, owner?.color ?? "#94a3b8", true);
       applyModelTransformById(pad, modelConfig, "machine.placement_pad");
       group.add(pad);
-      const machineGroup = createMachineMesh(owner?.color ?? "#94a3b8", machine.damage, machine.upgrades ?? [], quality, machineStockRatio(machine), stockedProductIds(machine));
+      const machineGroup = createMachineMesh(owner?.color ?? "#94a3b8", machine.damage, machine.upgrades ?? [], quality, machineStockRatio(machine), stockedProductIds(machine), machine.machineModelId);
       machineGroup.position.copy(machinePlacement.position);
       machineGroup.rotation.y = machinePlacement.rotationY;
       applyModelTransformById(machineGroup, modelConfig, "machine.vending");

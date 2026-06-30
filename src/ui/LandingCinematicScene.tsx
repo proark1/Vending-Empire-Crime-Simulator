@@ -154,7 +154,7 @@ export function LandingCinematicScene({ modelConfig }: LandingCinematicSceneProp
       });
     };
 
-    const heroMachine = createMachineMesh("#10b981", 2, ["smart_lock", "security_camera", "neon_sign"], quality, 0.95, ["energy", "luxury_snack", "glitch_gum"]);
+    const heroMachine = createMachineMesh("#10b981", 2, ["smart_lock", "security_camera", "neon_sign"], quality, 0.95, ["energy", "luxury_snack", "glitch_gum"], "smart_vendor");
     heroMachine.position.set(-1.15, 0, 0.35);
     heroMachine.rotation.y = -0.28;
     heroMachine.scale.setScalar(1.34);
@@ -162,7 +162,7 @@ export function LandingCinematicScene({ modelConfig }: LandingCinematicSceneProp
     setShadow(heroMachine);
     scene.add(heroMachine);
 
-    const rivalMachine = createMachineMesh("#fb7185", 63, ["reinforced_glass"], "medium", 0.36, ["mystery_capsules", "mood_fizz"]);
+    const rivalMachine = createMachineMesh("#fb7185", 63, ["reinforced_glass"], "medium", 0.36, ["mystery_capsules", "mood_fizz"], "armored_unit");
     rivalMachine.position.set(1.2, 0, -1.1);
     rivalMachine.rotation.y = 0.18;
     rivalMachine.scale.setScalar(0.86);
