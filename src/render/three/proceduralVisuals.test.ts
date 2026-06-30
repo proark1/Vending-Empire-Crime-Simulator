@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MachineModelId } from "../../game/core/types";
-import { createMachineMesh, createStockCrateMesh } from "./ThreeScene";
+import { createMachineMesh, createStockCrateMesh, createVehicleMesh } from "./ThreeScene";
 
 function createCanvasContextStub(): Record<string, unknown> {
   const gradient = { addColorStop: vi.fn() };
@@ -84,6 +84,29 @@ describe("procedural visual assets", () => {
 
     expect(mesh.userData.machineModelId).toBe("armored_unit");
     expect(collectUserDataValues(mesh, "machineVisualDetail")).toHaveLength(0);
+  });
+
+  it("adds real-world cabinet hardware to medium and high quality vending machines", () => {
+    const mesh = createMachineMesh("#22c55e", 0, ["cashless_terminal"], "medium", 1, ["soda", "chips"], "basic_snack");
+    const detailTags = collectUserDataValues(mesh, "machineVisualDetail");
+
+    expect(detailTags).toContain("machine-glass-gasket");
+    expect(detailTags).toContain("machine-payment-bezel");
+    expect(detailTags).toContain("machine-compressor-grille");
+    expect(detailTags).toContain("machine-screw-head");
+    expect(detailTags).toContain("machine-leveling-foot");
+  });
+
+  it("adds automotive details that make route vehicles read as real cars", () => {
+    const vehicle = createVehicleMesh("medium");
+    const detailTags = collectUserDataValues(vehicle, "vehicleVisualDetail");
+
+    expect(detailTags).toContain("vehicle-hood-crease");
+    expect(detailTags).toContain("vehicle-windshield-wiper");
+    expect(detailTags).toContain("vehicle-side-mirror-glass");
+    expect(detailTags).toContain("vehicle-wheel-arch");
+    expect(detailTags).toContain("vehicle-headlight-lens");
+    expect(detailTags).toContain("vehicle-license-plate");
   });
 
   it("builds stock crates with labels, tape, handles, and corner guards", () => {
