@@ -40,7 +40,9 @@ npm start          # node server.js — serves dist/ + multiplayer WS
 ```
 
 Environment (see `.env.example`): `DATABASE_URL` enables Postgres persistence;
-without it the game falls back to local saves.
+without it the game falls back to local saves. Production admin access requires
+explicit `ADMIN_NAME` and `ADMIN_PIN`; development keeps local defaults when
+those variables are omitted.
 
 ## Deploy
 

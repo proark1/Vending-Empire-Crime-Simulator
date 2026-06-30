@@ -1,5 +1,6 @@
 export type QuestUnlockRequirement =
   | { kind: "starter_complete" }
+  | { districtId: string; kind: "district_unlocked" }
   | { kind: "supplier_unlocked"; supplierId: string }
   | { assetId: string; kind: "empire_asset"; level: number }
   | { kind: "always" };
@@ -9,7 +10,11 @@ export type QuestStepRequirement =
   | { kind: "supplier_loyalty"; supplierId: string; value: number }
   | { kind: "supplier_deal"; supplierId: string }
   | { assetId: string; kind: "empire_asset"; level: number }
+  | { kind: "inspection_resolved" }
+  | { kind: "grey_stock_sourced" }
+  | { kind: "custom_product" }
   | { kind: "rival_operation_resolved" }
+  | { kind: "old_town_machine" }
   | { kind: "major_raid_resolved" }
   | { kind: "ending_executed" }
   | { kind: "all_campaign_chains_complete" };
@@ -176,6 +181,141 @@ export const narrativeQuestDefinitions: NarrativeQuestDefinition[] = [
         description: "Resolve any visible rival operation.",
         requirement: { kind: "rival_operation_resolved" },
         rewardMoney: 90
+      }
+    ]
+  },
+  {
+    id: "downtown_audit_trail",
+    title: "Downtown Audit Trail",
+    type: "main",
+    giverId: "lawyer",
+    giverName: "Corporate Lawyer",
+    description: "Turn Downtown pressure into a paper trail strong enough to survive inspections and corporate undercuts.",
+    unlockRequirement: { districtId: "downtown_loop", kind: "district_unlocked" },
+    openingLine: "Downtown does not fear crime. Downtown fears messy documentation.",
+    choices: [
+      {
+        id: "downtown_clean_lobby",
+        label: "Clean lobby",
+        response: "Good. We make the machines look inevitable, not suspicious.",
+        effect: "public_reputation"
+      },
+      {
+        id: "downtown_shell_lobby",
+        label: "Shell lobby",
+        response: "Then the paperwork gets deeper. Deep enough to lose an inspector in.",
+        effect: "shell_cover"
+      }
+    ],
+    steps: [
+      {
+        id: "downtown_audit_strategy",
+        title: "Pick the audit posture",
+        description: "Choose whether Downtown is a clean expansion or a layered shell.",
+        requirement: { kind: "choice_made" },
+        rewardMoney: 40
+      },
+      {
+        id: "downtown_audit_resolution",
+        title: "Answer the inspector",
+        description: "Resolve any law inspection after the Downtown audit trail opens.",
+        requirement: { kind: "inspection_resolved" },
+        rewardMoney: 120
+      }
+    ]
+  },
+  {
+    id: "neon_private_label",
+    title: "Neon Private Label",
+    type: "side",
+    giverId: "grey_supplier",
+    giverName: "Night Broker",
+    description: "Build a fictional afterhours product identity around grey stock, custom packaging, and supplier risk.",
+    unlockRequirement: { districtId: "neon_quarter", kind: "district_unlocked" },
+    openingLine: "Neon buys stories first. Product second. Label the story right and the shelf sells itself.",
+    choices: [
+      {
+        id: "neon_public_label",
+        label: "Clean label",
+        response: "A polite lie. Customers love those.",
+        effect: "public_reputation"
+      },
+      {
+        id: "neon_street_label",
+        label: "Street label",
+        response: "Then make it look like a dare without making it evidence.",
+        effect: "street_reputation"
+      }
+    ],
+    steps: [
+      {
+        id: "neon_label_direction",
+        title: "Choose the label signal",
+        description: "Decide how loud the afterhours shelf should look.",
+        requirement: { kind: "choice_made" },
+        rewardMoney: 35
+      },
+      {
+        id: "neon_label_stock",
+        title: "Source the shelf rumor",
+        description: "Carry, store, or stock fictional grey goods.",
+        requirement: { kind: "grey_stock_sourced" },
+        rewardMoney: 90
+      },
+      {
+        id: "neon_label_package",
+        title: "Package the rumor",
+        description: "Create a custom product package in the lab.",
+        requirement: { kind: "custom_product" },
+        rewardMoney: 125
+      }
+    ]
+  },
+  {
+    id: "marlow_old_map",
+    title: "Marlow's Old Map",
+    type: "faction",
+    giverId: "rival_boss_marlow",
+    giverName: "Elias Marlow",
+    factionId: "rival_marlow",
+    description: "A former partner storyline about old routes, visible operations, and forcing a final citywide choice.",
+    unlockRequirement: { districtId: "old_town", kind: "district_unlocked" },
+    openingLine: "You are walking routes I drew before you knew how to count quarters.",
+    choices: [
+      {
+        id: "marlow_buyout",
+        label: "Offer buyout",
+        response: "You still think money is the wound. Interesting.",
+        effect: "public_reputation"
+      },
+      {
+        id: "marlow_burn_map",
+        label: "Burn the map",
+        response: "There it is. The part of you I helped build.",
+        effect: "street_reputation"
+      }
+    ],
+    steps: [
+      {
+        id: "marlow_terms",
+        title: "Settle the old terms",
+        description: "Choose whether Marlow is a buyout target or a street problem.",
+        requirement: { kind: "choice_made" },
+        rewardMoney: 50
+      },
+      {
+        id: "marlow_operation",
+        title: "Break the old route",
+        description: "Resolve any visible rival operation.",
+        requirement: { kind: "rival_operation_resolved" },
+        rewardMoney: 130
+      },
+      {
+        id: "marlow_flag",
+        title: "Replace the marker",
+        description: "Own a machine in Old Town.",
+        requirement: { kind: "old_town_machine" },
+        rewardMoney: 170
       }
     ]
   },

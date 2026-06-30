@@ -3450,8 +3450,24 @@ function questRequirementMet(state: GameState, quest: NarrativeQuestDefinition, 
     return empireAssetLevel(state, requirement.assetId as EmpireAssetId) >= requirement.level;
   }
 
+  if (requirement.kind === "inspection_resolved") {
+    return Object.values(state.law?.activeInspections ?? {}).some((inspection) => inspection.status === "resolved" && Boolean(inspection.resolvedHour));
+  }
+
+  if (requirement.kind === "grey_stock_sourced") {
+    return hasGreyStockSourced(state);
+  }
+
+  if (requirement.kind === "custom_product") {
+    return (state.progression.productDesignsCompleted ?? 0) > 0 || Object.keys(state.economy?.productCustomizations ?? {}).length > 0;
+  }
+
   if (requirement.kind === "rival_operation_resolved") {
     return Object.values(state.rivalOrganizations ?? {}).some((organization) => organization.operations.some((operation) => Boolean(operation.resolvedHour)));
+  }
+
+  if (requirement.kind === "old_town_machine") {
+    return installedMachines(state, state.playerFactionId).some((machine) => state.locations[machine.locationId]?.districtId === "old_town");
   }
 
   if (requirement.kind === "major_raid_resolved") {
@@ -3520,6 +3536,10 @@ function questAvailable(state: GameState, quest: NarrativeQuestDefinition): bool
 
   if (requirement.kind === "supplier_unlocked") {
     return Boolean(state.economy.supply.suppliers[requirement.supplierId]?.unlocked);
+  }
+
+  if (requirement.kind === "district_unlocked") {
+    return districtProgress(state, requirement.districtId).access === "unlocked";
   }
 
   if (requirement.kind === "empire_asset") {

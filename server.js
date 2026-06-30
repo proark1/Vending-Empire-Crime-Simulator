@@ -15,8 +15,9 @@ const distDir = path.join(__dirname, "dist");
 const generatedAudioDir = path.join(__dirname, "generated-audio");
 const port = Number(process.env.PORT ?? 3000);
 const databaseUrl = process.env.DATABASE_URL;
-const seedAdminName = process.env.ADMIN_NAME ?? "proark";
-const seedAdminPin = process.env.ADMIN_PIN ?? "4924";
+const isProductionRuntime = process.env.NODE_ENV === "production" || process.env.RAILWAY_ENVIRONMENT === "production" || process.env.RAILWAY_ENVIRONMENT_NAME === "production";
+const seedAdminName = process.env.ADMIN_NAME ?? (isProductionRuntime ? "" : "proark");
+const seedAdminPin = process.env.ADMIN_PIN ?? (isProductionRuntime ? "" : "4924");
 const sessionDays = Number(process.env.SESSION_DAYS ?? 14);
 const jsonLimitBytes = Number(process.env.JSON_LIMIT_BYTES ?? 8 * 1024 * 1024);
 const startedAt = new Date();
@@ -298,6 +299,9 @@ async function ensureSeededAdminUser(db) {
   const name = normalizeName(seedAdminName);
   const pin = String(seedAdminPin).trim();
   if (!name || !pin) {
+    if (isProductionRuntime) {
+      recordEvent("warning", "admin_seed_missing", "ADMIN_NAME and ADMIN_PIN must be configured to seed or rotate the admin account.");
+    }
     return;
   }
 
