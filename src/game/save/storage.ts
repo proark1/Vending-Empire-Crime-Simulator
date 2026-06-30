@@ -392,6 +392,10 @@ export function migrateGameState(parsed: GameState): GameState {
       starterMachinePlacedHour: parsed.progression?.starterMachinePlacedHour ?? baseline.progression.starterMachinePlacedHour,
       firstUndercutTriggered: parsed.progression?.firstUndercutTriggered ?? baseline.progression.firstUndercutTriggered,
       firstRetaliationTriggered: parsed.progression?.firstRetaliationTriggered ?? baseline.progression.firstRetaliationTriggered
+    },
+    pacing: {
+      ...baseline.pacing,
+      ...(parsed.pacing ?? {})
     }
   };
 

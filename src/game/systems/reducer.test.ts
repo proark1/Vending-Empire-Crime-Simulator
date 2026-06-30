@@ -541,9 +541,18 @@ describe("game reducer", () => {
     run({ type: "negotiate_supplier_deal", actorId: "player", supplierId: "backdoor_wholesale", dealKind: "bulk_discount" });
     expect(Object.values(state.economy.supply.activeDeals).some((deal) => deal.supplierId === "backdoor_wholesale")).toBe(true);
 
+    if (state.pacing.pendingStarterRetaliation) {
+      run({ type: "advance_time", actorId: "player", hours: Math.max(0.1, state.pacing.pendingStarterRetaliation.earliestHour - state.worldTimeHours + 0.1) });
+      const retaliation = activeMachineAlarms(state).find((alarm) => alarm.kind === "sabotage");
+      if (retaliation) {
+        run(visit(retaliation.locationId));
+        run({ type: "confront_alarm", actorId: "player", alarmId: retaliation.id });
+      }
+    }
+
     state.factions.player.heat = Math.max(state.factions.player.heat, 16);
-    state.law.nextInspectionHour = state.worldTimeHours + 0.05;
-    run({ type: "advance_time", actorId: "player", hours: 0.1 });
+    state.law.nextInspectionHour = Math.max(state.worldTimeHours + 0.05, state.pacing.nextDangerHour + 0.05);
+    run({ type: "advance_time", actorId: "player", hours: state.law.nextInspectionHour - state.worldTimeHours + 0.1 });
     const inspection = activeLawInspections(state)[0];
     expect(inspection).toBeDefined();
     run(visit(inspection!.locationId));
@@ -594,6 +603,13 @@ describe("game reducer", () => {
       kind: "customer_purchase",
       machineId: "machine_player_1"
     });
+  });
+
+  it("keeps ambient street life quiet until the first route is stocked", () => {
+    const result = reduceGameState(createInitialState(), { type: "advance_time", actorId: "player", hours: 1 });
+
+    expect(result.state.streetLife.recentActivities).toEqual([]);
+    expect(result.state.economy.customers.recentDecisions).toEqual([]);
   });
 
   it("fails expired service contracts and files a day report", () => {
@@ -709,6 +725,8 @@ describe("game reducer", () => {
 
   it("turns bad machine conditions into customer complaints and local pressure", () => {
     const state = withInstalledStarter();
+    state.machines.machine_player_1.damage = 50;
+    state.machines.machine_player_1.slots = [{ productId: "soda", quantity: 1, capacity: 24, price: 5, salesAccumulator: 0 }];
     state.streetLife.activitySequence = 2;
     state.streetLife.nextActivityHour = state.worldTimeHours + 0.01;
     const initialPressure = state.locations.laundromat.rivalPressure;
@@ -951,7 +969,7 @@ describe("game reducer", () => {
     const alarm = Object.values(alarmed.machineAlarms)[0]!;
     const damageBefore = alarmed.machines.machine_player_1.damage;
 
-    const missed = reduceGameState(alarmed, { type: "advance_time", actorId: "player", hours: 1 });
+    const missed = reduceGameState(alarmed, { type: "advance_time", actorId: "player", hours: 2 });
 
     expect(missed.state.machineAlarms[alarm.id]).toMatchObject({
       resolved: true,
@@ -994,16 +1012,71 @@ describe("game reducer", () => {
       actorId: "rival_redline",
       machineId: "machine_player_1"
     }).state;
-    const baseline = reduceGameState(baselineAlarmed, { type: "advance_time", actorId: "player", hours: 1 }).state;
+    const baseline = reduceGameState(baselineAlarmed, { type: "advance_time", actorId: "player", hours: 2 }).state;
     const upgradedAlarmed = reduceCommands(withInstalledStarter(), [
       visit("laundromat"),
       { type: "install_upgrade", actorId: "player", machineId: "machine_player_1", upgradeId: "reinforced_glass" },
       { type: "install_upgrade", actorId: "player", machineId: "machine_player_1", upgradeId: "smart_lock" },
       { type: "sabotage_machine", actorId: "rival_redline", machineId: "machine_player_1" }
     ]).state;
-    const upgraded = reduceGameState(upgradedAlarmed, { type: "advance_time", actorId: "player", hours: 1 }).state;
+    const upgraded = reduceGameState(upgradedAlarmed, { type: "advance_time", actorId: "player", hours: 2 }).state;
 
     expect(upgraded.machines.machine_player_1.damage).toBeLessThan(baseline.machines.machine_player_1.damage);
+  });
+
+  it("gives the first machine alarm a longer response window", () => {
+    const alarmed = reduceGameState(withInstalledStarter(), {
+      type: "sabotage_machine",
+      actorId: "rival_redline",
+      machineId: "machine_player_1"
+    }).state;
+    const alarm = Object.values(alarmed.machineAlarms)[0]!;
+
+    expect(alarm.expiresHour - alarm.startedHour).toBeGreaterThanOrEqual(1.5);
+  });
+
+  it("defers ambient inspections while a post-danger quiet window is active", () => {
+    const initial = withInstalledStarter();
+    initial.player.currentLocationId = "laundromat";
+    initial.machines.machine_player_1.placementMethod = "illegal";
+    initial.machines.machine_player_1.slots = [{ productId: "mystery_capsules", quantity: 10, capacity: 24, price: 16, salesAccumulator: 0 }];
+    const alarmed = reduceGameState(initial, {
+      type: "sabotage_machine",
+      actorId: "rival_redline",
+      machineId: "machine_player_1"
+    }).state;
+    const alarm = Object.values(alarmed.machineAlarms)[0]!;
+    const resolved = reduceGameState(alarmed, { type: "confront_alarm", actorId: "player", alarmId: alarm.id }).state;
+    resolved.factions.player.heat = 24;
+    resolved.law.nextInspectionHour = resolved.worldTimeHours;
+
+    const advanced = reduceGameState(resolved, { type: "advance_time", actorId: "player", hours: 0.2 }).state;
+
+    expect(activeLawInspections(advanced)).toEqual([]);
+    expect(advanced.pacing.suppressedDangerToday).toBeGreaterThan(0);
+    expect(advanced.law.nextInspectionHour).toBeGreaterThan(advanced.worldTimeHours);
+  });
+
+  it("delays Redline retaliation until after the undercut quiet window", () => {
+    const initial = withInstalledStarter();
+    initial.player.currentLocationId = "laundromat";
+    initial.machines.machine_player_1.slots = [{ productId: "soda", quantity: 8, capacity: 24, price: 5, salesAccumulator: 0 }];
+    const undercut = reduceGameState(initial, {
+      type: "rival_action",
+      actorId: "rival_redline",
+      action: "undercut",
+      targetMachineId: "machine_player_1"
+    }).state;
+    const alarm = activeMachineAlarms(undercut).find((candidate) => candidate.kind === "undercut")!;
+    const confronted = reduceGameState(undercut, { type: "confront_alarm", actorId: "player", alarmId: alarm.id }).state;
+
+    expect(activeMachineAlarms(confronted)).toEqual([]);
+    expect(confronted.pacing.pendingStarterRetaliation).toBeDefined();
+
+    const afterQuiet = reduceGameState(confronted, { type: "advance_time", actorId: "player", hours: 4.2 }).state;
+
+    expect(activeMachineAlarms(afterQuiet).some((candidate) => candidate.kind === "sabotage")).toBe(true);
+    expect(afterQuiet.progression.firstRetaliationTriggered).toBe(true);
   });
 
   it("upgrades base facilities and increases storage capacity", () => {

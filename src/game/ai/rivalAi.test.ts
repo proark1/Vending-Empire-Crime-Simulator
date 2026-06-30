@@ -46,6 +46,24 @@ describe("rival AI", () => {
     expect(commands.some((command) => command.type === "rival_action")).toBe(true);
   });
 
+  it("does not bypass the authored first Redline undercut delay", () => {
+    const state = createInitialState();
+    const machine = state.machines.machine_player_1;
+    machine.locationId = "laundromat";
+    machine.placementStatus = "installed";
+    machine.placementMethod = "legal_contract";
+    machine.revenueStored = 80;
+    machine.damage = 0;
+    machine.slots = [{ productId: "soda", quantity: 8, capacity: 24, price: 5, salesAccumulator: 0 }];
+    state.progression.starterMachinePlaced = true;
+    state.progression.starterMachinePlacedHour = 8;
+    state.worldTimeHours = 12;
+
+    const commands = planNpcCommands(state);
+
+    expect(commands.some((command) => command.type === "rival_action" && command.targetMachineId === "machine_player_1")).toBe(false);
+  });
+
   it("expands into opened expansion districts once the player signals expansion", () => {
     const state = createInitialState();
     delete state.machines.machine_player_1;

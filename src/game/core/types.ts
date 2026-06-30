@@ -352,6 +352,21 @@ export interface ProgressionState {
   firstRetaliationTriggered: boolean;
 }
 
+export interface PacingState {
+  nextDangerHour: number;
+  firstDangerHour?: number;
+  lastDangerHour?: number;
+  pendingStarterRetaliation?: {
+    earliestHour: number;
+    reason: string;
+  };
+  dangerBeatsToday: number;
+  suppressedDangerToday: number;
+  ambientEventsToday: number;
+  quietWindowsToday: number;
+  toastEventsToday: number;
+}
+
 export interface RunModifierState {
   id: RunModifierId;
   startedHour: number;
@@ -882,6 +897,7 @@ export interface GameState {
   routePlan: RoutePlanState;
   dayReports: DayReport[];
   progression: ProgressionState;
+  pacing: PacingState;
   replay: ReplayState;
 }
 

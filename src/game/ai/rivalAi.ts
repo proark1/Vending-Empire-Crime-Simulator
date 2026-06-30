@@ -1,7 +1,10 @@
 import type { GameCommand, GameState } from "../core/types";
+import { activeRunModifier } from "../content/replayability";
 import { effectiveMachineSecurity, getMachineUpgradeEffects } from "../core/machineStats";
-import { districtProgress, installedMachines, installableLocation, isDistrictUnlockedForPlacement, machineAtLocation, placementCostForLocation } from "../core/selectors";
+import { activeConflictEvents, activeLawInspections, activeMachineAlarms, districtProgress, installedMachines, installableLocation, isDistrictUnlockedForPlacement, machineAtLocation, placementCostForLocation } from "../core/selectors";
 import { mostProfitablePlayerMachine } from "../systems/reducer";
+
+const FIRST_UNDERCUT_MIN_ROUTE_HOURS = 14;
 
 function hasExpansionSignal(state: GameState): boolean {
   return Object.keys(state.districts).some((districtId) => districtId !== "starter_suburb" && districtProgress(state, districtId).access !== "locked");
@@ -27,6 +30,12 @@ function expansionScore(state: GameState, locationDistrictId: string): number {
 export function planNpcCommands(state: GameState): GameCommand[] {
   const commands: GameCommand[] = [];
   const expansionActive = hasExpansionSignal(state);
+  const quietWindowActive = Boolean(state.pacing && state.worldTimeHours < state.pacing.nextDangerHour);
+  const activeDanger = activeMachineAlarms(state).length > 0 || activeLawInspections(state).length > 0 || activeConflictEvents(state).length > 0;
+
+  if (quietWindowActive || activeDanger) {
+    return commands;
+  }
 
   for (const controller of Object.values(state.npcControllers)) {
     const faction = state.factions[controller.factionId];
@@ -50,6 +59,12 @@ export function planNpcCommands(state: GameState): GameCommand[] {
     const sabotageRisk = targetSecurity + (targetEffects?.sabotageResistance ?? 0);
     const targetLocation = target ? state.locations[target.locationId] : undefined;
     const targetIsExpansion = Boolean(targetLocation && targetLocation.districtId !== "starter_suburb");
+    const firstUndercutDelay = Math.max(6, FIRST_UNDERCUT_MIN_ROUTE_HOURS + (activeRunModifier(state).effects.redlineUndercutHoursDelta ?? 0));
+    const starterLessonPending =
+      target?.id === "machine_player_1" &&
+      !state.progression.firstUndercutTriggered &&
+      typeof state.progression.starterMachinePlacedHour === "number" &&
+      state.worldTimeHours - state.progression.starterMachinePlacedHour < firstUndercutDelay;
     const sabotageCashThreshold = targetIsExpansion ? 18 : 28;
     const sabotageDamageLimit = targetIsExpansion ? 88 : 82;
 
@@ -58,12 +73,12 @@ export function planNpcCommands(state: GameState): GameCommand[] {
     const sabotageCooldown = controller.sabotageCooldownHours ?? 12;
     const sabotageReady = state.worldTimeHours - (controller.lastSabotagedHour ?? Number.NEGATIVE_INFINITY) >= sabotageCooldown;
 
-    if (sabotageReady && target && target.revenueStored >= sabotageCashThreshold && target.damage < sabotageDamageLimit && sabotageRisk < 0.48) {
+    if (!starterLessonPending && sabotageReady && target && target.revenueStored >= sabotageCashThreshold && target.damage < sabotageDamageLimit && sabotageRisk < 0.48) {
       commands.push({ type: "rival_action", actorId: faction.id, action: "sabotage", targetMachineId: target.id });
       continue;
     }
 
-    if (target && playerMachineCount >= rivalMachineCount) {
+    if (!starterLessonPending && target && playerMachineCount >= rivalMachineCount) {
       commands.push({ type: "rival_action", actorId: faction.id, action: "undercut", targetMachineId: target.id });
       continue;
     }

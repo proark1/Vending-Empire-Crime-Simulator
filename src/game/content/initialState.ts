@@ -557,6 +557,14 @@ export function createInitialState(runSeed = 1): GameState {
       starterMachinePlaced: false,
       firstUndercutTriggered: false,
       firstRetaliationTriggered: false
+    },
+    pacing: {
+      nextDangerHour: 8,
+      dangerBeatsToday: 0,
+      suppressedDangerToday: 0,
+      ambientEventsToday: 0,
+      quietWindowsToday: 0,
+      toastEventsToday: 0
     }
   };
 }

@@ -107,7 +107,10 @@ import { machineHasUpgrade, sabotageDamage } from "../core/machineStats";
 import { runMachineSales } from "./economy";
 
 const MACHINE_ALARM_RESPONSE_HOURS = 0.85;
+const FIRST_MACHINE_ALARM_RESPONSE_HOURS = 1.55;
 const INSPECTION_RESPONSE_HOURS = 1.1;
+const FIRST_INSPECTION_RESPONSE_HOURS = 1.9;
+const POST_DANGER_QUIET_HOURS = 4;
 const FIRST_UNDERCUT_MIN_ROUTE_HOURS = 14;
 const STARTER_MACHINE_ID = "machine_player_1";
 const STARTER_LOCATION_ID = "laundromat";
@@ -116,7 +119,25 @@ function cloneState(state: GameState): GameState {
   return structuredClone(state) as GameState;
 }
 
+function ensurePacingState(state: GameState): void {
+  state.pacing ??= {
+    nextDangerHour: state.worldTimeHours,
+    dangerBeatsToday: 0,
+    suppressedDangerToday: 0,
+    ambientEventsToday: 0,
+    quietWindowsToday: 0,
+    toastEventsToday: 0
+  };
+  state.pacing.nextDangerHour ??= state.worldTimeHours;
+  state.pacing.dangerBeatsToday ??= 0;
+  state.pacing.suppressedDangerToday ??= 0;
+  state.pacing.ambientEventsToday ??= 0;
+  state.pacing.quietWindowsToday ??= 0;
+  state.pacing.toastEventsToday ??= 0;
+}
+
 function log(state: GameState, events: GameEvent[], message: string, tone: GameEventTone = "neutral"): void {
+  ensurePacingState(state);
   const event: GameEvent = {
     id: `event_${state.eventSequence++}`,
     hour: state.worldTimeHours,
@@ -125,6 +146,7 @@ function log(state: GameState, events: GameEvent[], message: string, tone: GameE
   };
   events.push(event);
   state.eventLog = [event, ...state.eventLog].slice(0, 12);
+  state.pacing.toastEventsToday += 1;
 }
 
 function ensureStreetLifeState(state: GameState): void {
@@ -173,6 +195,60 @@ function ensureConflictState(state: GameState): void {
       event.encounter ??= createConflictEncounter(event.kind, event.intensity);
     }
   }
+}
+
+function playerRouteHasBeenStocked(state: GameState): boolean {
+  return installedMachines(state, state.playerFactionId).some((machine) => machineStockUnits(machine) > 0) || state.progression.stockSoldToday > 0 || state.progression.contractsCompletedTotal > 0 || state.mission.completed;
+}
+
+function activeDangerBeatCount(state: GameState): number {
+  return (
+    Object.values(state.machineAlarms ?? {}).filter((alarm) => !alarm.resolved).length +
+    activeLawInspections(state).length +
+    activeConflictEvents(state).length +
+    activeMajorRaids(state).length
+  );
+}
+
+function canStartAmbientDangerBeat(state: GameState): boolean {
+  ensurePacingState(state);
+  if (!playerRouteHasBeenStocked(state) || activeDangerBeatCount(state) > 0 || state.worldTimeHours < state.pacing.nextDangerHour) {
+    state.pacing.suppressedDangerToday += 1;
+    return false;
+  }
+
+  return true;
+}
+
+function recordDangerBeatStarted(state: GameState): void {
+  ensurePacingState(state);
+  state.pacing.firstDangerHour ??= state.worldTimeHours;
+  state.pacing.lastDangerHour = state.worldTimeHours;
+  state.pacing.dangerBeatsToday += 1;
+}
+
+function startPostDangerQuiet(state: GameState): void {
+  ensurePacingState(state);
+  state.pacing.lastDangerHour = state.worldTimeHours;
+  state.pacing.nextDangerHour = Math.max(state.pacing.nextDangerHour, state.worldTimeHours + POST_DANGER_QUIET_HOURS);
+  state.pacing.quietWindowsToday += 1;
+}
+
+function machineAlarmResponseHours(state: GameState): number {
+  return Object.keys(state.machineAlarms ?? {}).length === 0 ? FIRST_MACHINE_ALARM_RESPONSE_HOURS : MACHINE_ALARM_RESPONSE_HOURS;
+}
+
+function inspectionResponseHours(state: GameState): number {
+  return state.law.inspectionSequence <= 1 ? FIRST_INSPECTION_RESPONSE_HOURS : INSPECTION_RESPONSE_HOURS;
+}
+
+function conflictResponseHours(state: GameState, kind: ConflictEvent["kind"]): number {
+  const firstConflict = state.conflict.eventSequence <= 1;
+  if (firstConflict) {
+    return kind === "base_raid" ? 1.6 : kind === "route_ambush" ? 1.15 : 1;
+  }
+
+  return kind === "route_ambush" ? 0.65 : kind === "street_chase" ? 0.55 : 1.2;
 }
 
 function createConflictEncounter(kind: ConflictEvent["kind"], intensity: number): ConflictEncounterState {
@@ -672,25 +748,28 @@ function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
 
-function logStreetActivity(state: GameState, events: GameEvent[], activity: Omit<StreetActivity, "hour" | "id">): void {
+function logStreetActivity(state: GameState, _events: GameEvent[], activity: Omit<StreetActivity, "hour" | "id">): void {
   ensureStreetLifeState(state);
+  ensurePacingState(state);
   const streetActivity: StreetActivity = {
     ...activity,
     id: `street_${state.streetLife.activitySequence++}`,
     hour: state.worldTimeHours
   };
   state.streetLife.recentActivities = [streetActivity, ...state.streetLife.recentActivities].slice(0, 10);
-  log(state, events, activity.message, activity.tone);
+  state.pacing.ambientEventsToday += 1;
 }
 
 function recordStreetActivity(state: GameState, activity: Omit<StreetActivity, "hour" | "id">): void {
   ensureStreetLifeState(state);
+  ensurePacingState(state);
   const streetActivity: StreetActivity = {
     ...activity,
     id: `street_${state.streetLife.activitySequence++}`,
     hour: state.worldTimeHours
   };
   state.streetLife.recentActivities = [streetActivity, ...state.streetLife.recentActivities].slice(0, 10);
+  state.pacing.ambientEventsToday += 1;
 }
 
 function scheduleNextStreetActivity(state: GameState): void {
@@ -1044,7 +1123,7 @@ function createMachineAlarm(state: GameState, events: GameEvent[], machine: Vend
   const existing = activeAlarmForMachine(state, machine.id);
   const location = state.locations[machine.locationId];
   const intruder = state.factions[intruderFactionId];
-  const expiresHour = state.worldTimeHours + MACHINE_ALARM_RESPONSE_HOURS;
+  const expiresHour = state.worldTimeHours + machineAlarmResponseHours(state);
 
   if (existing) {
     existing.expiresHour = Math.max(existing.expiresHour, expiresHour);
@@ -1065,6 +1144,7 @@ function createMachineAlarm(state: GameState, events: GameEvent[], machine: Vend
     resolved: false
   };
   state.machineAlarms[alarm.id] = alarm;
+  recordDangerBeatStarted(state);
   log(
     state,
     events,
@@ -1105,6 +1185,7 @@ function expireMachineAlarm(state: GameState, events: GameEvent[], alarmId: stri
   alarm.resolved = true;
   alarm.resolvedHour = state.worldTimeHours;
   alarm.outcome = "missed";
+  startPostDangerQuiet(state);
   log(state, events, `Alarm missed: ${intruder?.name ?? "The intruder"} finished the job on ${machine.name}.`, "danger");
   if (alarm.kind === "undercut" && machine.id === STARTER_MACHINE_ID) {
     triggerStarterRetaliation(state, events, "Redline saw the laundromat route go unanswered");
@@ -1171,6 +1252,7 @@ function finishInspection(
   inspection.status = status;
   inspection.resolvedHour = state.worldTimeHours;
   state.law.lastInspectionHour = state.worldTimeHours;
+  startPostDangerQuiet(state);
   log(state, events, message, tone);
 }
 
@@ -1246,7 +1328,7 @@ function createConflictEvent(
     locationId,
     threatFactionId,
     startedHour: state.worldTimeHours,
-    expiresHour: state.worldTimeHours + (kind === "route_ambush" ? 0.65 : kind === "street_chase" ? 0.55 : 1.2),
+    expiresHour: state.worldTimeHours + conflictResponseHours(state, kind),
     intensity,
     status: "active" as const,
     message,
@@ -1254,6 +1336,7 @@ function createConflictEvent(
     targetMachineId
   };
   state.conflict.activeEvents[event.id] = event;
+  recordDangerBeatStarted(state);
   log(state, events, message, "danger");
 }
 
@@ -1332,6 +1415,7 @@ function missConflictEvent(state: GameState, events: GameEvent[], eventId: strin
   event.status = "missed";
   event.resolvedHour = state.worldTimeHours;
   state.conflict.missedToday += 1;
+  startPostDangerQuiet(state);
   player.heat += Math.max(1, event.intensity * 0.28);
   player.publicReputation = Math.max(0, player.publicReputation - 0.4);
   if (threat) {
@@ -1384,6 +1468,11 @@ function scheduleNextConflict(state: GameState): void {
 function maybeSpawnAmbientConflict(state: GameState, events: GameEvent[]): void {
   ensureConflictState(state);
   if (state.conflict.nextConflictHour > state.worldTimeHours || activeConflictEvents(state).length > 0) {
+    return;
+  }
+
+  if (!canStartAmbientDangerBeat(state)) {
+    scheduleNextConflict(state);
     return;
   }
 
@@ -1474,6 +1563,10 @@ function maybeTriggerRouteAmbush(state: GameState, events: GameEvent[], vehicleI
     return;
   }
 
+  if (!canStartAmbientDangerBeat(state)) {
+    return;
+  }
+
   createConflictEvent(
     state,
     events,
@@ -1500,6 +1593,7 @@ function finishPlayerConflict(
   conflict.resolution = resolution;
   conflict.resolvedHour = state.worldTimeHours;
   state.conflict.resolvedToday += 1;
+  startPostDangerQuiet(state);
 
   if (resolution === "melee") {
     player.streetReputation += 1.3;
@@ -1622,6 +1716,11 @@ function applyRivalOperationConsequence(state: GameState, events: GameEvent[], o
   }
 
   if (operation.kind === "sabotage_cell") {
+    if (!state.progression.firstUndercutTriggered || !canStartAmbientDangerBeat(state)) {
+      operation.progress = Math.min(operation.progress, 88);
+      return;
+    }
+
     const districtMachine = installedMachines(state, state.playerFactionId)
       .filter((machine) => state.locations[machine.locationId]?.districtId === operation.districtId)
       .sort((a, b) => (state.locations[b.locationId]?.rivalPressure ?? 0) - (state.locations[a.locationId]?.rivalPressure ?? 0))[0];
@@ -1690,7 +1789,7 @@ function advanceRivalOperations(state: GameState, events: GameEvent[], hours: nu
   }
 }
 
-function shiftSupplierMarket(state: GameState, events: GameEvent[]): void {
+function shiftSupplierMarket(state: GameState, _events: GameEvent[]): void {
   ensureEconomyState(state);
   if (state.economy.supply.nextVolatilityHour > state.worldTimeHours) {
     return;
@@ -1708,7 +1807,6 @@ function shiftSupplierMarket(state: GameState, events: GameEvent[]): void {
     state.economy.supply.priceMultipliers[productId] = Math.max(0.72, Math.min(1.55, 1 + wave * state.economy.supply.volatility * 0.28 + moodPressure));
   }
   state.economy.supply.nextVolatilityHour = state.worldTimeHours + 4 + (phase % 3);
-  log(state, events, `Supplier market shifted: ${state.economy.supply.supplierMood} pricing is active.`, state.economy.supply.supplierMood === "discount" ? "good" : "warning");
 }
 
 const districtEventProducts: ProductId[] = ["soda", "chips", "energy", "water", "coffee_can", "umbrella", "phone_charger", "mystery_capsules", "mood_fizz"];
@@ -1786,7 +1884,7 @@ function districtEventTemplate(kind: DistrictEventKind, state: GameState, distri
   };
 }
 
-function updateDistrictEvents(state: GameState, events: GameEvent[]): void {
+function updateDistrictEvents(state: GameState, _events: GameEvent[]): void {
   ensureEconomyState(state);
   for (const [eventId, event] of Object.entries(state.economy.districtEvents.activeEvents)) {
     if (event.expiresHour <= state.worldTimeHours) {
@@ -1825,11 +1923,9 @@ function updateDistrictEvents(state: GameState, events: GameEvent[]): void {
   if (districtEvent.kind === "shortage" && districtEvent.productId) {
     state.economy.supply.priceMultipliers[districtEvent.productId] = Math.max(1.12, state.economy.supply.priceMultipliers[districtEvent.productId] ?? 1.18);
   }
-
-  log(state, events, `${districtEvent.title}: ${districtEvent.description}`, districtEvent.tone);
 }
 
-function updateTrafficAndCheckpoints(state: GameState, events: GameEvent[]): void {
+function updateTrafficAndCheckpoints(state: GameState, _events: GameEvent[]): void {
   ensureEconomyState(state);
   if (state.economy.traffic.nextTrafficHour > state.worldTimeHours) {
     return;
@@ -1867,7 +1963,6 @@ function updateTrafficAndCheckpoints(state: GameState, events: GameEvent[]): voi
       severity: Math.max(1, Math.ceil(checkpointCandidate.policePresence * 5)),
       expiresHour: state.worldTimeHours + 2.5
     };
-    log(state, events, `Police checkpoint reported near ${checkpointCandidate.name}.`, "warning");
   }
 
   state.economy.traffic.nextTrafficHour = state.worldTimeHours + 2;
@@ -2090,7 +2185,7 @@ function createInspection(state: GameState, events: GameEvent[], machine: Vendin
     machineId: machine.id,
     locationId: machine.locationId,
     startedHour: state.worldTimeHours,
-    deadlineHour: state.worldTimeHours + INSPECTION_RESPONSE_HOURS,
+    deadlineHour: state.worldTimeHours + inspectionResponseHours(state),
     severity,
     status: "active",
     fine: Math.round(14 + severity * 11 + location.policePresence * 18),
@@ -2100,6 +2195,7 @@ function createInspection(state: GameState, events: GameEvent[], machine: Vendin
   state.law.activeInspections[inspection.id] = inspection;
   state.law.inspectionsToday += 1;
   machine.lastInspectedHour = state.worldTimeHours;
+  recordDangerBeatStarted(state);
   log(state, events, `Inspection notice at ${machine.name}: ${inspection.reason}. Answer before fines and confiscation.`, "warning");
 }
 
@@ -2120,6 +2216,10 @@ function applyLawInspections(state: GameState, events: GameEvent[]): void {
 
   const target = chooseInspectionTarget(state);
   if (target) {
+    if (!canStartAmbientDangerBeat(state)) {
+      state.law.nextInspectionHour = Math.max(state.law.nextInspectionHour, state.worldTimeHours + 0.65, state.pacing.nextDangerHour);
+      return;
+    }
     createInspection(state, events, target);
   }
 
@@ -2171,7 +2271,7 @@ function starterMachine(state: GameState): VendingMachine | undefined {
   return state.machines[STARTER_MACHINE_ID];
 }
 
-function triggerStarterRetaliation(state: GameState, events: GameEvent[], reason: string): void {
+function startStarterRetaliationNow(state: GameState, events: GameEvent[], reason: string): void {
   if (state.progression.firstRetaliationTriggered) {
     return;
   }
@@ -2184,6 +2284,42 @@ function triggerStarterRetaliation(state: GameState, events: GameEvent[], reason
   state.progression.firstRetaliationTriggered = true;
   log(state, events, `Redline retaliation triggered: ${reason}.`, "danger");
   createMachineAlarm(state, events, machine, "rival_redline", "sabotage", 22);
+}
+
+function triggerStarterRetaliation(state: GameState, events: GameEvent[], reason: string): void {
+  ensurePacingState(state);
+  if (state.progression.firstRetaliationTriggered) {
+    return;
+  }
+
+  if (!canStartAmbientDangerBeat(state)) {
+    if (!state.pacing.pendingStarterRetaliation) {
+      state.pacing.pendingStarterRetaliation = {
+        earliestHour: Math.max(state.worldTimeHours + POST_DANGER_QUIET_HOURS, state.pacing.nextDangerHour),
+        reason
+      };
+      log(state, events, `Redline is lining up retaliation: ${reason}. Use the quiet to repair, restock, or add security.`, "warning");
+    }
+    return;
+  }
+
+  startStarterRetaliationNow(state, events, reason);
+}
+
+function tryStartPendingStarterRetaliation(state: GameState, events: GameEvent[]): void {
+  ensurePacingState(state);
+  const pending = state.pacing.pendingStarterRetaliation;
+  if (!pending || state.progression.firstRetaliationTriggered || pending.earliestHour > state.worldTimeHours) {
+    return;
+  }
+
+  if (!canStartAmbientDangerBeat(state)) {
+    pending.earliestHour = Math.max(state.worldTimeHours + 0.65, state.pacing.nextDangerHour);
+    return;
+  }
+
+  delete state.pacing.pendingStarterRetaliation;
+  startStarterRetaliationNow(state, events, pending.reason);
 }
 
 function maybeTriggerStarterUndercut(state: GameState, events: GameEvent[], playerEarned = 0): void {
@@ -2946,6 +3082,7 @@ function runGuard(state: GameState, events: GameEvent[], employee: Employee): bo
     alarm.resolved = true;
     alarm.resolvedHour = state.worldTimeHours;
     alarm.outcome = "confronted";
+    startPostDangerQuiet(state);
     if (machine) {
       machine.damage = Math.min(100, machine.damage + sabotageDamage(3, machine));
       machine.lastServicedHour = state.worldTimeHours;
@@ -3312,6 +3449,12 @@ function resetDailyProgression(state: GameState, day: number): void {
   state.economy.finance.expensesToday = 0;
   state.economy.finance.frontBusinessRevenueToday = 0;
   state.economy.spoilage.spoiledToday = 0;
+  ensurePacingState(state);
+  state.pacing.dangerBeatsToday = 0;
+  state.pacing.suppressedDangerToday = 0;
+  state.pacing.ambientEventsToday = 0;
+  state.pacing.quietWindowsToday = 0;
+  state.pacing.toastEventsToday = 0;
 }
 
 function processDayBoundaries(state: GameState, events: GameEvent[], previousHour: number): void {
@@ -3657,6 +3800,7 @@ function createMajorRaid(state: GameState, events: GameEvent[]): void {
     message: `Major pressure raid forming${target ? ` around ${empireAssets[target.id].name}` : ""}.`
   };
   state.empire.activeRaids[raid.id] = raid;
+  recordDangerBeatStarted(state);
   log(state, events, `MAJOR RAID: ${raid.message}`, "danger");
 }
 
@@ -3670,6 +3814,7 @@ function resolveExpiredMajorRaids(state: GameState, events: GameEvent[]): void {
 
     raid.status = "missed";
     raid.resolvedHour = state.worldTimeHours;
+    startPostDangerQuiet(state);
     const cashLoss = Math.min(player.money, Math.round(45 + raid.severity * 18));
     player.money -= cashLoss;
     recordFinance(state, "fines", -cashLoss, "Missed major raid penalties");
@@ -3693,7 +3838,9 @@ function maybeSpawnMajorRaid(state: GameState, events: GameEvent[]): void {
   const empireScale = Object.values(state.empire.assets).reduce((sum, asset) => sum + asset.level, 0);
   const pressureScore = state.empire.politicalPressure + state.factions[state.playerFactionId].heat + empireScale * 2.5;
   if (pressureScore >= 24 && empireScale > 0) {
-    createMajorRaid(state, events);
+    if (canStartAmbientDangerBeat(state)) {
+      createMajorRaid(state, events);
+    }
   }
   state.empire.nextRaidHour = state.worldTimeHours + Math.max(16, 34 - Math.min(14, pressureScore * 0.25));
 }
@@ -3707,6 +3854,7 @@ function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number):
   ensureEconomyState(state);
   ensureEmpireState(state);
   ensureReplayState(state);
+  ensurePacingState(state);
   state.worldTimeHours += hours;
   updateDistrictEvents(state, events);
   shiftSupplierMarket(state, events);
@@ -3759,11 +3907,8 @@ function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number):
   const player = state.factions[state.playerFactionId];
   player.heat = Math.max(0, player.heat - hours * 0.12);
 
-  if (playerEarned >= 8) {
-    log(state, events, `Machines generated $${Math.round(playerEarned)} in stored revenue.`, "good");
-  }
-
   maybeTriggerStarterUndercut(state, events, playerEarned);
+  tryStartPendingStarterRetaliation(state, events);
   applyLawInspections(state, events);
   advanceRivalOperations(state, events, hours);
   maybeSpawnAmbientConflict(state, events);
@@ -3776,6 +3921,14 @@ function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number):
   }
   resolveExpiredMachineAlarms(state, events);
   resolveExpiredConflictEvents(state, events);
+
+  if (!playerRouteHasBeenStocked(state)) {
+    state.streetLife.nextActivityHour = Math.max(state.streetLife.nextActivityHour, state.worldTimeHours + 0.45);
+    state.economy.customers.nextDecisionHour = Math.max(state.economy.customers.nextDecisionHour, state.worldTimeHours + 0.6);
+    failExpiredContracts(state, events);
+    processDayBoundaries(state, events, previousHour);
+    return;
+  }
 
   let streetActivities = 0;
   while (state.streetLife.nextActivityHour <= state.worldTimeHours && streetActivities < 8) {
@@ -3804,6 +3957,7 @@ function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number):
 export function reduceGameState(currentState: GameState, command: GameCommand): CommandResult {
   const state = cloneState(currentState);
   const events: GameEvent[] = [];
+  ensurePacingState(state);
   ensureLawState(state);
   ensureStreetLifeState(state);
   ensureConflictState(state);
@@ -4527,6 +4681,7 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       raid.status = "resolved";
       raid.resolution = command.resolution;
       raid.resolvedHour = state.worldTimeHours;
+      startPostDangerQuiet(state);
       if (command.resolution === "legal_team") {
         actor.publicReputation += 0.8;
         state.empire.politicalPressure = Math.max(0, state.empire.politicalPressure - raid.severity * 1.8);
@@ -5222,6 +5377,7 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       alarm.resolved = true;
       alarm.resolvedHour = state.worldTimeHours;
       alarm.outcome = "confronted";
+      startPostDangerQuiet(state);
       const damage = Math.round(sabotageDamage(4, machine) * machineSabotageDamageMultiplier(state, machine));
       machine.damage = Math.min(100, machine.damage + damage);
       machine.lastServicedHour = state.worldTimeHours;

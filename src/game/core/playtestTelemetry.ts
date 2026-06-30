@@ -1,6 +1,7 @@
 import type { GameState, VendingMachine } from "./types";
 import {
   activeLawInspections,
+  activeConflictEvents,
   activeMachineAlarms,
   districtProgress,
   endgamePathScores,
@@ -194,6 +195,31 @@ function playtestFlags(state: GameState, milestones: PlaytestMilestoneReport[]):
       code: "active_alarm",
       severity: "info",
       message: "A rival alarm is active at export time."
+    });
+  }
+
+  const activeDangerCount = activeLawInspections(state).length + activeMachineAlarms(state).length + activeConflictEvents(state).length;
+  if (activeDangerCount > 1) {
+    flags.push({
+      code: "stacked_danger",
+      severity: "error",
+      message: `${activeDangerCount} urgent danger beats are active at the same time.`
+    });
+  }
+
+  if ((state.pacing?.toastEventsToday ?? 0) >= 18 && activeMinutesAt(state.worldTimeHours) <= 25) {
+    flags.push({
+      code: "opening_notification_density",
+      severity: "warning",
+      message: "The opening has produced a high number of global notifications."
+    });
+  }
+
+  if ((state.pacing?.suppressedDangerToday ?? 0) > 0) {
+    flags.push({
+      code: "danger_pacing_deferred",
+      severity: "info",
+      message: `${state.pacing.suppressedDangerToday} ambient danger beat${state.pacing.suppressedDangerToday === 1 ? "" : "s"} deferred by pacing rules.`
     });
   }
 

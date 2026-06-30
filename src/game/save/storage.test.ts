@@ -39,4 +39,19 @@ describe("save migration", () => {
     expect(migrated.replay.machineHistory).toEqual({});
     expect(migrated.replay.strategyUnlocks).toEqual([]);
   });
+
+  it("adds pacing state to legacy saves", () => {
+    const legacy = createInitialState() as Partial<ReturnType<typeof createInitialState>>;
+    delete legacy.pacing;
+
+    const migrated = migrateGameState(legacy as ReturnType<typeof createInitialState>);
+
+    expect(migrated.pacing).toMatchObject({
+      dangerBeatsToday: 0,
+      suppressedDangerToday: 0,
+      ambientEventsToday: 0,
+      quietWindowsToday: 0,
+      toastEventsToday: 0
+    });
+  });
 });
