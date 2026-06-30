@@ -23,6 +23,8 @@ export type PrimaryInteractionTone = "neutral" | "good" | "warning" | "danger";
 interface PrimaryInteractionWork {
   durationMs?: number;
   holdVerb?: string;
+  payoff?: string;
+  risk?: string;
   tone?: PrimaryInteractionTone;
 }
 
@@ -168,6 +170,8 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
       label: conflictAtTarget.kind === "street_chase" ? "Push escape" : "Strike back",
       durationMs: conflictAtTarget.kind === "street_chase" ? 900 : 850,
       holdVerb: conflictAtTarget.kind === "street_chase" ? "Pushing escape" : "Fighting through",
+      payoff: conflictAtTarget.kind === "street_chase" ? "Build escape progress" : "Protect the route",
+      risk: "Stamina and health can swing fast",
       tone: "danger",
       command: {
         type: "player_conflict_action",
@@ -180,7 +184,15 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
 
   if (target.type === "base") {
     if (state.player.carriedCrate) {
-      return { kind: "command", label: "Store crate", durationMs: 950, holdVerb: "Storing crate", tone: "good", command: { type: "deposit_crate", actorId } };
+      return {
+        kind: "command",
+        label: "Store crate",
+        durationMs: 700,
+        holdVerb: "Storing crate",
+        payoff: "Garage stock is ready for route loading",
+        tone: "good",
+        command: { type: "deposit_crate", actorId }
+      };
     }
 
     const storedMachine = storedPlayerMachines(state).find((machine) => machine.damage > 0);
@@ -189,8 +201,10 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
       return {
         kind: "command",
         label: `Repair ${storedMachine.name}`,
-        durationMs: 1900,
+        durationMs: 1000,
         holdVerb: "Repairing",
+        payoff: "Machine becomes ready to place",
+        risk: `$${repairCost} repair cost`,
         tone: "good",
         disabled: player.money < repairCost,
         disabledReason: player.money < repairCost ? shortageLabel(repairCost, player.money) : undefined,
@@ -204,8 +218,9 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
       return {
         kind: "command",
         label: `Carry ${product.name}`,
-        durationMs: 850,
+        durationMs: 650,
         holdVerb: "Loading crate",
+        payoff: "Stock is in hand for the next stop",
         tone: "good",
         command: {
           type: "load_crate",
@@ -226,11 +241,14 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     }
 
     const product = state.products[recommendation.productId];
+    const totalCost = currentProductCost(state, recommendation.productId) * recommendation.quantity;
     return {
       kind: "command",
       label: `Buy ${product.name}`,
-      durationMs: 900,
+      durationMs: 700,
       holdVerb: "Buying stock",
+      payoff: `${recommendation.quantity} units for stocking routes`,
+      risk: `$${Math.round(totalCost)} cash spent`,
       tone: "good",
       command: { type: "buy_product", actorId, productId: recommendation.productId, quantity: recommendation.quantity }
     };
@@ -259,8 +277,10 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
         return {
           kind: "command",
           label: district ? `Scout ${district.name}` : "Scout district",
-          durationMs: 1200,
+          durationMs: 850,
           holdVerb: "Scouting",
+          payoff: "Reveals pads, costs, and local trouble",
+          risk: district ? `$${district.scoutCost} scouting cost` : undefined,
           tone: "neutral",
           disabled: !districtInfo.canScout,
           disabledReason: !districtInfo.canScout && district ? shortageLabel(district.scoutCost, player.money) : undefined,
@@ -271,8 +291,10 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
       return {
         kind: "command",
         label: districtInfo.canUnlock && district ? `Open ${district.name}` : "Requirements unmet",
-        durationMs: 1300,
+        durationMs: 950,
         holdVerb: "Opening district",
+        payoff: "New territory becomes placeable",
+        risk: district ? `$${district.unlockCost} setup cost` : undefined,
         tone: "good",
         disabled: !districtInfo.canUnlock,
         disabledReason: !districtInfo.canUnlock && districtInfo.unmetRequirements.length > 0
@@ -287,8 +309,10 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     return {
       kind: "command",
       label: storedMachine ? `Install ${storedMachine.name}` : "Legal install",
-      durationMs: 2300,
+      durationMs: 1250,
       holdVerb: "Installing",
+      payoff: "Adds a public cash stop",
+      risk: `$${placementQuote.cost} placement cost; rivals notice claims`,
       tone: "good",
       disabled: Boolean(placementDisabledReason),
       disabledReason: placementDisabledReason,
@@ -309,8 +333,10 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
       return {
         kind: "command",
         label: `Scout ${district.name}`,
-        durationMs: 1200,
+        durationMs: 850,
         holdVerb: "Scouting",
+        payoff: "Reveals pads, costs, and local trouble",
+        risk: `$${district.scoutCost} scouting cost`,
         tone: "neutral",
         disabled: !districtInfo.canScout,
         disabledReason: !districtInfo.canScout ? shortageLabel(district.scoutCost, player.money) : undefined,
@@ -321,8 +347,10 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     return {
       kind: "command",
       label: districtInfo.canUnlock ? `Open ${district.name}` : "Requirements unmet",
-      durationMs: 1300,
+      durationMs: 950,
       holdVerb: "Opening district",
+      payoff: "New territory becomes placeable",
+      risk: `$${district.unlockCost} setup cost`,
       tone: "good",
       disabled: !districtInfo.canUnlock,
       disabledReason: !districtInfo.canUnlock && districtInfo.unmetRequirements.length > 0
@@ -361,8 +389,10 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     return {
       kind: "command",
       label,
-      durationMs: contact.action === "source_contraband" ? 1500 : 1200,
+      durationMs: contact.action === "source_contraband" ? 1000 : 850,
       holdVerb: contact.action === "source_contraband" ? "Taking grey stock" : contact.action === "arrange_bribe" ? "Arranging bribe" : "Buying tip",
+      payoff: contact.action === "source_contraband" ? "High-margin shelf stock" : contact.action === "arrange_bribe" ? "Buys breathing room with law pressure" : "Reveals a useful route angle",
+      risk: `$${contact.cost} and +${contact.heatRisk.toFixed(1)} heat risk`,
       tone: contact.action === "source_contraband" ? "danger" : "good",
       disabled: Boolean(disabledReason),
       disabledReason,
@@ -382,8 +412,10 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     return {
       kind: "command",
       label: "Expose operation",
-      durationMs: 1400,
+      durationMs: 950,
       holdVerb: "Gathering evidence",
+      payoff: "Slows the rival cell and builds leverage",
+      risk: `$${exposeCost} and the boss remembers`,
       tone: "warning",
       disabled: player.money < exposeCost,
       disabledReason: player.money < exposeCost ? shortageLabel(exposeCost, player.money) : undefined,
@@ -405,8 +437,10 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     return {
       kind: "command",
       label: "Jam rival display",
-      durationMs: 1800,
+      durationMs: 1100,
       holdVerb: "Jamming display",
+      payoff: "Hurts rival earning and raises street rep",
+      risk: "Adds heat and can trigger retaliation",
       tone: "danger",
       command: { type: "sabotage_machine", actorId, machineId: machine.id }
     };
@@ -417,8 +451,10 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     return {
       kind: "command",
       label: "Fight intruder",
-      durationMs: 1000,
+      durationMs: 850,
       holdVerb: "Fighting intruder",
+      payoff: "Stops damage and protects control",
+      risk: "Street fight can go sideways",
       tone: "danger",
       command: { type: "confront_alarm", actorId, alarmId: activeAlarm.id }
     };
@@ -430,8 +466,10 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     return {
       kind: "command",
       label: "Repair machine",
-      durationMs: 1700,
+      durationMs: 950,
       holdVerb: "Repairing",
+      payoff: "Restores reliability and lowers route pressure",
+      risk: `$${repairCost} repair cost`,
       tone: "good",
       command: { type: "repair_machine", actorId, machineId: machine.id },
       disabled: player.money < repairCost,
@@ -445,8 +483,10 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     return {
       kind: "command",
       label: `Stock ${product.name}`,
-      durationMs: 1100,
+      durationMs: 750,
       holdVerb: "Stocking",
+      payoff: "Turns foot traffic into sales",
+      risk: `${carriedProduct.quantity} units committed here`,
       tone: "good",
       command: {
         type: "stock_machine",
@@ -465,8 +505,9 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     return {
       kind: "command",
       label: `Carry ${product.name} from van`,
-      durationMs: 800,
+      durationMs: 600,
       holdVerb: "Unloading van",
+      payoff: "Moves van cargo into your hands",
       tone: "good",
       command: {
         type: "take_vehicle_crate",
@@ -482,8 +523,9 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     return {
       kind: "command",
       label: "Collect cash",
-      durationMs: 900,
+      durationMs: 650,
       holdVerb: "Collecting cash",
+      payoff: `$${Math.round(machine.revenueStored)} ready for upgrades and stock`,
       tone: "good",
       command: { type: "collect_revenue", actorId, machineId: machine.id }
     };
@@ -494,8 +536,10 @@ export function getPrimaryInteraction(state: GameState, target: SceneTarget | nu
     return {
       kind: "command",
       label: "Repair machine",
-      durationMs: 1700,
+      durationMs: 950,
       holdVerb: "Repairing",
+      payoff: "Restores reliability and lowers route pressure",
+      risk: `$${repairCost} repair cost`,
       tone: "good",
       command: { type: "repair_machine", actorId, machineId: machine.id },
       disabled: player.money < repairCost,

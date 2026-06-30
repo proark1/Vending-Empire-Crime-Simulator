@@ -2441,6 +2441,13 @@ button {
   overflow-wrap: anywhere;
 }
 
+.target-prompt.guided .target-name {
+  border-color: rgba(45, 212, 191, 0.46);
+  background: rgba(20, 184, 166, 0.18);
+  color: #ccfbf1;
+  box-shadow: 0 0 24px rgba(45, 212, 191, 0.16);
+}
+
 .target-action,
 .primary-hint {
   display: inline-flex;
@@ -2471,6 +2478,40 @@ button {
   color: #fde68a;
   font-size: 12px;
   font-weight: 900;
+}
+
+.target-stakes {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 5px;
+  max-width: min(460px, calc(100vw - 36px));
+}
+
+.target-stakes em {
+  padding: 4px 7px;
+  border: 1px solid rgba(226, 232, 240, 0.14);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.82);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.target-stakes em.good {
+  border-color: rgba(134, 239, 172, 0.3);
+  color: #bbf7d0;
+}
+
+.target-stakes em.warning {
+  border-color: rgba(251, 191, 36, 0.3);
+  color: #fde68a;
+}
+
+.target-stakes em.danger {
+  border-color: rgba(251, 113, 133, 0.34);
+  color: #fecdd3;
 }
 
 .target-prompt.disabled {
@@ -2657,6 +2698,35 @@ kbd {
 .ending-stat-grid strong {
   color: #f8fafc;
   font-size: 20px;
+}
+
+.ending-replay-card {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid rgba(45, 212, 191, 0.24);
+  border-radius: 8px;
+  background: rgba(20, 184, 166, 0.12);
+}
+
+.ending-replay-card span {
+  color: #99f6e4;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.ending-replay-card strong {
+  color: #f8fafc;
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.ending-replay-card p {
+  margin: 0;
+  color: #cbd5e1;
+  font-size: 12px;
 }
 
 .ending-actions {
@@ -3114,6 +3184,116 @@ kbd {
   display: grid;
   gap: 8px;
   padding: 10px;
+}
+
+.action-plan-list {
+  gap: 9px;
+}
+
+.action-plan-hero {
+  display: grid;
+  gap: 10px;
+  padding: 11px;
+  border: 1px solid rgba(45, 212, 191, 0.32);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(20, 184, 166, 0.16), transparent),
+    rgba(30, 41, 59, 0.82);
+}
+
+.action-plan-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.action-plan-stats span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid rgba(226, 232, 240, 0.1);
+  border-radius: 7px;
+  background: rgba(2, 6, 23, 0.28);
+  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1.15;
+  text-transform: uppercase;
+}
+
+.action-plan-stats strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #f8fafc;
+  font-size: 13px;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: none;
+}
+
+.action-plan-stats .warning strong {
+  color: #fde68a;
+}
+
+.action-plan-stats .danger strong {
+  color: #fecdd3;
+}
+
+.action-plan-card {
+  position: relative;
+  align-items: stretch;
+}
+
+.action-rank {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-bottom: 5px;
+  border: 1px solid rgba(45, 212, 191, 0.34);
+  border-radius: 999px;
+  background: rgba(20, 184, 166, 0.16);
+  color: #ccfbf1;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.action-stakes {
+  display: grid;
+  gap: 4px;
+  margin-top: 7px;
+}
+
+.action-stakes span {
+  padding: 5px 7px;
+  border: 1px solid rgba(226, 232, 240, 0.1);
+  border-radius: 7px;
+  background: rgba(2, 6, 23, 0.22);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.action-stakes .good {
+  border-color: rgba(134, 239, 172, 0.24);
+  color: #bbf7d0;
+}
+
+.action-stakes .warning {
+  border-color: rgba(251, 191, 36, 0.24);
+  color: #fde68a;
+}
+
+.action-stakes .danger {
+  border-color: rgba(251, 113, 133, 0.28);
+  color: #fecdd3;
+}
+
+.route-plan-summary,
+.run-recap-card {
+  border-color: rgba(45, 212, 191, 0.2);
 }
 
 .machine-card,
@@ -3756,6 +3936,13 @@ kbd {
   font-size: 11px;
   font-weight: 900;
   line-height: 1.2;
+}
+
+.primary-hint-copy small {
+  color: #cbd5e1;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.25;
 }
 
 .primary-hint.disabled {

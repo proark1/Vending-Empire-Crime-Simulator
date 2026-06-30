@@ -7,8 +7,8 @@ import { Minimap } from "./ui/Minimap";
 import { MissionTracker } from "./ui/MissionTracker";
 import { GuidanceArrow } from "./ui/GuidanceArrow";
 import { ClipboardList, Copy, DollarSign, Flame, LogOut, Map, Menu, Network, Package, Play, RotateCcw, Save, ShieldAlert, SlidersHorizontal, Sparkles, Truck, Users, Volume2, VolumeX, Wrench, X, Zap, type LucideIcon } from "lucide-react";
-import { getStarterMissionStep } from "./game/core/mission";
-import { activeConflictEvents, activeMachineAlarms, heatTierFor, latestDayReport, selectedRouteTask } from "./game/core/selectors";
+import { getStarterMissionStep, type MissionStep } from "./game/core/mission";
+import { activeConflictEvents, activeMachineAlarms, heatTierFor, latestDayReport, selectedRouteTask, type RouteTask } from "./game/core/selectors";
 import { executePrimaryInteraction, getPrimaryInteraction, type PrimaryInteraction, type PrimaryInteractionTone } from "./ui/interactionActions";
 import { useGame } from "./hooks/useGame";
 import { ToastStack, type ToastMessage } from "./ui/ToastStack";
@@ -23,6 +23,7 @@ import { machineServicePointForLocation } from "./game/world/locationGeometry";
 import { clearStoredGameSession, loadRemoteAudioConfig, loadRemoteGame, loadRemoteMapLayout, loadStoredGameSession, loginGame, registerGame, type GameSession } from "./game/save/api";
 import { loadGame } from "./game/save/storage";
 import { createInitialState } from "./game/content/initialState";
+import { activeRunModifier, chooseRunModifier } from "./game/content/replayability";
 import { configureGameAudio, playEventCue, playFeedbackCue, playVoiceCue, startGameAmbience, unlockGameAudio, updateGameAmbience } from "./ui/audio";
 import { MultiplayerClient } from "./game/network/multiplayerClient";
 import type { MultiplayerStatus } from "./game/network/protocol";
@@ -55,6 +56,44 @@ function targetLocationId(target: SceneTarget | null, state: GameState): Locatio
   }
 
   return null;
+}
+
+function distance2d(a: Vec2, b: Vec2): number {
+  return Math.hypot(a.x - b.x, a.z - b.z);
+}
+
+function targetForGuidedLocation(
+  state: GameState,
+  locationId: LocationId,
+  routeTask: RouteTask | undefined,
+  missionStep: MissionStep
+): SceneTarget | null {
+  const location = state.locations[locationId];
+  if (!location) {
+    return null;
+  }
+
+  if (location.kind === "garage") {
+    return { type: "base", id: "garage", label: location.name };
+  }
+
+  if (location.kind === "supplier") {
+    return { type: "supplier", id: "supplier", label: location.name };
+  }
+
+  if (routeTask?.machineId && state.machines[routeTask.machineId]) {
+    const machine = state.machines[routeTask.machineId];
+    return { type: "machine", id: machine.id, label: machine.name };
+  }
+
+  const installedMachine = Object.values(state.machines).find(
+    (machine) => machine.locationId === locationId && (machine.placementStatus ?? "installed") === "installed"
+  );
+  if (installedMachine && missionStep.id !== "install_laundromat" && missionStep.id !== "install_second" && missionStep.id !== "install_third" && missionStep.id !== "install_industrial") {
+    return { type: "machine", id: installedMachine.id, label: installedMachine.name };
+  }
+
+  return { type: "placement", id: location.id, label: location.name };
 }
 
 function createSceneFeedback(command: GameCommand, target: SceneTarget | null, state: GameState): Omit<SceneFeedbackEvent, "id"> | null {
@@ -681,11 +720,6 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
   const serviceHoldTimeoutRef = useRef<number | null>(null);
   const serviceHoldIntervalRef = useRef<number | null>(null);
   const serviceHoldInteractionRef = useRef<PrimaryInteraction | null>(null);
-  const activeTarget = entered ? target : null;
-  const activeTargetLocationId = useMemo(() => targetLocationId(activeTarget, state), [activeTarget, state]);
-  const primaryInteraction = useMemo(() => getPrimaryInteraction(state, activeTarget), [activeTarget, state]);
-  const primaryInteractionKey = useMemo(() => primaryInteractionSignature(primaryInteraction), [primaryInteraction]);
-  const holdPrimaryInteraction = Boolean(primaryInteraction?.durationMs && primaryInteraction.durationMs > 0 && !primaryInteraction.disabled);
   const missionStep = useMemo(() => getStarterMissionStep(state, playerPosition), [playerPosition, state]);
   const routeTask = useMemo(() => selectedRouteTask(state), [state]);
   const activeAlarm = useMemo(() => activeMachineAlarms(state)[0], [state]);
@@ -697,6 +731,28 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
     const location = machine ? state.locations[machine.locationId] : undefined;
     return location ? machineServicePointForLocation(mapLayout, location) : undefined;
   }, [activeAlarm?.machineId, mapLayout, routeTask?.machineId, state]);
+  const rawTarget = entered ? target : null;
+  const guidedFallbackTarget = useMemo(() => {
+    if (!entered || rawTarget || !guidanceLocationId) {
+      return null;
+    }
+
+    const location = state.locations[guidanceLocationId];
+    if (!location) {
+      return null;
+    }
+
+    const targetPosition = guidanceTargetPosition ?? location.position;
+    if (distance2d(playerPosition, targetPosition) > 8.5) {
+      return null;
+    }
+
+    return targetForGuidedLocation(state, guidanceLocationId, routeTask, missionStep);
+  }, [entered, guidanceLocationId, guidanceTargetPosition, missionStep, playerPosition, rawTarget, routeTask, state]);
+  const activeTarget = rawTarget ?? guidedFallbackTarget;
+  const activeTargetLocationId = useMemo(() => targetLocationId(activeTarget, state), [activeTarget, state]);
+  const primaryInteraction = useMemo(() => getPrimaryInteraction(state, activeTarget), [activeTarget, state]);
+  const primaryInteractionKey = useMemo(() => primaryInteractionSignature(primaryInteraction), [primaryInteraction]);
   const guidanceArrivedOverride = Boolean(guidanceLocationId && activeTargetLocationId === guidanceLocationId);
   const guidanceLabel = activeAlarm ? "Machine alarm" : routeTask?.title;
   const report = latestDayReport(state);
@@ -712,6 +768,18 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
     () => endgamePaths.find((path) => path.id === executedEnding?.pathId),
     [executedEnding?.pathId]
   );
+  const runModifier = useMemo(() => activeRunModifier(state), [state]);
+  const nextRunModifierPreview = useMemo(() => chooseRunModifier(Math.round(state.worldTimeHours * 1000) + (executedEnding?.pathId?.length ?? 0)), [executedEnding?.pathId, state.worldTimeHours]);
+  const runTraitCount = useMemo(() => Object.values(state.replay?.machineTraits ?? {}).reduce((sum, traits) => sum + traits.length, 0), [state.replay?.machineTraits]);
+  const loudestRival = useMemo(() => {
+    return Object.values(state.replay?.rivalMemory ?? {})
+      .map((memory) => ({
+        memory,
+        total: memory.undercut + memory.sabotage + memory.expansion + memory.negotiation + memory.exposure + memory.disruption + memory.alarmConfronted
+      }))
+      .sort((a, b) => b.total - a.total)[0];
+  }, [state.replay?.rivalMemory]);
+  const strategyUnlocks = state.replay?.strategyUnlocks ?? [];
   const showDebugTools = useMemo(() => new URLSearchParams(window.location.search).has("debug"), []);
   const isLocalSession = session.local === true;
   const worldClockPaused = !entered || dashboardOpen || gameMenuOpen || showControls;
@@ -1021,20 +1089,34 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
       return;
     }
 
-    executePrimaryInteraction(interaction, {
+    const executed = executePrimaryInteraction(interaction, {
       onCommand: sendCommandAtActiveTarget,
       onSave: save
     });
-  }, [clearServiceHoldTimers, save, sendCommandAtActiveTarget]);
+    if (executed && interaction.payoff) {
+      addToast({
+        title: interaction.label,
+        message: interaction.risk ? `${interaction.payoff} Risk: ${interaction.risk}` : interaction.payoff,
+        tone: interaction.tone ?? "good"
+      });
+    }
+  }, [addToast, clearServiceHoldTimers, save, sendCommandAtActiveTarget]);
 
   const startServiceHold = useCallback(
     (interaction: PrimaryInteraction) => {
       const durationMs = Math.max(250, interaction.durationMs ?? 0);
       if (durationMs <= 250 || interaction.disabled) {
-        executePrimaryInteraction(interaction, {
+        const executed = executePrimaryInteraction(interaction, {
           onCommand: sendCommandAtActiveTarget,
           onSave: save
         });
+        if (executed && interaction.payoff) {
+          addToast({
+            title: interaction.label,
+            message: interaction.risk ? `${interaction.payoff} Risk: ${interaction.risk}` : interaction.payoff,
+            tone: interaction.tone ?? "good"
+          });
+        }
         return;
       }
 
@@ -1062,7 +1144,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
         completeServiceHold();
       }, durationMs);
     },
-    [clearServiceHoldTimers, completeServiceHold, save, sendCommandAtActiveTarget]
+    [addToast, clearServiceHoldTimers, completeServiceHold, save, sendCommandAtActiveTarget]
   );
 
   const handleVehicleDrive = useCallback(
@@ -1089,11 +1171,18 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
       return;
     }
 
-    executePrimaryInteraction(primaryInteraction, {
+    const executed = executePrimaryInteraction(primaryInteraction, {
       onCommand: sendCommandAtActiveTarget,
       onSave: save
     });
-  }, [primaryInteraction, save, sendCommandAtActiveTarget, startServiceHold]);
+    if (executed && primaryInteraction?.payoff) {
+      addToast({
+        title: primaryInteraction.label,
+        message: primaryInteraction.risk ? `${primaryInteraction.payoff} Risk: ${primaryInteraction.risk}` : primaryInteraction.payoff,
+        tone: primaryInteraction.tone ?? "good"
+      });
+    }
+  }, [addToast, primaryInteraction, save, sendCommandAtActiveTarget, startServiceHold]);
 
   useEffect(() => {
     if (!entered) {
@@ -1190,22 +1279,11 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
       handlePrimaryInteraction();
     };
 
-    const onKeyUp = (event: KeyboardEvent) => {
-      if (event.code !== "KeyE") {
-        return;
-      }
-
-      event.preventDefault();
-      cancelServiceHold();
-    };
-
     window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("keyup", onKeyUp);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("keyup", onKeyUp);
     };
-  }, [cancelServiceHold, entered, handlePrimaryInteraction]);
+  }, [entered, handlePrimaryInteraction]);
 
   // First-run controls legend: auto-show once after entering the district, then
   // remember it so returning players aren't nagged (still recallable via the ? button).
@@ -1345,6 +1423,28 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
                 <span>Day</span>
                 <strong>{Math.max(1, Math.floor(state.worldTimeHours / 24) + 1)}</strong>
               </div>
+              <div>
+                <span>Run</span>
+                <strong>{runModifier.name}</strong>
+              </div>
+              <div>
+                <span>Traits</span>
+                <strong>{runTraitCount}</strong>
+              </div>
+              <div>
+                <span>Rivalry</span>
+                <strong>{loudestRival ? state.factions[loudestRival.memory.factionId]?.name ?? loudestRival.memory.factionId : "Quiet"}</strong>
+              </div>
+              <div>
+                <span>Unlocks</span>
+                <strong>{strategyUnlocks.length}</strong>
+              </div>
+            </div>
+            <div className="ending-replay-card">
+              <span>Next run preview</span>
+              <strong>{nextRunModifierPreview.name}</strong>
+              <p>{nextRunModifierPreview.description}</p>
+              {strategyUnlocks.length > 0 && <p>Recent unlocks: {strategyUnlocks.slice(-3).join(" / ")}</p>}
             </div>
             <div className="ending-actions">
               <button onClick={() => setDismissedEndingPathId(executedEnding.pathId)} type="button">
@@ -1506,11 +1606,18 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
         />
       )}
       {entered && activeTarget && primaryInteraction && (
-        <div className={`target-prompt ${primaryInteraction.disabled ? "disabled" : ""} ${serviceHold ? "working" : ""}`}>
+        <div className={`target-prompt ${primaryInteraction.disabled ? "disabled" : ""} ${serviceHold ? "working" : ""} ${activeTarget === guidedFallbackTarget ? "guided" : ""}`}>
+          <span className="target-name">{activeTarget.label}</span>
           <span className="target-action">
-            <kbd>{holdPrimaryInteraction ? "HOLD E" : "E"}</kbd>
+            <kbd>E</kbd>
             {primaryInteraction.label}
           </span>
+          {(primaryInteraction.payoff || primaryInteraction.risk) && (
+            <span className="target-stakes">
+              {primaryInteraction.payoff && <em className="good">{primaryInteraction.payoff}</em>}
+              {primaryInteraction.risk && <em className={primaryInteraction.tone === "danger" ? "danger" : "warning"}>{primaryInteraction.risk}</em>}
+            </span>
+          )}
           {serviceHold && (
             <span className={`target-work-meter ${serviceHold.tone}`} aria-label={`${serviceHold.verb} ${Math.round(serviceHold.progress * 100)}%`}>
               <span>

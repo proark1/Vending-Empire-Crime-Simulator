@@ -55,6 +55,7 @@ import {
   rivalTerritoryByDistrict,
   routeDangerScore,
   routeTasks,
+  type RouteTask,
   narrativeQuestProgress,
   selectedRouteTask,
   storyArcProgress,
@@ -71,7 +72,7 @@ import { vehicleUpgradeList } from "../game/content/vehicleUpgrades";
 import { buildPlaytestReport, playtestReportFilename } from "../game/core/playtestTelemetry";
 import { activeRunModifier, machineTraitDefinitions, machineTraitsFor } from "../game/content/replayability";
 
-type DashboardTab = "machines" | "fleet" | "base" | "empire" | "suppliers" | "catalog" | "finance" | "districts" | "rights" | "jobs" | "route" | "logistics" | "crew" | "law" | "heat" | "conflict" | "rival" | "story" | "debug" | "log";
+type DashboardTab = "actions" | "machines" | "fleet" | "base" | "empire" | "suppliers" | "catalog" | "finance" | "districts" | "rights" | "jobs" | "route" | "logistics" | "crew" | "law" | "heat" | "conflict" | "rival" | "story" | "debug" | "log";
 
 interface DashboardProps {
   state: GameState;
@@ -214,8 +215,37 @@ function relationshipBrief(relationship: string): string {
   return "Testing the route through pressure and offers.";
 }
 
+function taskStakes(task: RouteTask): { payoff: string; risk: string } {
+  switch (task.type) {
+    case "alarm":
+      return { payoff: "Protects the machine and keeps the stop yours.", risk: "Ignore it and damage, pressure, or lost sales stack up." };
+    case "conflict":
+      return { payoff: "Keeps the route from spiraling into a street problem.", risk: "Health, stamina, and vehicle position matter." };
+    case "inspection":
+      return { payoff: "Protects stock, reputation, and future legal routes.", risk: "Fines and confiscation land if you stall." };
+    case "contract":
+      return { payoff: "Pays cash and proves the route can keep promises.", risk: "Missed deadlines slow expansion requirements." };
+    case "supplier":
+      return { payoff: "Turns empty storage into future sales.", risk: "Cash leaves now, especially in shortages." };
+    case "garage":
+      return { payoff: "Preps cargo, repairs, or van readiness before the route.", risk: "Leaving unprepared wastes travel time." };
+    case "placement":
+      return { payoff: "Claims territory and opens another income stream.", risk: "Rent and rival attention rise with every claim." };
+    case "stock":
+      return { payoff: "Restarts sales at a stop with demand waiting.", risk: "Wrong stock mix can strand cargo." };
+    case "collect":
+      return { payoff: "Moves stored revenue into spendable cash.", risk: "Delaying slows upgrades and expansion." };
+    case "repair":
+      return { payoff: "Restores reliability and keeps rivals from exploiting damage.", risk: "Repair cash competes with stock and placements." };
+    case "pressure":
+      return { payoff: "Checks a contested block before it becomes an alarm.", risk: "Rivals push harder when pressure is ignored." };
+    default:
+      return { payoff: "Moves the route forward.", risk: "Leaving it open can create drag later." };
+  }
+}
+
 export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
-  const [tab, setTab] = useState<DashboardTab>("machines");
+  const [tab, setTab] = useState<DashboardTab>("actions");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [playtestExportStatus, setPlaytestExportStatus] = useState("");
   const playerMachines = useMemo(() => ownedMachines(state, state.playerFactionId), [state]);
@@ -284,12 +314,23 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
   const playtestReport = useMemo(() => buildPlaytestReport(state), [state]);
   const runModifier = useMemo(() => activeRunModifier(state), [state]);
   const strategyUnlocks = state.replay?.strategyUnlocks ?? [];
+  const actionTasks = useMemo(() => tasks.slice(0, 5), [tasks]);
+  const runTraitCount = useMemo(() => Object.values(state.replay?.machineTraits ?? {}).reduce((sum, traits) => sum + traits.length, 0), [state.replay?.machineTraits]);
+  const loudestRivalMemory = useMemo(() => {
+    return Object.values(state.replay?.rivalMemory ?? {})
+      .map((memory) => ({
+        memory,
+        total: memory.undercut + memory.sabotage + memory.expansion + memory.negotiation + memory.exposure + memory.disruption + memory.alarmConfronted
+      }))
+      .sort((a, b) => b.total - a.total)[0];
+  }, [state.replay?.rivalMemory]);
   const advancedTabs = useMemo<DashboardTab[]>(
     () => ["rights", "crew", "law", "empire", "suppliers", "catalog", "finance", "logistics", "heat", "conflict", "rival", "story", ...(showDebug ? (["debug"] as DashboardTab[]) : [])],
     [showDebug]
   );
   const visibleTabs = useMemo<Array<{ icon: React.ReactNode; id: DashboardTab; label: string }>>(
     () => [
+      { id: "actions", label: "Plan", icon: <Navigation size={16} aria-hidden="true" /> },
       { id: "machines", label: "Machines", icon: <Map size={16} aria-hidden="true" /> },
       { id: "route", label: "Route", icon: <Route size={16} aria-hidden="true" /> },
       { id: "jobs", label: "Jobs", icon: <ClipboardList size={16} aria-hidden="true" /> },
@@ -320,12 +361,12 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
 
   useEffect(() => {
     if (!showAdvanced && advancedTabs.includes(tab)) {
-      setTab("machines");
+      setTab("actions");
       return;
     }
 
     if (tab === "debug" && !showDebug) {
-      setTab("machines");
+      setTab("actions");
     }
   }, [advancedTabs, showAdvanced, showDebug, tab]);
 
@@ -382,6 +423,156 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
           </DashboardTabButton>
         ))}
       </div>
+
+      {tab === "actions" && (
+        <div className="panel-list action-plan-list">
+          <article className="action-plan-hero">
+            <div className="vehicle-heading">
+              <Navigation size={18} aria-hidden="true" />
+              <div>
+                <h3>{nextTask ? nextTask.title : "Keep the route earning"}</h3>
+                <p>{nextTask ? nextTask.detail : "No urgent stops are waiting. Stock, collect, or scout when the route is calm."}</p>
+              </div>
+            </div>
+            <div className="action-plan-stats">
+              <span>
+                <strong>${Math.round(state.factions[state.playerFactionId].money)}</strong>
+                cash
+              </span>
+              <span className={heatTier.tone}>
+                <strong>{heatTier.label}</strong>
+                heat
+              </span>
+              <span>
+                <strong>{installedPlayerMachines.length}</strong>
+                machines
+              </span>
+              <span className={routePlan?.tone ?? "good"}>
+                <strong>{routePlan ? `${routePlan.stops.length} stops` : "free"}</strong>
+                loop
+              </span>
+            </div>
+            {nextTask && (
+              <div className="row-actions">
+                <MiniButton onClick={() => onCommand({ type: "select_route_task", actorId: state.playerFactionId, taskId: nextTask.id })}>
+                  <Navigation size={13} aria-hidden="true" />
+                  Guide
+                </MiniButton>
+                {vehicle && (
+                  <MiniButton
+                    disabled={vehicle.locationId === nextTask.locationId}
+                    onClick={() => onCommand({ type: "dispatch_vehicle", actorId: state.playerFactionId, vehicleId: vehicle.id, locationId: nextTask.locationId })}
+                  >
+                    <Truck size={13} aria-hidden="true" />
+                    {vehicle.locationId === nextTask.locationId ? "Van here" : "Send van"}
+                  </MiniButton>
+                )}
+              </div>
+            )}
+          </article>
+
+          <div className="panel-section-title">Next best actions</div>
+          {actionTasks.length === 0 ? (
+            <article className="inventory-row good">
+              <div>
+                <h3>Route breathing room</h3>
+                <p>Use the quiet to tune prices, scout districts, hire crew, or bank cash for the next placement.</p>
+              </div>
+              <strong>clear</strong>
+            </article>
+          ) : (
+            actionTasks.map((task, index) => {
+              const location = state.locations[task.locationId];
+              const stakes = taskStakes(task);
+              const isSelected = state.routePlan.selectedTaskId === task.id;
+              const vehicleAtStop = vehicle?.locationId === task.locationId;
+              return (
+                <article className={`route-task action-plan-card ${task.tone} ${isSelected ? "selected" : ""}`} key={`action_${task.id}`}>
+                  <div>
+                    <span className="action-rank">{index + 1}</span>
+                    <h3>{task.title}</h3>
+                    <p>{location?.name ?? "Unknown stop"} · {task.detail}</p>
+                    <div className="action-stakes">
+                      <span className="good">{stakes.payoff}</span>
+                      <span className={task.tone === "danger" ? "danger" : "warning"}>{stakes.risk}</span>
+                    </div>
+                  </div>
+                  <div className="route-actions">
+                    <MiniButton onClick={() => onCommand({ type: "select_route_task", actorId: state.playerFactionId, taskId: isSelected ? null : task.id })}>
+                      <Navigation size={13} aria-hidden="true" />
+                      {isSelected ? "Clear" : "Guide"}
+                    </MiniButton>
+                    {vehicle && (
+                      <MiniButton
+                        disabled={vehicleAtStop}
+                        onClick={() => onCommand({ type: "dispatch_vehicle", actorId: state.playerFactionId, vehicleId: vehicle.id, locationId: task.locationId })}
+                      >
+                        <Truck size={13} aria-hidden="true" />
+                        {vehicleAtStop ? "Here" : "Drive"}
+                      </MiniButton>
+                    )}
+                  </div>
+                </article>
+              );
+            })
+          )}
+
+          {routePlan && routePlan.stops.length > 0 && (
+            <article className={`vehicle-card route-plan-summary ${routePlan.tone}`}>
+              <div className="vehicle-heading">
+                <Route size={18} aria-hidden="true" />
+                <div>
+                  <h3>Current loop</h3>
+                  <p>
+                    {routePlan.stops.length} stops · {routePlan.estimatedHours.toFixed(1)}h · {Math.round(routePlan.totalRisk * 100)} risk
+                  </p>
+                </div>
+              </div>
+              <div className="route-strip" aria-label="Route stop order">
+                {routePlan.stops.map((stop) => (
+                  <span className={stop.task.tone} key={`plan_strip_${stop.task.id}`}>
+                    {stop.order}
+                  </span>
+                ))}
+              </div>
+              <div className="route-load-card">
+                <strong>Load before you go</strong>
+                {routePlan.loadRecommendations.length > 0 ? (
+                  <div className="route-load-list">
+                    {routePlan.loadRecommendations.map((recommendation) => (
+                      <span key={`action_load_${recommendation.productId}`}>
+                        {recommendation.quantity}x {state.products[recommendation.productId]?.name ?? recommendation.productId} · {recommendation.source}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p>No extra cargo needed for this loop.</p>
+                )}
+              </div>
+            </article>
+          )}
+
+          <article className="vehicle-card run-recap-card">
+            <div className="vehicle-heading">
+              <Trophy size={18} aria-hidden="true" />
+              <div>
+                <h3>{runModifier.name}</h3>
+                <p>{runModifier.openingLine}</p>
+              </div>
+            </div>
+            <div className="report-grid">
+              <span>Traits</span>
+              <strong>{runTraitCount}</strong>
+              <span>Unlocks</span>
+              <strong>{strategyUnlocks.length}</strong>
+              <span>Rival memory</span>
+              <strong>{loudestRivalMemory ? state.factions[loudestRivalMemory.memory.factionId]?.name ?? loudestRivalMemory.memory.factionId : "none"}</strong>
+              <span>Ending lean</span>
+              <strong>{endingScores[0]?.path.title ?? "open"}</strong>
+            </div>
+          </article>
+        </div>
+      )}
 
       {tab === "machines" && (
         <div className="panel-list">
