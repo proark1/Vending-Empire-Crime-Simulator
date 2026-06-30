@@ -3,7 +3,9 @@
 ## Scope
 
 - Vending machine silhouettes now vary by machine model.
+- Medium/high vending machines carry short model badges so the model class is readable in-world.
 - Stock crates include generated labels, tape, handles, and corner guards.
+- District labels now have physical landmark signs with district-specific props.
 - Existing storefront, prop, and landing cinematic polish should remain visible across low, medium, and high graphics settings.
 
 ## Automated Checks
@@ -18,6 +20,8 @@ npm run build
 
 The `procedural visual assets` tests instantiate representative machines and crates under the Node test runner. They catch regressions where model-specific machine detail or crate labeling disappears during refactors.
 
+There is no checked-in Playwright or browser-runner dependency in this repo. Until one is added intentionally, browser smoke remains a manual/live check: start Vite, quick-start the game, verify a populated canvas, and inspect console output.
+
 ## Manual Render Smoke
 
 1. Start the app with `npm run dev -- --port 5173`.
@@ -25,13 +29,15 @@ The `procedural visual assets` tests instantiate representative machines and cra
 3. Use `Quick Start: Cause Problems`.
 4. Confirm the WebGL scene is not blank and browser console has no errors.
 5. Inspect at least one installed machine for these model reads:
+   - Each medium/high cabinet has a compact model badge near the controls.
    - Armored units have side armor, rivets, and a crash bar.
    - Smart vendors have telemetry and signal detail.
    - Luxury vendors have chrome/glow accents.
    - Hidden or black-market machines have louvers and a false service panel.
    - Mobile vendors have wheels and a tow handle.
 6. Inspect garage/storage crates for labels, tape, handles, and corner guards.
-7. Toggle low, medium, and high graphics settings; low should remain readable while medium/high keep the extra polish.
+7. Inspect district label areas for physical landmark signs and district-specific symbols.
+8. Toggle low, medium, and high graphics settings; low should remain readable while medium/high keep the extra polish.
 
 ## Performance Notes
 

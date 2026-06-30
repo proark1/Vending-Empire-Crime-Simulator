@@ -75,6 +75,7 @@ describe("procedural visual assets", () => {
     const detailTags = collectUserDataValues(mesh, "machineVisualDetail");
 
     expect(mesh.userData.machineModelId).toBe(modelId);
+    expect(detailTags).toContain("model-badge");
     expect(detailTags).toContain(expectedDetail);
   });
 

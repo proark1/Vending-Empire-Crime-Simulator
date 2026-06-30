@@ -148,6 +148,21 @@ const productShortLabels: Record<ProductId, string> = {
 
 const productPackageTextureCache = new Map<string, THREE.CanvasTexture>();
 const crateLabelTextureCache = new Map<string, THREE.CanvasTexture>();
+const machineModelBadgeTextureCache = new Map<string, THREE.CanvasTexture>();
+const districtLandmarkTextureCache = new Map<string, THREE.CanvasTexture>();
+
+const machineModelVisualLabels: Record<MachineModelId, string> = {
+  armored_unit: "ARM",
+  basic_snack: "BASIC",
+  combo_machine: "COMBO",
+  discreet_black_market: "LOW",
+  drink_machine: "CHILL",
+  fake_broken_front: "DEAD",
+  hidden_wall_unit: "HIDE",
+  luxury_vendor: "LUX",
+  mobile_vendor: "MOB",
+  smart_vendor: "SMART"
+};
 
 const playerRadius = WORLD_SCALE.human.radius;
 const playerGroundY = 0;
@@ -960,6 +975,81 @@ function createCrateLabelTexture(productId: ProductId, quantity: number, color: 
   return texture;
 }
 
+function createMachineModelBadgeTexture(modelId: MachineModelId, color: string): THREE.CanvasTexture {
+  const label = machineModelVisualLabels[modelId] ?? "VEND";
+  const cacheKey = `${modelId}:${color}`;
+  const cached = machineModelBadgeTextureCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 96;
+  const context = canvas.getContext("2d");
+
+  if (context) {
+    context.fillStyle = "#020617";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = color;
+    context.fillRect(0, 0, canvas.width, 10);
+    context.fillRect(0, canvas.height - 10, canvas.width, 10);
+    context.strokeStyle = "rgba(248, 250, 252, 0.35)";
+    context.lineWidth = 4;
+    context.strokeRect(10, 12, canvas.width - 20, canvas.height - 24);
+    context.fillStyle = "#f8fafc";
+    context.font = "900 34px Inter, system-ui, sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(label, canvas.width / 2, canvas.height / 2, 210);
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  machineModelBadgeTextureCache.set(cacheKey, texture);
+  return texture;
+}
+
+function createDistrictLandmarkTexture(districtId: string, label: string, color: string): THREE.CanvasTexture {
+  const cacheKey = `${districtId}:${label}:${color}`;
+  const cached = districtLandmarkTextureCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 192;
+  const context = canvas.getContext("2d");
+
+  if (context) {
+    context.fillStyle = "#020617";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    const gradient = context.createLinearGradient(0, 0, canvas.width, canvas.height);
+    gradient.addColorStop(0, `${color}66`);
+    gradient.addColorStop(0.48, "rgba(15, 23, 42, 0.92)");
+    gradient.addColorStop(1, `${color}44`);
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.strokeStyle = color;
+    context.lineWidth = 9;
+    context.strokeRect(14, 14, canvas.width - 28, canvas.height - 28);
+    context.fillStyle = "#f8fafc";
+    context.font = "900 42px Inter, system-ui, sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(label.toUpperCase(), canvas.width / 2, 78, 440);
+    context.font = "800 20px Inter, system-ui, sans-serif";
+    context.fillStyle = color;
+    context.fillText(districtId.replace(/_/g, " ").toUpperCase(), canvas.width / 2, 125, 360);
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  districtLandmarkTextureCache.set(cacheKey, texture);
+  return texture;
+}
+
 function createLowMachineMesh(color: string, damage: number, installedUpgrades: MachineUpgradeId[] = [], stockRatio = 1, productIds: ProductId[] = []): THREE.Group {
   const group = new THREE.Group();
   const upgrades = new Set(installedUpgrades);
@@ -1044,6 +1134,17 @@ function addMachineModelIdentity(group: THREE.Group, modelId: MachineModelId, co
   const rubberMaterial = new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.7, metalness: 0.08 });
 
   group.userData.machineModelId = modelId;
+
+  const modelBadge = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.28, 0.105),
+    new THREE.MeshBasicMaterial({
+      map: createMachineModelBadgeTexture(modelId, color),
+      transparent: true,
+      side: THREE.DoubleSide
+    })
+  );
+  modelBadge.position.set(0.26, 1.57, -0.349);
+  addMachineDetail(group, modelBadge, "model-badge");
 
   if (modelId === "armored_unit") {
     for (const x of [-0.43, 0.43]) {
@@ -4226,6 +4327,97 @@ function createWorldDecoration(decoration: WorldDecoration, enableLocalLights: b
   return group;
 }
 
+function createDistrictLandmark(districtId: string, label: string, color: string, quality: GraphicsQuality, enableLocalLights: boolean): THREE.Group {
+  const group = new THREE.Group();
+  group.userData.districtLandmark = districtId;
+  const darkMaterial = new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.55, metalness: 0.18 });
+  const accentMaterial = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 });
+  const metalMaterial = new THREE.MeshStandardMaterial({ color: "#64748b", roughness: 0.38, metalness: 0.48 });
+
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.56, 0.14, quality === "low" ? 12 : 24), darkMaterial);
+  base.position.y = 0.07;
+  base.receiveShadow = true;
+  group.add(base);
+
+  const sign = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.42, 0.53),
+    new THREE.MeshBasicMaterial({
+      map: createDistrictLandmarkTexture(districtId, label, color),
+      transparent: true,
+      side: THREE.DoubleSide
+    })
+  );
+  sign.position.set(0, 1.02, -0.035);
+  group.add(sign);
+
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.64, 0.045), darkMaterial);
+  frame.position.set(0, 1.02, 0);
+  frame.castShadow = true;
+  group.add(frame);
+
+  for (const x of [-0.62, 0.62]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 1.0, quality === "low" ? 8 : 12), metalMaterial);
+    post.position.set(x, 0.52, 0.03);
+    post.castShadow = true;
+    group.add(post);
+  }
+
+  if (districtId === "industrial_yards") {
+    const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 1.2, 12), metalMaterial);
+    pipe.position.set(-0.78, 0.65, 0.02);
+    pipe.rotation.z = 0.18;
+    group.add(pipe);
+    const hook = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.018, 8, 20, Math.PI), metalMaterial);
+    hook.position.set(0.76, 1.08, 0.02);
+    hook.rotation.z = Math.PI;
+    group.add(hook);
+  } else if (districtId === "downtown_loop") {
+    for (const x of [-0.28, 0, 0.28]) {
+      const towerHeight = 0.46 + Math.abs(x) * 0.45;
+      const tower = new THREE.Mesh(new THREE.BoxGeometry(0.16, towerHeight, 0.12), accentMaterial);
+      tower.position.set(x, 0.18 + towerHeight / 2, 0.18);
+      group.add(tower);
+    }
+  } else if (districtId === "neon_quarter") {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.018, 8, 44), accentMaterial);
+    ring.position.set(0, 1.43, 0.02);
+    ring.scale.y = 0.34;
+    group.add(ring);
+  } else if (districtId === "campus_strip") {
+    const bookMaterial = new THREE.MeshStandardMaterial({ color: "#e0f2fe", roughness: 0.6, metalness: 0.02 });
+    for (const x of [-0.18, 0.02, 0.22]) {
+      const book = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.36, 0.08), bookMaterial);
+      book.position.set(x, 0.36, 0.2);
+      book.rotation.z = x * 0.4;
+      group.add(book);
+    }
+  } else if (districtId === "old_town") {
+    const arch = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.025, 8, 28, Math.PI), metalMaterial);
+    arch.position.set(0, 0.55, 0.18);
+    arch.rotation.z = Math.PI;
+    group.add(arch);
+  } else {
+    const washer = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.028, 8, 28), accentMaterial);
+    washer.position.set(0, 0.44, 0.18);
+    washer.rotation.x = Math.PI / 2;
+    group.add(washer);
+  }
+
+  if (quality !== "low") {
+    const glow = new THREE.Mesh(new THREE.BoxGeometry(1.28, 0.045, 0.04), accentMaterial);
+    glow.position.set(0, 1.39, -0.05);
+    group.add(glow);
+  }
+
+  if (enableLocalLights && quality === "high") {
+    const light = new THREE.PointLight(color, 0.9, 4.2, 1.8);
+    light.position.set(0, 1.15, -0.65);
+    group.add(light);
+  }
+
+  return group;
+}
+
 function createDebugBox(box: CollisionBox): THREE.Mesh {
   const mesh = new THREE.Mesh(
     new THREE.BoxGeometry(box.maxX - box.minX, 1.8, box.maxZ - box.minZ),
@@ -4975,6 +5167,14 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     for (const label of districtLabels) {
       const district = stateRef.current.districts[label.districtId];
       if (district) {
+        addStaticObject(() => {
+          const profile = districtVisualProfiles[label.districtId] ?? districtVisualProfiles.starter_suburb;
+          const landmark = createDistrictLandmark(label.districtId, district.name, profile.accentColor, renderProfile.detail, renderProfile.enableLocalLights);
+          landmark.position.set(label.x, 0, label.z + 1.6);
+          landmark.rotation.y = Math.PI;
+          return landmark;
+        }, label.x, label.z + 1.6);
+
         addStaticObject(() => {
           const labelGroup = new THREE.Group();
           const profile = districtVisualProfiles[label.districtId] ?? districtVisualProfiles.starter_suburb;
