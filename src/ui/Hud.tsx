@@ -6,11 +6,10 @@ import type { SceneFeedbackEvent } from "../render/three/SceneTargets";
 
 interface HudProps {
   feedbackEvent?: SceneFeedbackEvent | null;
-  nextActionLabel?: string;
   state: GameState;
 }
 
-export function Hud({ feedbackEvent, nextActionLabel, state }: HudProps) {
+export function Hud({ feedbackEvent, state }: HudProps) {
   const player = state.factions[state.playerFactionId];
   const cargoUnits = carriedCrateUnits(state);
   const crate = state.player.carriedCrate;
@@ -36,7 +35,6 @@ export function Hud({ feedbackEvent, nextActionLabel, state }: HudProps) {
       <div className="brand-block">
         <span className="brand-title">Vendetta Vending</span>
         <span className="brand-subtitle">{formatClock(state.worldTimeHours)}</span>
-        {nextActionLabel && <span className="next-action">Next: {nextActionLabel}</span>}
       </div>
       <div className="stat-strip">
         <div className={`stat-pill ${pulse === "cash" ? "pulse-cash" : ""}`}>

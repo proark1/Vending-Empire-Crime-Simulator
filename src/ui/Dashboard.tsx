@@ -284,26 +284,29 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
   const playtestReport = useMemo(() => buildPlaytestReport(state), [state]);
   const runModifier = useMemo(() => activeRunModifier(state), [state]);
   const strategyUnlocks = state.replay?.strategyUnlocks ?? [];
-  const advancedTabs = useMemo<DashboardTab[]>(() => ["empire", "suppliers", "catalog", "finance", "logistics", "heat", "conflict", "rival", "story", ...(showDebug ? (["debug"] as DashboardTab[]) : [])], [showDebug]);
+  const advancedTabs = useMemo<DashboardTab[]>(
+    () => ["rights", "crew", "law", "empire", "suppliers", "catalog", "finance", "logistics", "heat", "conflict", "rival", "story", ...(showDebug ? (["debug"] as DashboardTab[]) : [])],
+    [showDebug]
+  );
   const visibleTabs = useMemo<Array<{ icon: React.ReactNode; id: DashboardTab; label: string }>>(
     () => [
       { id: "machines", label: "Machines", icon: <Map size={16} aria-hidden="true" /> },
-      { id: "fleet", label: "Fleet", icon: <Boxes size={16} aria-hidden="true" /> },
-      { id: "jobs", label: "Jobs", icon: <ClipboardList size={16} aria-hidden="true" /> },
       { id: "route", label: "Route", icon: <Route size={16} aria-hidden="true" /> },
+      { id: "jobs", label: "Jobs", icon: <ClipboardList size={16} aria-hidden="true" /> },
+      { id: "fleet", label: "Fleet", icon: <Boxes size={16} aria-hidden="true" /> },
       { id: "base", label: "Base", icon: <Factory size={16} aria-hidden="true" /> },
       { id: "districts", label: "Districts", icon: <Building2 size={16} aria-hidden="true" /> },
-      { id: "rights", label: "Rights", icon: <Landmark size={16} aria-hidden="true" /> },
-      { id: "crew", label: "Crew", icon: <Users size={16} aria-hidden="true" /> },
-      { id: "law", label: "Law", icon: <ShieldAlert size={16} aria-hidden="true" /> },
       { id: "log", label: "Log", icon: <ClipboardList size={16} aria-hidden="true" /> },
       ...(showAdvanced
         ? [
             { id: "catalog" as DashboardTab, label: "Market", icon: <FlaskConical size={16} aria-hidden="true" /> },
             { id: "suppliers" as DashboardTab, label: "Suppliers", icon: <Truck size={16} aria-hidden="true" /> },
+            { id: "crew" as DashboardTab, label: "Crew", icon: <Users size={16} aria-hidden="true" /> },
+            { id: "rights" as DashboardTab, label: "Rights", icon: <Landmark size={16} aria-hidden="true" /> },
             { id: "empire" as DashboardTab, label: "Empire", icon: <Building2 size={16} aria-hidden="true" /> },
             { id: "finance" as DashboardTab, label: "Finance", icon: <Landmark size={16} aria-hidden="true" /> },
             { id: "logistics" as DashboardTab, label: "Stock", icon: <Package size={16} aria-hidden="true" /> },
+            { id: "law" as DashboardTab, label: "Law", icon: <ShieldAlert size={16} aria-hidden="true" /> },
             { id: "heat" as DashboardTab, label: "Heat", icon: <AlertTriangle size={16} aria-hidden="true" /> },
             { id: "conflict" as DashboardTab, label: "Conflict", icon: <ShieldAlert size={16} aria-hidden="true" /> },
             { id: "rival" as DashboardTab, label: "Rivals", icon: <Map size={16} aria-hidden="true" /> },
@@ -358,6 +361,10 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
     <aside className="dashboard">
       <div className="dashboard-header">
         <div className="dashboard-mode-row">
+          <div className="dashboard-title">
+            <strong>Operations</strong>
+            <span>{showAdvanced ? "Full systems" : "Essentials"}</span>
+          </div>
           <button aria-pressed={showAdvanced} className={showAdvanced ? "mini-button active" : "mini-button"} onClick={() => setShowAdvanced((current) => !current)} type="button">
             <SlidersHorizontal size={13} aria-hidden="true" />
             Advanced

@@ -690,7 +690,6 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
   const conflicts = useMemo(() => activeConflictEvents(state), [state]);
   const guidanceLocationId = activeAlarm?.locationId ?? routeTask?.locationId ?? missionStep.targetLocationId;
   const guidanceLabel = activeAlarm ? "Machine alarm" : routeTask?.title;
-  const nextActionLabel = activeAlarm ? "Answer machine alarm" : routeTask?.title ?? missionStep.title;
   const report = latestDayReport(state);
   const playerFaction = state.factions[state.playerFactionId];
   const installedPlayerMachines = Object.values(state.machines).filter((machine) => machine.ownerFactionId === state.playerFactionId && machine.placementStatus === "installed").length;
@@ -1256,7 +1255,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
         />
       </Suspense>
       <div className="world-vignette" aria-hidden="true" />
-      {entered && <Hud feedbackEvent={sceneFeedback} nextActionLabel={nextActionLabel} state={state} />}
+      {entered && <Hud feedbackEvent={sceneFeedback} state={state} />}
       {entered && <MissionTracker compact={dashboardOpen} state={state} playerPosition={playerPosition} />}
       {entered && (
         <div

@@ -80,9 +80,11 @@ function PrimaryHint({ interaction }: { interaction: PrimaryInteraction }) {
   return (
     <div className={`primary-hint ${interaction.disabled ? "disabled" : ""}`}>
       <kbd>{interaction.durationMs && !interaction.disabled ? "HOLD E" : "E"}</kbd>
-      <span>{interaction.label}</span>
-      {interaction.holdVerb && !interaction.disabled && <strong>{interaction.holdVerb}</strong>}
-      {interaction.disabled && interaction.disabledReason && <em>{interaction.disabledReason}</em>}
+      <div className="primary-hint-copy">
+        <strong>{interaction.label}</strong>
+        {interaction.holdVerb && !interaction.disabled && <span>{interaction.holdVerb}</span>}
+        {interaction.disabled && interaction.disabledReason && <em>{interaction.disabledReason}</em>}
+      </div>
     </div>
   );
 }
@@ -222,9 +224,9 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
 
   if (!target) {
     return (
-      <section className="interaction-panel muted">
+      <section className="interaction-panel muted idle">
         <h2>Street View</h2>
-        <p>Nearby machines, suppliers, and placement pads will surface here.</p>
+        <p>Aim at a machine, garage, supplier, vehicle, or placement pad.</p>
       </section>
     );
   }

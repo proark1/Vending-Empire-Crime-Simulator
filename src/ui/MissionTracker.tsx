@@ -28,14 +28,22 @@ export function MissionTracker({ compact = false, state, playerPosition }: Missi
   const alarm = activeMachineAlarms(state)[0];
   const conflict = activeConflictEvents(state)[0];
   const heatTier = playerHeatTier(state);
+  const alarmLocationName = alarm ? state.locations[alarm.locationId]?.name ?? "route stop" : null;
+  const conflictLocationName = conflict ? state.locations[conflict.locationId]?.name ?? "route stop" : null;
   const pressureLine = alarm
-    ? `Alarm: ${state.machines[alarm.machineId]?.name ?? "machine"} at ${state.locations[alarm.locationId]?.name ?? "route stop"}`
+    ? `Alarm: ${state.machines[alarm.machineId]?.name ?? "machine"} at ${alarmLocationName}`
     : conflict
-      ? `${conflict.kind.replace("_", " ")}: ${state.locations[conflict.locationId]?.name ?? "route stop"}`
+      ? `${conflict.kind.replace("_", " ")}: ${conflictLocationName}`
       : heatTier.tone !== "good"
         ? `${heatTier.label}: ${heatTier.action}`
         : null;
   const pressureTone = alarm || conflict ? "danger" : heatTier.tone;
+  const activeTitle = alarm ? "Answer machine alarm" : conflict ? "Handle street trouble" : step.title;
+  const activeGuidance = alarm
+    ? `Follow the arrow to ${alarmLocationName} and face the machine.`
+    : conflict
+      ? `Follow the arrow to ${conflictLocationName} and choose a response.`
+      : step.guidance;
 
   // Collapsed by default to the current step + progress; the dashboard forces it
   // collapsed. The chevron reveals the objective, guidance, and full checklist.
@@ -56,7 +64,8 @@ export function MissionTracker({ compact = false, state, playerPosition }: Missi
     <section className={collapsed ? "mission-tracker compact" : "mission-tracker"} aria-label="Current mission">
       <div className="mission-title-row">
         {state.mission.completed ? <CheckCircle2 size={17} aria-hidden="true" /> : <ClipboardList size={17} aria-hidden="true" />}
-        <span>{step.title}</span>
+        <span className="mission-eyebrow">{pressureLine ? "Priority" : "Next"}</span>
+        <strong className="mission-step-title">{activeTitle}</strong>
         {!compact && (
           <button
             aria-expanded={expanded}
@@ -73,11 +82,12 @@ export function MissionTracker({ compact = false, state, playerPosition }: Missi
         <span style={{ width: `${step.progressRatio * 100}%` }} />
       </div>
       <span className="mission-progress-label">{step.progressLabel}</span>
+      {collapsed && <span className="mission-guidance-summary">{activeGuidance}</span>}
       {pressureLine && <span className={`mission-threat ${pressureTone}`}>{pressureLine}</span>}
       {!collapsed && (
         <>
           <p>{step.objective}</p>
-          <span className="mission-guidance">{step.guidance}</span>
+          <span className="mission-guidance">{activeGuidance}</span>
           {showTutorial && (
             <ol className="tutorial-steps" aria-label="Starter tutorial">
               {tutorialSteps.map((tutorialStep) => (
