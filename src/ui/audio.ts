@@ -5,7 +5,8 @@ import {
   type AudioAsset,
   type AudioCategory,
   type AudioConfig,
-  type AudioCue
+  type AudioCue,
+  type AudioVoiceLine
 } from "../game/content/audioConfig";
 import type { SceneFeedbackKind } from "../render/three/SceneTargets";
 
@@ -20,7 +21,22 @@ let currentSynthMusicCueId: string | null = null;
 let musicDuckedUntil = 0;
 const activeOneShots = new Set<HTMLAudioElement>();
 const lastCueTimes = new Map<string, number>();
+const lastVoiceLineByTrigger = new Map<string, string>();
 const MUSIC_CROSSFADE_SECONDS = 0.8;
+const VOICE_QUEUE_GAP_MS = 180;
+const VOICE_QUEUE_MAX_ITEMS = 5;
+
+interface VoiceQueueItem {
+  asset: AudioAsset | null;
+  cue: AudioCue;
+  durationMs: number;
+  line: AudioVoiceLine;
+  requestedAt: number;
+}
+
+let voiceQueue: VoiceQueueItem[] = [];
+let voiceQueueTimer: number | null = null;
+let voicePlayingUntil = 0;
 
 function getContext(): AudioContext | null {
   if (typeof window === "undefined") {
@@ -106,6 +122,132 @@ function cueAsset(cue: AudioCue | null): AudioAsset | null {
   }
 
   return audioConfig.assets.find((asset) => asset.id === cue.assetId) ?? null;
+}
+
+function voiceLines(cue: AudioCue): AudioVoiceLine[] {
+  const lines = (cue.lines ?? []).filter((line) => line.speaker || line.subtitle);
+  if (lines.length > 0) {
+    return lines;
+  }
+
+  return [{
+    id: `${cue.id}_line_1`,
+    speaker: cue.speaker,
+    subtitle: cue.subtitle,
+    weight: 1
+  }];
+}
+
+function chooseVoiceLine(cue: AudioCue): AudioVoiceLine | null {
+  const lines = voiceLines(cue);
+  if (lines.length === 0) {
+    return null;
+  }
+
+  const lastLineId = lastVoiceLineByTrigger.get(cue.trigger);
+  const candidates = lines.length > 1 ? lines.filter((line) => line.id !== lastLineId) : lines;
+  const pool = candidates.length > 0 ? candidates : lines;
+  const totalWeight = pool.reduce((sum, line) => sum + Math.max(0.1, line.weight), 0);
+  let roll = Math.random() * totalWeight;
+  for (const line of pool) {
+    roll -= Math.max(0.1, line.weight);
+    if (roll <= 0) {
+      lastVoiceLineByTrigger.set(cue.trigger, line.id);
+      return line;
+    }
+  }
+
+  const fallback = pool[pool.length - 1];
+  lastVoiceLineByTrigger.set(cue.trigger, fallback.id);
+  return fallback;
+}
+
+function cueAssetForVoiceLine(cue: AudioCue, line: AudioVoiceLine): AudioAsset | null {
+  if (line.assetId) {
+    const lineAsset = audioConfig.assets.find((asset) => asset.id === line.assetId && asset.category === "voice");
+    if (lineAsset) {
+      return lineAsset;
+    }
+  }
+
+  return cueAsset(cue);
+}
+
+function voiceLineDurationMs(line: AudioVoiceLine): number {
+  return Math.min(7200, Math.max(2600, line.subtitle.length * 55));
+}
+
+function dispatchVoiceSubtitle(line: AudioVoiceLine, durationMs: number): void {
+  if (typeof window === "undefined" || (!line.speaker && !line.subtitle)) {
+    return;
+  }
+
+  window.dispatchEvent(
+    new CustomEvent("vv:voice-cue", {
+      detail: { speaker: line.speaker, subtitle: line.subtitle, durationMs }
+    })
+  );
+}
+
+function scheduleVoiceQueue(delayMs = 0): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if (voiceQueueTimer !== null) {
+    window.clearTimeout(voiceQueueTimer);
+  }
+  voiceQueueTimer = window.setTimeout(pumpVoiceQueue, Math.max(0, delayMs));
+}
+
+function takeNextVoiceQueueItem(): VoiceQueueItem | null {
+  if (voiceQueue.length === 0) {
+    return null;
+  }
+
+  voiceQueue = voiceQueue
+    .slice()
+    .sort((a, b) => b.cue.priority - a.cue.priority || a.requestedAt - b.requestedAt);
+  return voiceQueue.shift() ?? null;
+}
+
+function enqueueVoiceCue(item: VoiceQueueItem): boolean {
+  voiceQueue.push(item);
+  if (voiceQueue.length > VOICE_QUEUE_MAX_ITEMS) {
+    const lowestPriorityItem = voiceQueue
+      .slice()
+      .sort((a, b) => a.cue.priority - b.cue.priority || a.requestedAt - b.requestedAt)[0];
+    voiceQueue = voiceQueue.filter((candidate) => candidate !== lowestPriorityItem);
+    if (lowestPriorityItem === item) {
+      return false;
+    }
+  }
+
+  scheduleVoiceQueue();
+  return true;
+}
+
+function pumpVoiceQueue(): void {
+  voiceQueueTimer = null;
+  const now = Date.now();
+  if (voicePlayingUntil > now) {
+    scheduleVoiceQueue(voicePlayingUntil - now);
+    return;
+  }
+
+  const item = takeNextVoiceQueueItem();
+  if (!item) {
+    return;
+  }
+
+  voicePlayingUntil = now + item.durationMs + VOICE_QUEUE_GAP_MS;
+  if (item.asset) {
+    playAsset(item.cue, item.asset);
+  } else {
+    lastCueTimes.set(item.cue.id, now);
+  }
+  dispatchVoiceSubtitle(item.line, item.durationMs);
+  scheduleVoiceQueue(item.durationMs + VOICE_QUEUE_GAP_MS);
 }
 
 function stopCurrentMusic(): void {
@@ -675,28 +817,30 @@ export function playEventCue(toneName: GameEventTone): void {
   });
 }
 
-// Play a voiced line for a "voice.*" trigger and surface its subtitle. Voice cues
-// duck the music bed automatically (see playAsset). The findCue cooldown throttles
-// repeats. The subtitle is dispatched even when muted so captions still work.
+// Queue a voiced line for a "voice.*" trigger and surface its subtitle. Voice
+// cues duck the music bed automatically (see playAsset). Cue cooldowns throttle
+// repeat spam at enqueue time, while the queue prevents overlapping barks.
 export function playVoiceCue(trigger: string): void {
   const cue = findCue(trigger, "voice");
   if (!cue) {
     return;
   }
 
-  const asset = cueAsset(cue);
-  if (asset) {
-    playAsset(cue, asset);
-  } else {
-    lastCueTimes.set(cue.id, Date.now());
+  const line = chooseVoiceLine(cue);
+  if (!line) {
+    return;
   }
 
-  if (typeof window !== "undefined" && (cue.speaker || cue.subtitle)) {
-    const durationMs = Math.min(7000, Math.max(2600, cue.subtitle.length * 55));
-    window.dispatchEvent(
-      new CustomEvent("vv:voice-cue", {
-        detail: { speaker: cue.speaker, subtitle: cue.subtitle, durationMs }
-      })
-    );
+  const requestedAt = Date.now();
+  const item: VoiceQueueItem = {
+    asset: cueAssetForVoiceLine(cue, line),
+    cue,
+    durationMs: voiceLineDurationMs(line),
+    line,
+    requestedAt
+  };
+
+  if (enqueueVoiceCue(item)) {
+    lastCueTimes.set(cue.id, requestedAt);
   }
 }

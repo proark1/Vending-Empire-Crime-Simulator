@@ -1285,6 +1285,7 @@ describe("game reducer", () => {
     expect(config.cues.length).toBeGreaterThan(0);
     expect(config.assets.some((asset) => asset.category === "music" && asset.url.startsWith("synth://music/"))).toBe(true);
     expect(config.cues.some((cue) => cue.category === "voice" && cue.assetId === "synth_voice_radio")).toBe(true);
+    expect(config.cues.find((cue) => cue.trigger === "voice.rival_attack")?.lines?.length).toBeGreaterThan(1);
     expect(issues.filter((issue) => issue.severity === "error")).toEqual([]);
   });
 });

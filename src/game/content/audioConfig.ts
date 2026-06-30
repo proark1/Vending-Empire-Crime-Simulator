@@ -10,6 +10,14 @@ export interface AudioAsset {
   volume: number;
 }
 
+export interface AudioVoiceLine {
+  assetId?: string;
+  id: string;
+  speaker: string;
+  subtitle: string;
+  weight: number;
+}
+
 export interface AudioCue {
   assetId: string;
   category: AudioCategory;
@@ -18,6 +26,7 @@ export interface AudioCue {
   enabled: boolean;
   id: string;
   label: string;
+  lines?: AudioVoiceLine[];
   priority: number;
   speaker: string;
   subtitle: string;
@@ -148,30 +157,97 @@ const defaultCueAssetByTrigger: Record<string, string> = {
   "event.trend": "synth_sound_cash"
 };
 
-// Authored noir lines + in-fiction speaker names for the voice layer, surfaced as
-// on-screen subtitles when a voice cue fires. (Audio generation specs live in
-// audioProvider.ts; these are the runtime defaults so captions work out of the box.)
-const defaultVoiceLineByTrigger: Record<string, { speaker: string; subtitle: string }> = {
-  "voice.district_entry": { speaker: "Dispatch", subtitle: "New block, new rules. Keep the machines stocked and the locals paid." },
-  "voice.heat_warning": { speaker: "Dispatch", subtitle: "Heat is climbing. Kill the noise before inspectors start knocking." },
-  "voice.rival_attack": { speaker: "Dispatch", subtitle: "Redline is moving on one of our machines. Get there now." },
-  "voice.mission_complete": { speaker: "Dispatch", subtitle: "That route is ours. Bank the win and prep the next block." },
-  "voice.supplier_offer": { speaker: "Supplier", subtitle: "I can get you a clean pallet by midnight. Pay fast, move faster." },
-  "voice.fixer_tip": { speaker: "Fixer", subtitle: "There is a back door on this deal. It costs extra because it works." },
-  "voice.landlord_pressure": { speaker: "Landlord", subtitle: "Rent clears by morning, or your machine finds the sidewalk." },
-  "voice.rival_boss_threat": { speaker: "Rival Boss", subtitle: "That corner was ours before your logo touched it. Pull back, or we pull it down." },
-  "voice.mechanic_unlock": { speaker: "Mechanic", subtitle: "I rebuilt the lock assembly. It is ugly, heavy, and exactly what you need." },
-  "voice.driver_warning": { speaker: "Driver", subtitle: "Route is hot. I can still make the drop, but I am not waiting twice." },
-  "voice.guard_contact": { speaker: "Guard", subtitle: "I have eyes on the block. If Redline tests the machine, they pay for it." },
-  "voice.inspector_notice": { speaker: "Inspector", subtitle: "This placement is flagged for inspection. Keep your paperwork close." },
-  "voice.lawyer_notice": { speaker: "Lawyer", subtitle: "Their contract language is sloppy. Give me one day and I can turn it against them." },
-  "voice.informant_tip": { speaker: "Informant", subtitle: "A scout marked your machine ten minutes ago. They are checking if you are asleep." }
+// Authored noir line banks + in-fiction speaker names for the voice layer,
+// surfaced as subtitles when a voice cue fires. (Audio generation specs live in
+// audioProvider.ts; these are runtime defaults so captions work out of the box.)
+const defaultVoiceLinesByTrigger: Record<string, Array<{ speaker: string; subtitle: string; weight?: number }>> = {
+  "voice.district_entry": [
+    { speaker: "Dispatch", subtitle: "New block, new rules. Keep the machines stocked and the locals paid." },
+    { speaker: "Dispatch", subtitle: "Different streets, same math. Fill the glass, watch the corners." },
+    { speaker: "Dispatch", subtitle: "You are on the block. Make the route look boring and profitable." }
+  ],
+  "voice.heat_warning": [
+    { speaker: "Dispatch", subtitle: "Heat is climbing. Kill the noise before inspectors start knocking." },
+    { speaker: "Dispatch", subtitle: "Too many eyes on us. Quiet the route and keep receipts clean." },
+    { speaker: "Dispatch", subtitle: "Pressure just moved up a tier. Stop feeding it." }
+  ],
+  "voice.rival_attack": [
+    { speaker: "Dispatch", subtitle: "Redline is moving on one of our machines. Get there now.", weight: 1.2 },
+    { speaker: "Dispatch", subtitle: "Alarm tripped. Somebody is testing the cabinet and your patience." },
+    { speaker: "Dispatch", subtitle: "Rival hands on our machine. Do not let that become a habit." }
+  ],
+  "voice.mission_complete": [
+    { speaker: "Dispatch", subtitle: "That route is ours. Bank the win and prep the next block." },
+    { speaker: "Dispatch", subtitle: "Clean enough. The route held, the cash moved, and nobody sensible noticed." },
+    { speaker: "Dispatch", subtitle: "Objective cleared. Take the quiet minute before the city spends it." }
+  ],
+  "voice.supplier_offer": [
+    { speaker: "Supplier", subtitle: "I can get you a clean pallet by midnight. Pay fast, move faster." },
+    { speaker: "Supplier", subtitle: "Stock is moving weird today. If you want the good crates, decide now." },
+    { speaker: "Supplier", subtitle: "I have product, you have machines. Let us pretend this is normal commerce." }
+  ],
+  "voice.fixer_tip": [
+    { speaker: "Fixer", subtitle: "There is a back door on this deal. It costs extra because it works." },
+    { speaker: "Fixer", subtitle: "Paper trail is ugly, but ugly can still be useful." },
+    { speaker: "Fixer", subtitle: "The shortcut is open. It is not cheap, because shortcuts with doors never are." }
+  ],
+  "voice.landlord_pressure": [
+    { speaker: "Landlord", subtitle: "Rent clears by morning, or your machine finds the sidewalk." },
+    { speaker: "Landlord", subtitle: "That cabinet takes space. Space costs money. You know the rest." },
+    { speaker: "Landlord", subtitle: "I like quiet tenants. Your machine is becoming a loud one." }
+  ],
+  "voice.rival_boss_threat": [
+    { speaker: "Rival Boss", subtitle: "That corner was ours before your logo touched it. Pull back, or we pull it down." },
+    { speaker: "Rival Boss", subtitle: "Your little route is getting noticed. That is not praise." },
+    { speaker: "Rival Boss", subtitle: "Keep pushing into our blocks and every machine becomes a message." }
+  ],
+  "voice.mechanic_unlock": [
+    { speaker: "Mechanic", subtitle: "I rebuilt the lock assembly. It is ugly, heavy, and exactly what you need." },
+    { speaker: "Mechanic", subtitle: "New hardware is live. It will not make friends, but it will hold." },
+    { speaker: "Mechanic", subtitle: "Bolted, wired, tested. Try not to make me fix it twice." }
+  ],
+  "voice.driver_warning": [
+    { speaker: "Driver", subtitle: "Route is hot. I can still make the drop, but I am not waiting twice." },
+    { speaker: "Driver", subtitle: "I see attention ahead. Tell me now if this run is worth the dents." },
+    { speaker: "Driver", subtitle: "Van is ready, road is not. That is usually how this job starts." }
+  ],
+  "voice.guard_contact": [
+    { speaker: "Guard", subtitle: "I have eyes on the block. If Redline tests the machine, they pay for it." },
+    { speaker: "Guard", subtitle: "Camera angle is clean. Anyone touches the cabinet, I will know." },
+    { speaker: "Guard", subtitle: "Security is posted. The machine can look unattended now." }
+  ],
+  "voice.inspector_notice": [
+    { speaker: "Inspector", subtitle: "This placement is flagged for inspection. Keep your paperwork close." },
+    { speaker: "Inspector", subtitle: "Your permits are getting read by people who enjoy reading permits." },
+    { speaker: "Inspector", subtitle: "A compliance visit is pending. Make the machine look boring." }
+  ],
+  "voice.lawyer_notice": [
+    { speaker: "Lawyer", subtitle: "Their contract language is sloppy. Give me one day and I can turn it against them." },
+    { speaker: "Lawyer", subtitle: "The fine is not final. Nothing with this many commas is final." },
+    { speaker: "Lawyer", subtitle: "Do not answer questions. Send documents, not personality." }
+  ],
+  "voice.informant_tip": [
+    { speaker: "Informant", subtitle: "A scout marked your machine ten minutes ago. They are checking if you are asleep." },
+    { speaker: "Informant", subtitle: "I heard a block name and your logo in the same sentence. That is rarely good." },
+    { speaker: "Informant", subtitle: "Someone is pricing pressure against your route. Thought you should know." }
+  ]
 };
+
+function voiceLinesForTrigger(trigger: string, fallbackSpeaker: string, fallbackSubtitle: string): AudioVoiceLine[] {
+  const lines = defaultVoiceLinesByTrigger[trigger] ?? [{ speaker: fallbackSpeaker, subtitle: fallbackSubtitle }];
+  return lines.map((line, index) => ({
+    id: `${trigger.replace(/[^a-z0-9]+/g, "_")}_line_${index + 1}`,
+    speaker: line.speaker,
+    subtitle: line.subtitle,
+    weight: Math.max(0.1, line.weight ?? 1)
+  }));
+}
 
 function defaultAudioCues(): AudioCue[] {
   return audioTriggerOptions.map((option, index) => {
     const assetId = defaultCueAssetByTrigger[option.trigger] ?? (option.category === "voice" ? "synth_voice_radio" : "synth_sound_alert");
-    const voiceLine = option.category === "voice" ? defaultVoiceLineByTrigger[option.trigger] : undefined;
+    const voiceLines = option.category === "voice" ? voiceLinesForTrigger(option.trigger, "Radio", option.label) : [];
+    const voiceLine = voiceLines[0];
     return {
       assetId,
       category: option.category,
@@ -180,6 +256,7 @@ function defaultAudioCues(): AudioCue[] {
       enabled: true,
       id: `default_${option.trigger.replace(/[^a-z0-9]+/g, "_")}_${index}`,
       label: option.label,
+      lines: option.category === "voice" ? voiceLines : [],
       priority: option.category === "music" ? 10 : option.category === "voice" ? 6 : 4,
       speaker: voiceLine?.speaker ?? (option.category === "voice" ? "Radio" : ""),
       subtitle: voiceLine?.subtitle ?? (option.category === "voice" ? option.label : ""),
@@ -222,6 +299,55 @@ function idFromLabel(label: string, fallback: string): string {
   return id || fallback;
 }
 
+function normalizeVoiceLines(
+  cue: Partial<AudioCue>,
+  category: AudioCategory,
+  trigger: string,
+  cueId: string,
+  fallbackSpeaker: string,
+  fallbackSubtitle: string
+): AudioVoiceLine[] {
+  if (category !== "voice") {
+    return [];
+  }
+
+  const defaultLines = defaultVoiceLinesByTrigger[trigger] ?? [];
+  const cueAssetId = stringValue(cue.assetId);
+  const usesProceduralVoice = !cueAssetId || cueAssetId === "synth_voice_radio";
+  const matchesAuthoredDefault = !fallbackSubtitle || defaultLines.some((line) => line.subtitle === fallbackSubtitle);
+  const lineInputs = Array.isArray(cue.lines) && cue.lines.length > 0
+    ? cue.lines
+    : usesProceduralVoice && matchesAuthoredDefault && defaultLines.length > 0
+      ? voiceLinesForTrigger(trigger, fallbackSpeaker, fallbackSubtitle)
+      : [{ id: `${cueId}_line_1`, speaker: fallbackSpeaker, subtitle: fallbackSubtitle, weight: 1 }];
+
+  const lines = lineInputs
+    .map((lineInput, index) => {
+      const line = typeof lineInput === "object" && lineInput !== null ? lineInput as Partial<AudioVoiceLine> : {};
+      const subtitle = stringValue(line.subtitle, fallbackSubtitle);
+      const speaker = stringValue(line.speaker, fallbackSpeaker);
+      if (!subtitle && !speaker) {
+        return null;
+      }
+      const normalizedLine: AudioVoiceLine = {
+        id: stringValue(line.id, `${cueId}_line_${index + 1}`),
+        speaker,
+        subtitle,
+        weight: Math.max(0.1, clamp(line.weight, 1, 0.1, 10))
+      };
+      const assetId = stringValue(line.assetId);
+      if (assetId) {
+        normalizedLine.assetId = assetId;
+      }
+      return {
+        ...normalizedLine
+      };
+    })
+    .filter((line): line is AudioVoiceLine => Boolean(line));
+
+  return lines.length > 0 ? lines : voiceLinesForTrigger(trigger, fallbackSpeaker, fallbackSubtitle);
+}
+
 export function createDefaultAudioConfig(): AudioConfig {
   return cloneConfig({
     assets: defaultAudioAssets,
@@ -259,23 +385,31 @@ export function normalizeAudioConfig(candidate: unknown): AudioConfig {
     }
   }
 
-  const cues = cuesInput.map((cueInput, index) => {
+  const cues: AudioCue[] = cuesInput.map((cueInput, index) => {
     const cue = typeof cueInput === "object" && cueInput !== null ? cueInput as Partial<AudioCue> : {};
     const trigger = stringValue(cue.trigger, audioTriggerOptions[index % audioTriggerOptions.length]?.trigger ?? "feedback.cash");
     const triggerMeta = audioTriggerOptions.find((option) => option.trigger === trigger);
     const category = categoryValue(cue.category, triggerMeta?.category ?? "sound");
     const label = stringValue(cue.label, triggerMeta?.label ?? `Cue ${index + 1}`);
+    const id = stringValue(cue.id, idFromLabel(label, `cue_${index + 1}`));
+    const fallbackLines = category === "voice" ? voiceLinesForTrigger(trigger, stringValue(cue.speaker, "Radio"), stringValue(cue.subtitle, label)) : [];
+    const fallbackLine = fallbackLines[0];
+    const speaker = stringValue(cue.speaker, fallbackLine?.speaker ?? "");
+    const subtitle = stringValue(cue.subtitle, fallbackLine?.subtitle ?? "");
+    const lines = normalizeVoiceLines(cue, category, trigger, id, speaker, subtitle);
+    const primaryLine = lines[0];
     return {
       assetId: stringValue(cue.assetId),
       category,
       cooldownMs: integerValue(cue.cooldownMs, 0, 0, 300000),
       duckMusic: booleanValue(cue.duckMusic, category === "voice"),
       enabled: booleanValue(cue.enabled, true),
-      id: stringValue(cue.id, idFromLabel(label, `cue_${index + 1}`)),
+      id,
       label,
+      lines,
       priority: integerValue(cue.priority, 0, -100, 100),
-      speaker: stringValue(cue.speaker),
-      subtitle: stringValue(cue.subtitle),
+      speaker: primaryLine?.speaker ?? speaker,
+      subtitle: primaryLine?.subtitle ?? subtitle,
       trigger
     };
   });

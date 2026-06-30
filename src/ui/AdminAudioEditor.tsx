@@ -8,7 +8,8 @@ import {
   type AudioAsset,
   type AudioCategory,
   type AudioConfig,
-  type AudioCue
+  type AudioCue,
+  type AudioVoiceLine
 } from "../game/content/audioConfig";
 import {
   createDefaultAudioProviderSettings,
@@ -182,6 +183,67 @@ function assetPreviewInfo(asset: AudioAsset): AssetPreviewInfo {
   return { playable: true, title: "Preview audio" };
 }
 
+function voiceLineBank(cue: AudioCue): AudioVoiceLine[] {
+  if (cue.lines?.length) {
+    return cue.lines;
+  }
+
+  if (!cue.speaker && !cue.subtitle) {
+    return [];
+  }
+
+  return [{
+    id: `${cue.id || "cue"}_line_1`,
+    speaker: cue.speaker,
+    subtitle: cue.subtitle,
+    weight: 1
+  }];
+}
+
+function formatVoiceLineBank(cue: AudioCue): string {
+  return voiceLineBank(cue)
+    .map((line) => `${line.speaker ? `${line.speaker}: ` : ""}${line.subtitle}`.trim())
+    .join("\n");
+}
+
+function parseVoiceLineBank(value: string, cue: AudioCue): AudioVoiceLine[] {
+  const existingLines = voiceLineBank(cue);
+  return value
+    .split(/\r?\n/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry, index) => {
+      const separator = entry.indexOf(":");
+      const existing = existingLines[index];
+      const speaker = separator >= 0 ? entry.slice(0, separator).trim() : existing?.speaker ?? cue.speaker;
+      const subtitle = separator >= 0 ? entry.slice(separator + 1).trim() : entry;
+      return {
+        assetId: existing?.assetId,
+        id: existing?.id || `${cue.id || "cue"}_line_${index + 1}`,
+        speaker,
+        subtitle,
+        weight: existing?.weight ?? 1
+      };
+    });
+}
+
+function primaryVoiceLinePatch(cue: AudioCue, patch: Partial<Pick<AudioVoiceLine, "speaker" | "subtitle">>): Partial<AudioCue> {
+  const lines = voiceLineBank(cue);
+  const firstLine = lines[0] ?? {
+    id: `${cue.id || "cue"}_line_1`,
+    speaker: cue.speaker,
+    subtitle: cue.subtitle,
+    weight: 1
+  };
+  const nextFirstLine = { ...firstLine, ...patch };
+  return {
+    ...patch,
+    lines: [nextFirstLine, ...lines.slice(1)],
+    speaker: nextFirstLine.speaker,
+    subtitle: nextFirstLine.subtitle
+  };
+}
+
 function configWithGeneratedAsset(config: AudioConfig, prompts: ElevenLabsGenerationPrompt[], asset: AudioAsset): AudioConfig {
   const sourcePrompt = prompts.find((prompt) => generatedAssetId(prompt) === asset.id);
   const nextAssets = config.assets.some((candidate) => candidate.id === asset.id)
@@ -195,6 +257,15 @@ function configWithGeneratedAsset(config: AudioConfig, prompts: ElevenLabsGenera
       category: asset.category,
       duckMusic: asset.category === "voice",
       label: sourcePrompt.label,
+      lines: asset.category === "voice"
+        ? [{
+          assetId: asset.id,
+          id: `${cue.id || generatedAssetId(sourcePrompt)}_line_1`,
+          speaker: cue.speaker,
+          subtitle: sourcePrompt.prompt,
+          weight: 1
+        }]
+        : cue.lines,
       subtitle: asset.category === "voice" ? sourcePrompt.prompt : cue.subtitle
     }
     : cue
@@ -215,6 +286,15 @@ function configWithGeneratedAsset(config: AudioConfig, prompts: ElevenLabsGenera
           enabled: true,
           id: `cue_${asset.id}`,
           label: sourcePrompt.label,
+          lines: asset.category === "voice"
+            ? [{
+              assetId: asset.id,
+              id: `cue_${asset.id}_line_1`,
+              speaker: "",
+              subtitle: sourcePrompt.prompt,
+              weight: 1
+            }]
+            : [],
           priority: asset.category === "voice" ? 10 : 0,
           speaker: "",
           subtitle: asset.category === "voice" ? sourcePrompt.prompt : "",
@@ -1149,8 +1229,23 @@ export function AdminAudioEditor({ initialConfig, onReset, onSave, session }: Ad
                       <input aria-label="Cue cooldown" min="0" step="250" type="number" value={cue.cooldownMs} onChange={(event) => updateCue(index, { cooldownMs: Number(event.target.value) })} />
                       {cue.category === "voice" || triggerMeta?.category === "voice" ? (
                         <>
-                          <input aria-label="Speaker" placeholder="Speaker" value={cue.speaker} onChange={(event) => updateCue(index, { speaker: event.target.value })} />
-                          <input aria-label="Subtitle" className="wide" placeholder="Subtitle" value={cue.subtitle} onChange={(event) => updateCue(index, { subtitle: event.target.value })} />
+                          <input aria-label="Speaker" placeholder="Speaker" value={cue.speaker} onChange={(event) => updateCue(index, primaryVoiceLinePatch(cue, { speaker: event.target.value }))} />
+                          <input aria-label="Subtitle" className="wide" placeholder="Subtitle" value={cue.subtitle} onChange={(event) => updateCue(index, primaryVoiceLinePatch(cue, { subtitle: event.target.value }))} />
+                          <textarea
+                            aria-label="Voice line bank"
+                            className="wide"
+                            placeholder="Speaker: Line variant"
+                            rows={3}
+                            value={formatVoiceLineBank(cue)}
+                            onChange={(event) => {
+                              const lines = parseVoiceLineBank(event.target.value, cue);
+                              updateCue(index, {
+                                lines,
+                                speaker: lines[0]?.speaker ?? "",
+                                subtitle: lines[0]?.subtitle ?? ""
+                              });
+                            }}
+                          />
                           <label className="admin-audio-compact-check">
                             <input checked={cue.duckMusic} type="checkbox" onChange={(event) => updateCue(index, { duckMusic: event.target.checked })} />
                             Duck
