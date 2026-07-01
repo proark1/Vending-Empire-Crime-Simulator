@@ -30,6 +30,7 @@ import { sidewalkFootprintsForRoads } from "../../game/world/sidewalks";
 import type { SceneFeedbackEvent, SceneTarget } from "./SceneTargets";
 import { resolveGraphicsProfile, type GraphicsQuality } from "./graphicsQuality";
 import { createAsphaltMaterial, createAtmosphere, createBuilding, createBush, createContactShadow, createEnvironmentMapTexture, createGrassMaterial, createNpcCharacter, createParkBench, createParkLamp, createParkPathMaterial, createPondMaterial, createRoadMaterial, createSidewalkMaterial, createSkyDome, createStreetProps, createTree } from "./proceduralArt";
+import { perfNow, recordPerfCount, recordPerfDuration } from "../../game/core/performance";
 
 interface ThreeSceneProps {
   feedbackEvent?: SceneFeedbackEvent | null;
@@ -5180,6 +5181,110 @@ function activeVehicleDrivePose(currentState: GameState): { vehicle: RouteVehicl
   };
 }
 
+function roundedSignature(value: number, scale = 10): number {
+  return Math.round(value * scale) / scale;
+}
+
+function inventorySignature(inventory: Record<string, number> | undefined): string {
+  return Object.entries(inventory ?? {})
+    .filter(([, quantity]) => quantity > 0)
+    .sort(([first], [second]) => first.localeCompare(second))
+    .map(([productId, quantity]) => `${productId}:${quantity}`)
+    .join(",");
+}
+
+function dynamicObjectsSignature(currentState: GameState, guidanceLocationId: string | undefined, quality: GraphicsQuality): string {
+  const routePlan = optimizedRoutePlan(currentState);
+  const timeBucket = Math.floor(currentState.worldTimeHours * 2);
+  const machines = Object.values(currentState.machines)
+    .map((machine) => {
+      const slots = machine.slots
+        .map((slot) => `${slot.productId}:${Math.floor(slot.quantity / 4)}:${slot.capacity}:${roundedSignature(slot.price, 4)}`)
+        .join(",");
+      return [
+        machine.id,
+        machine.ownerFactionId,
+        machine.locationId,
+        machine.placementStatus,
+        machine.machineModelId,
+        Math.round(machine.damage),
+        Math.floor(machine.revenueStored / 20),
+        machine.upgrades.join(","),
+        slots
+      ].join(":");
+    })
+    .sort()
+    .join("|");
+  const locations = Object.values(currentState.locations)
+    .map((location) => `${location.id}:${location.kind}:${location.districtId}:${Math.round(location.rivalPressure * 20)}`)
+    .sort()
+    .join("|");
+  const districtAccess = Object.values(currentState.districtProgress)
+    .map((progress) => `${progress.districtId}:${progress.access}`)
+    .sort()
+    .join("|");
+  const alarms = activeMachineAlarms(currentState)
+    .map((alarm) => `${alarm.id}:${alarm.kind}:${alarm.machineId}:${alarm.locationId}:${alarm.resolved}:${alarm.outcome ?? ""}`)
+    .sort()
+    .join("|");
+  const conflicts = activeConflictEvents(currentState)
+    .map((conflict) => `${conflict.id}:${conflict.kind}:${conflict.locationId}:${conflict.status}:${conflict.targetMachineId ?? ""}:${conflict.intensity}`)
+    .sort()
+    .join("|");
+  const districtEvents = activeDistrictEvents(currentState)
+    .map((event) => `${event.id}:${event.kind}:${event.districtId}:${event.tone}`)
+    .sort()
+    .join("|");
+  const rivalOperations = Object.values(currentState.rivalOrganizations ?? {})
+    .flatMap((organization) => organization.operations)
+    .filter((operation) => !operation.resolvedHour)
+    .map((operation) => `${operation.id}:${operation.kind}:${operation.locationId}:${operation.factionId}:${Math.round(operation.progress)}:${operation.exposed}`)
+    .sort()
+    .join("|");
+  const activities = (currentState.streetLife?.recentActivities ?? [])
+    .slice(-12)
+    .map((activity) => `${activity.id}:${activity.kind}:${activity.locationId}:${activity.machineId ?? ""}:${Math.floor(activity.hour * 10)}`)
+    .sort()
+    .join("|");
+  const employees = Object.values(currentState.employees ?? {})
+    .map((employee) => `${employee.id}:${employee.role}:${employee.status}:${employee.betrayed ? 1 : 0}:${employee.lastLocationId ?? ""}:${employee.routeTargetLocationId ?? ""}`)
+    .sort()
+    .join("|");
+  const vehicles = Object.values(currentState.vehicles)
+    .map((vehicle) => `${vehicle.id}:${vehicle.locationId}:${Math.round(vehicle.condition * 20)}:${inventorySignature(vehicle.inventory)}:${vehicle.upgrades?.join(",") ?? ""}`)
+    .sort()
+    .join("|");
+  const contracts = Object.values(currentState.contracts)
+    .map((contract) => `${contract.id}:${contract.locationId}:${contract.status}:${contract.deliveredQuantity}:${contract.requiredQuantity}`)
+    .sort()
+    .join("|");
+  const routeStops = (routePlan?.stops ?? [])
+    .map((stop) => `${stop.order}:${stop.task.id}:${stop.locationId}:${stop.task.tone}`)
+    .join("|");
+
+  return [
+    quality,
+    guidanceLocationId ?? "",
+    currentState.playerFactionId,
+    currentState.routePlan.selectedTaskId ?? "",
+    currentState.player.carriedCrate ? `${currentState.player.carriedCrate.productId}:${currentState.player.carriedCrate.quantity}:${currentState.player.carriedCrate.source}` : "",
+    inventorySignature(currentState.player.garageStorage),
+    timeBucket,
+    districtAccess,
+    locations,
+    machines,
+    alarms,
+    conflicts,
+    districtEvents,
+    rivalOperations,
+    activities,
+    employees,
+    vehicles,
+    contracts,
+    routeStops
+  ].join("||");
+}
+
 export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId, mapLayout, modelConfig, state, onVehicleDrive, onPlayerPositionChange, onPlayerHeadingChange, onTargetChange }: ThreeSceneProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const stateRef = useRef(state);
@@ -5190,6 +5295,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
   const carriedCrateMountRef = useRef<THREE.Group | null>(null);
   const playerAvatarCargoMountRef = useRef<THREE.Group | null>(null);
   const carriedCrateSignatureRef = useRef<string | null>(null);
+  const dynamicSignatureRef = useRef<string | null>(null);
   const processedFeedbackIdRef = useRef<string | null>(null);
   const interactablesRef = useRef<Interactable[]>([]);
   const guidanceLocationIdRef = useRef(guidanceLocationId);
@@ -5599,23 +5705,32 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     let disposed = false;
     applyCameraMode(camera, playerAvatar, carriedCrateMount, cameraMode, pitch);
 
-    const updateDynamicObjects = () => {
+    const updateDynamicObjects = (force = false) => {
       if (!dynamicGroupRef.current) {
         return;
       }
 
+      const signature = dynamicObjectsSignature(stateRef.current, guidanceLocationIdRef.current, renderProfile.detail);
+      if (!force && dynamicSignatureRef.current === signature) {
+        recordPerfCount("scene.dynamic.skipped");
+        return;
+      }
+
+      dynamicSignatureRef.current = signature;
+      const perfStart = perfNow();
       interactablesRef.current = populateDynamicObjects(dynamicGroupRef.current, stateRef.current, guidanceLocationIdRef.current, renderProfile.detail, modelConfig, {
         contacts: crimeContactPositionOverrides(mapLayout),
         hotspots: hotspotPositionOverrides(mapLayout),
         machineAnchors: anchorsForLayout(mapLayout),
         pedestrianWalkZones
       });
+      recordPerfDuration("scene.dynamic.rebuild", perfNow() - perfStart);
       if (debugVisible && debugGroupRef.current) {
         populateDebugOverlay(debugGroupRef.current, stateRef.current, interactablesRef.current, animatedProps, mapLayout);
       }
     };
 
-    updateDynamicObjects();
+    updateDynamicObjects(true);
 
     const syncDrivenVehicleVisual = () => {
       const dynamicGroupCurrent = dynamicGroupRef.current;
@@ -6117,6 +6232,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       carriedCrateMountRef.current = null;
       playerAvatarCargoMountRef.current = null;
       carriedCrateSignatureRef.current = null;
+      dynamicSignatureRef.current = null;
       interactablesRef.current = [];
     };
   }, [graphicsQuality, mapLayout, modelConfig]);
@@ -6127,12 +6243,21 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       return;
     }
 
+    const signature = dynamicObjectsSignature(state, guidanceLocationId, graphicsQuality);
+    if (dynamicSignatureRef.current === signature) {
+      recordPerfCount("scene.dynamic.skipped");
+      return;
+    }
+
+    dynamicSignatureRef.current = signature;
+    const perfStart = perfNow();
     interactablesRef.current = populateDynamicObjects(dynamicGroup, state, guidanceLocationId, graphicsQuality, modelConfig, {
       contacts: crimeContactPositionOverrides(mapLayout),
       hotspots: hotspotPositionOverrides(mapLayout),
       machineAnchors: anchorsForLayout(mapLayout),
       pedestrianWalkZones: pedestrianWalkZonesForLayout(mapLayout)
     });
+    recordPerfDuration("scene.dynamic.rebuild", perfNow() - perfStart);
     const debugGroup = debugGroupRef.current;
     if (debugGroup?.visible) {
       populateDebugOverlay(debugGroup, state, interactablesRef.current, animatedPropsRef.current, mapLayout);

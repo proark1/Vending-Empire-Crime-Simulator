@@ -36,6 +36,7 @@ import type {
   SupplierRelationshipState,
   VendingMachine
 } from "../core/types";
+import { perfNow, recordPerfDuration } from "../core/performance";
 import {
   activeContracts,
   activeAlarmForMachine,
@@ -3955,6 +3956,7 @@ function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number):
 }
 
 export function reduceGameState(currentState: GameState, command: GameCommand): CommandResult {
+  const perfStart = perfNow();
   const state = cloneState(currentState);
   const events: GameEvent[] = [];
   ensurePacingState(state);
@@ -5986,6 +5988,7 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
   advanceCampaignMissions(state, events);
   advanceNarrativeQuests(state, events);
 
+  recordPerfDuration(`reducer.${command.type}`, perfNow() - perfStart);
   return { state, events };
 }
 

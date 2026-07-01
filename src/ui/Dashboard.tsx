@@ -57,7 +57,6 @@ import {
   routeTasks,
   type RouteTask,
   narrativeQuestProgress,
-  selectedRouteTask,
   storyArcProgress,
   supplierRelationshipList,
   vehicleInventoryUnits,
@@ -251,7 +250,7 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
   const playerMachines = useMemo(() => ownedMachines(state, state.playerFactionId), [state]);
   const installedPlayerMachines = useMemo(() => installedMachines(state, state.playerFactionId), [state]);
   const rivals = useMemo(() => Object.values(state.factions).filter((faction) => faction.type === "npc"), [state.factions]);
-  const vehicle = activeVehicle(state);
+  const vehicle = useMemo(() => activeVehicle(state), [state]);
   const employees = useMemo(() => employeeList(state), [state]);
   const districtSummaries = useMemo(
     () =>
@@ -287,7 +286,7 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
   );
   const tasks = useMemo(() => routeTasks(state), [state]);
   const routePlan = useMemo(() => optimizedRoutePlan(state), [state]);
-  const selectedTask = selectedRouteTask(state);
+  const selectedTask = useMemo(() => tasks.find((task) => task.id === state.routePlan.selectedTaskId), [state.routePlan.selectedTaskId, tasks]);
   const nextTask = selectedTask ?? tasks[0];
   const contracts = useMemo(() => activeContracts(state), [state]);
   const inspections = useMemo(() => activeLawInspections(state), [state]);
@@ -303,15 +302,15 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
   const installableLocations = useMemo(() => Object.values(state.locations).filter(installableLocation), [state.locations]);
   const activeRights = useMemo(() => activeLocationRights(state), [state]);
   const quests = useMemo(() => narrativeQuestProgress(state), [state]);
-  const finance = financeSummary(state);
-  const heatTier = playerHeatTier(state);
-  const ledger = financeLedger(state).slice(0, 16);
-  const territory = rivalTerritoryByDistrict(state);
-  const dayReport = latestDayReport(state);
+  const finance = useMemo(() => financeSummary(state), [state]);
+  const heatTier = useMemo(() => playerHeatTier(state), [state]);
+  const ledger = useMemo(() => financeLedger(state).slice(0, 16), [state]);
+  const territory = useMemo(() => rivalTerritoryByDistrict(state), [state]);
+  const dayReport = useMemo(() => latestDayReport(state), [state]);
   const storyProgress = useMemo(() => storyArcProgress(state), [state]);
   const campaignProgress = useMemo(() => campaignMissionProgress(state), [state]);
   const endingScores = useMemo(() => endgamePathScores(state), [state]);
-  const playtestReport = useMemo(() => buildPlaytestReport(state), [state]);
+  const playtestReport = useMemo(() => (tab === "story" ? buildPlaytestReport(state) : null), [state, tab]);
   const runModifier = useMemo(() => activeRunModifier(state), [state]);
   const strategyUnlocks = state.replay?.strategyUnlocks ?? [];
   const actionTasks = useMemo(() => tasks.slice(0, 5), [tasks]);
@@ -1879,7 +1878,7 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
         </div>
       )}
 
-      {tab === "story" && (
+      {tab === "story" && playtestReport && (
         <div className="panel-list">
           <article className="cargo-summary">
             <ClipboardList size={18} aria-hidden="true" />

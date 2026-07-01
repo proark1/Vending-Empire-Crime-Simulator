@@ -416,8 +416,10 @@ export function loadGame(): GameState {
   }
 }
 
-export function saveGame(state: GameState): void {
-  window.localStorage.setItem(SAVE_KEY, JSON.stringify(state));
+export function saveGame(state: GameState): number {
+  const payload = JSON.stringify(state);
+  window.localStorage.setItem(SAVE_KEY, payload);
+  return payload.length;
 }
 
 export function clearSave(): void {

@@ -8,6 +8,7 @@ import { planNpcCommands } from "../game/ai/rivalAi";
 import { reduceCommands, reduceGameState } from "../game/systems/reducer";
 import type { MultiplayerClient } from "../game/network/multiplayerClient";
 import type { MultiplayerRole } from "../game/network/protocol";
+import { perfNow, recordPerfCount, recordPerfDuration, recordPerfGauge } from "../game/core/performance";
 
 export interface UseGameOptions {
   initialState?: GameState;
@@ -36,9 +37,12 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
   const sessionRef = useRef<GameSession | null>(options.session ?? null);
   const remoteSaveRevisionRef = useRef<number | null>(options.session?.saveRevision ?? null);
   const saveTimerRef = useRef<number | null>(null);
+  const localSaveTimerRef = useRef<number | null>(null);
   const multiplayerClientRef = useRef<MultiplayerClient | null>(options.multiplayerClient ?? null);
   const multiplayerRoleRef = useRef<MultiplayerRole>(options.multiplayerRole ?? "idle");
   const multiplayerSnapshotSequenceRef = useRef(0);
+  const hostSnapshotTimerRef = useRef<number | null>(null);
+  const lastHostSnapshotAtRef = useRef(0);
   const lastRemoteSnapshotSequenceRef = useRef(0);
   const lastRoomPeerCountRef = useRef(0);
   const sentCommandSequenceRef = useRef(0);
@@ -62,28 +66,54 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
     multiplayerRoleRef.current = options.multiplayerRole ?? "idle";
   }, [options.multiplayerRole]);
 
+  const persistLocalState = useCallback((currentState: GameState = stateRef.current) => {
+    const perfStart = perfNow();
+    const bytes = saveGame(currentState);
+    recordPerfDuration("save.local", perfNow() - perfStart);
+    recordPerfGauge("save.local.bytes", bytes);
+  }, []);
+
+  const sendHostSnapshot = useCallback(() => {
+    const client = multiplayerClientRef.current;
+    if (!client || multiplayerRoleRef.current !== "host" || !client.getStatus().room) {
+      return;
+    }
+
+    const perfStart = perfNow();
+    client.sendGameMessage({
+      sequence: ++multiplayerSnapshotSequenceRef.current,
+      state: stateRef.current,
+      type: "snapshot"
+    });
+    lastHostSnapshotAtRef.current = perfNow();
+    recordPerfDuration("multiplayer.snapshot.send", lastHostSnapshotAtRef.current - perfStart);
+    recordPerfCount("multiplayer.snapshot.sent");
+  }, []);
+
   const loadLatestRemoteSave = useCallback((session: GameSession) => {
     void loadRemoteGame(session)
       .then((remote) => {
         remoteSaveRevisionRef.current = remote.save?.revision ?? null;
         updateStoredGameSessionSaveRevision(remote.save?.revision ?? null, remote.save?.updatedAt ?? null);
         const nextState = remote.save?.state ?? createInitialState(Date.now());
-        saveGame(nextState);
+        persistLocalState(nextState);
         setState(nextState);
       })
       .catch((error) => {
         console.warn("Remote reload failed", error);
       });
-  }, []);
+  }, [persistLocalState]);
 
-  const persistState = useCallback((mode: "normal" | "beacon" = "normal") => {
+  const persistState = useCallback((mode: "normal" | "beacon" = "normal", options: { saveLocal?: boolean } = {}) => {
     if (multiplayerRoleRef.current === "guest") {
       return;
     }
 
     const currentState = stateRef.current;
     const session = sessionRef.current;
-    saveGame(currentState);
+    if (options.saveLocal !== false) {
+      persistLocalState(currentState);
+    }
 
     if (!session || session.local) {
       return;
@@ -91,12 +121,15 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
 
     if (mode === "beacon") {
       saveRemoteGameBeacon(session, currentState, remoteSaveRevisionRef.current);
+      recordPerfCount("save.remote.beacon");
       return;
     }
 
     setSaveStatus("saving");
+    const remoteSaveStart = perfNow();
     void saveRemoteGame(session, currentState, remoteSaveRevisionRef.current)
       .then((result) => {
+        recordPerfDuration("save.remote", perfNow() - remoteSaveStart);
         remoteSaveRevisionRef.current = result.revision;
         sessionRef.current = {
           ...session,
@@ -107,6 +140,7 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
         window.setTimeout(() => setSaveStatus((current) => (current === "saved" ? "idle" : current)), 1600);
       })
       .catch((error) => {
+        recordPerfDuration("save.remote.failed", perfNow() - remoteSaveStart);
         if (error instanceof ApiError && error.code === "SAVE_CONFLICT") {
           console.warn("Remote save conflict; loading latest database save");
           setSaveStatus("conflict");
@@ -119,30 +153,41 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
         console.warn("Remote save failed", error);
         setSaveStatus("offline");
       });
-  }, [loadLatestRemoteSave]);
+  }, [loadLatestRemoteSave, persistLocalState]);
 
   useEffect(() => {
     if (options.multiplayerRole === "guest") {
       return;
     }
 
-    saveGame(state);
-
     if (saveTimerRef.current) {
       window.clearTimeout(saveTimerRef.current);
     }
+    if (localSaveTimerRef.current) {
+      window.clearTimeout(localSaveTimerRef.current);
+    }
+
+    localSaveTimerRef.current = window.setTimeout(() => {
+      localSaveTimerRef.current = null;
+      persistLocalState();
+    }, 250);
 
     saveTimerRef.current = window.setTimeout(() => {
-      persistState();
+      saveTimerRef.current = null;
+      persistState("normal", { saveLocal: false });
     }, 900);
 
     return () => {
+      if (localSaveTimerRef.current) {
+        window.clearTimeout(localSaveTimerRef.current);
+        localSaveTimerRef.current = null;
+      }
       if (saveTimerRef.current) {
         window.clearTimeout(saveTimerRef.current);
         saveTimerRef.current = null;
       }
     };
-  }, [options.multiplayerRole, persistState, state]);
+  }, [options.multiplayerRole, persistLocalState, persistState, state]);
 
   useEffect(() => {
     const saveBeforeLeaving = () => {
@@ -196,6 +241,10 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
           window.clearTimeout(saveTimerRef.current);
           saveTimerRef.current = null;
         }
+        if (localSaveTimerRef.current) {
+          window.clearTimeout(localSaveTimerRef.current);
+          localSaveTimerRef.current = null;
+        }
         setState(message.state);
         transport.emitSnapshot(message.state);
         return;
@@ -231,13 +280,9 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
       }
 
       lastRoomPeerCountRef.current = peerCount;
-      client.sendGameMessage({
-        sequence: ++multiplayerSnapshotSequenceRef.current,
-        state: stateRef.current,
-        type: "snapshot"
-      });
+      sendHostSnapshot();
     });
-  }, [options.multiplayerClient]);
+  }, [options.multiplayerClient, sendHostSnapshot]);
 
   useEffect(() => {
     const client = multiplayerClientRef.current;
@@ -245,12 +290,36 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
       return;
     }
 
-    client.sendGameMessage({
-      sequence: ++multiplayerSnapshotSequenceRef.current,
-      state,
-      type: "snapshot"
-    });
-  }, [state]);
+    const now = perfNow();
+    const elapsed = now - lastHostSnapshotAtRef.current;
+    const delay = Math.max(0, 500 - elapsed);
+    if (delay <= 0) {
+      sendHostSnapshot();
+      return;
+    }
+
+    if (hostSnapshotTimerRef.current === null) {
+      hostSnapshotTimerRef.current = window.setTimeout(() => {
+        hostSnapshotTimerRef.current = null;
+        sendHostSnapshot();
+      }, delay);
+      recordPerfCount("multiplayer.snapshot.deferred");
+    }
+  }, [sendHostSnapshot, state]);
+
+  useEffect(() => {
+    return () => {
+      if (localSaveTimerRef.current) {
+        window.clearTimeout(localSaveTimerRef.current);
+      }
+      if (saveTimerRef.current) {
+        window.clearTimeout(saveTimerRef.current);
+      }
+      if (hostSnapshotTimerRef.current) {
+        window.clearTimeout(hostSnapshotTimerRef.current);
+      }
+    };
+  }, []);
 
   const sendCommand = useCallback(
     (command: GameCommand) => {
@@ -310,7 +379,7 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
 
     const nextState = createInitialState(Date.now());
     clearSave();
-    saveGame(nextState);
+    persistLocalState(nextState);
     setState(nextState);
 
     const session = sessionRef.current;
@@ -323,7 +392,7 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
           console.warn("Remote reset save failed", error);
         });
     }
-  }, []);
+  }, [persistLocalState]);
 
   return {
     state,

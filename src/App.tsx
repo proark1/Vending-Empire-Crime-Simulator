@@ -27,6 +27,7 @@ import { activeRunModifier, chooseRunModifier } from "./game/content/replayabili
 import { configureGameAudio, playEventCue, playFeedbackCue, playVoiceCue, startGameAmbience, unlockGameAudio, updateGameAmbience } from "./ui/audio";
 import { MultiplayerClient } from "./game/network/multiplayerClient";
 import type { MultiplayerStatus } from "./game/network/protocol";
+import { getPerfSnapshot } from "./game/core/performance";
 
 const AdminMapEditor = lazy(() => import("./ui/AdminMapEditor").then((module) => ({ default: module.AdminMapEditor })));
 const Dashboard = lazy(() => import("./ui/Dashboard").then((module) => ({ default: module.Dashboard })));
@@ -781,6 +782,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
   }, [state.replay?.rivalMemory]);
   const strategyUnlocks = state.replay?.strategyUnlocks ?? [];
   const showDebugTools = useMemo(() => new URLSearchParams(window.location.search).has("debug"), []);
+  const showPerfOverlay = useMemo(() => showDebugTools || new URLSearchParams(window.location.search).has("perf"), [showDebugTools]);
   const isLocalSession = session.local === true;
   const worldClockPaused = !entered || dashboardOpen || gameMenuOpen || showControls;
   const multiplayerRoom = multiplayerStatus.room;
@@ -1752,6 +1754,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
       {entered && <Minimap state={state} mapLayout={mapLayout} playerPosition={playerPosition} guidanceLocationId={guidanceLocationId} target={activeTarget} />}
       {entered && <InteractionPanel state={state} target={activeTarget} onCommand={sendCommandAtActiveTarget} onSave={save} onReload={reload} onRestart={handleRestart} />}
       <ToastStack docked={dashboardOpen} messages={toasts} />
+      <PerformanceOverlay enabled={showPerfOverlay} />
     </main>
   );
 }
@@ -2027,6 +2030,48 @@ function AudioControl({
         value={muted ? 0 : volume}
       />
     </div>
+  );
+}
+
+function PerformanceOverlay({ enabled }: { enabled: boolean }) {
+  const [snapshot, setSnapshot] = useState(() => getPerfSnapshot());
+
+  useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
+    setSnapshot(getPerfSnapshot());
+    const timer = window.setInterval(() => setSnapshot(getPerfSnapshot()), 800);
+    return () => window.clearInterval(timer);
+  }, [enabled]);
+
+  if (!enabled) {
+    return null;
+  }
+
+  const metrics = Object.entries(snapshot)
+    .sort(([, first], [, second]) => second.last - first.last)
+    .slice(0, 12);
+
+  return (
+    <aside className="perf-overlay" aria-label="Performance metrics">
+      <strong>Perf</strong>
+      {metrics.length === 0 ? (
+        <span className="perf-empty">waiting</span>
+      ) : (
+        metrics.map(([name, metric]) => {
+          const average = metric.count > 0 ? metric.total / metric.count : 0;
+          return (
+            <span className="perf-row" key={name}>
+              <em>{name}</em>
+              <b>{metric.last.toFixed(metric.last >= 10 ? 0 : 2)}</b>
+              <i>{average.toFixed(average >= 10 ? 0 : 2)} avg</i>
+            </span>
+          );
+        })
+      )}
+    </aside>
   );
 }
 

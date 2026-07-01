@@ -39,6 +39,7 @@ import { narrativeQuestDefinitions, type NarrativeQuestDefinition } from "../con
 import { activeRunModifier } from "../content/replayability";
 import { supplierDefinitions } from "../content/suppliers";
 import { endgamePaths, storyMissionArcs, type EndgamePath, type StoryMissionArc, type StoryMissionObjective } from "../content/story";
+import { perfNow, recordPerfDuration } from "./performance";
 
 export type RouteTaskType = "supplier" | "garage" | "placement" | "stock" | "collect" | "repair" | "pressure" | "contract" | "alarm" | "inspection" | "conflict";
 
@@ -85,6 +86,9 @@ export interface OptimizedRoutePlan {
   totalDistance: number;
   totalRisk: number;
 }
+
+const routeTasksCache = new WeakMap<GameState, RouteTask[]>();
+const optimizedRoutePlanCache = new WeakMap<GameState, Map<number, OptimizedRoutePlan | undefined>>();
 
 export type StoryArcStage = "locked" | "available" | "active" | "complete";
 
@@ -1418,7 +1422,7 @@ export function machineRoutePressure(
   return { score, tone, reasons };
 }
 
-export function routeTasks(state: GameState): RouteTask[] {
+function buildRouteTasks(state: GameState): RouteTask[] {
   const tasks: RouteTask[] = [];
   const vehicle = activeVehicle(state);
   const player = state.factions[state.playerFactionId];
@@ -1637,6 +1641,19 @@ export function routeTasks(state: GameState): RouteTask[] {
   return tasks.sort((a, b) => b.priority - a.priority || a.title.localeCompare(b.title));
 }
 
+export function routeTasks(state: GameState): RouteTask[] {
+  const cached = routeTasksCache.get(state);
+  if (cached) {
+    return cached;
+  }
+
+  const perfStart = perfNow();
+  const tasks = buildRouteTasks(state);
+  recordPerfDuration("selector.routeTasks", perfNow() - perfStart);
+  routeTasksCache.set(state, tasks);
+  return tasks;
+}
+
 export function selectedRouteTask(state: GameState): RouteTask | undefined {
   const selectedTaskId = state.routePlan.selectedTaskId;
   if (!selectedTaskId) {
@@ -1733,7 +1750,7 @@ function buildRouteLoadRecommendations(state: GameState, stops: RoutePlanStop[])
     .filter((recommendation) => recommendation.quantity > 0);
 }
 
-export function optimizedRoutePlan(state: GameState, maxStops = 6): OptimizedRoutePlan | undefined {
+function buildOptimizedRoutePlan(state: GameState, maxStops = 6): OptimizedRoutePlan | undefined {
   const vehicle = activeVehicle(state);
   const startLocationId = vehicle?.locationId ?? state.player.currentLocationId ?? "garage";
   if (!state.locations[startLocationId]) {
@@ -1796,4 +1813,22 @@ export function optimizedRoutePlan(state: GameState, maxStops = 6): OptimizedRou
     totalDistance,
     totalRisk
   };
+}
+
+export function optimizedRoutePlan(state: GameState, maxStops = 6): OptimizedRoutePlan | undefined {
+  const cachedByStopCount = optimizedRoutePlanCache.get(state);
+  const cached = cachedByStopCount?.get(maxStops);
+  if (cachedByStopCount?.has(maxStops)) {
+    return cached;
+  }
+
+  const perfStart = perfNow();
+  const plan = buildOptimizedRoutePlan(state, maxStops);
+  recordPerfDuration("selector.optimizedRoutePlan", perfNow() - perfStart);
+  const nextCache = cachedByStopCount ?? new Map<number, OptimizedRoutePlan | undefined>();
+  nextCache.set(maxStops, plan);
+  if (!cachedByStopCount) {
+    optimizedRoutePlanCache.set(state, nextCache);
+  }
+  return plan;
 }
