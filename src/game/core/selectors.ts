@@ -89,6 +89,24 @@ export interface OptimizedRoutePlan {
 
 const routeTasksCache = new WeakMap<GameState, RouteTask[]>();
 const optimizedRoutePlanCache = new WeakMap<GameState, Map<number, OptimizedRoutePlan | undefined>>();
+const ownedMachinesCache = new WeakMap<GameState, { byFaction: Map<FactionId, VendingMachine[]>; signature: string }>();
+const installedMachinesCache = new WeakMap<GameState, { byFaction: Map<FactionId | "__all", VendingMachine[]>; signature: string }>();
+const machineByLocationCache = new WeakMap<GameState, { byLocation: Map<LocationId, VendingMachine>; signature: string }>();
+const locationsByDistrictCache = new WeakMap<GameState, { byDistrict: Map<DistrictId, Location[]>; signature: string }>();
+
+function machineCollectionSignature(state: GameState): string {
+  return Object.values(state.machines)
+    .map((machine) => `${machine.id}:${machine.ownerFactionId}:${machine.locationId}:${machine.placementStatus ?? "installed"}`)
+    .sort()
+    .join("|");
+}
+
+function locationCollectionSignature(state: GameState): string {
+  return Object.values(state.locations)
+    .map((location) => `${location.id}:${location.districtId}:${location.kind}`)
+    .sort()
+    .join("|");
+}
 
 export type StoryArcStage = "locked" | "available" | "active" | "complete";
 
@@ -226,7 +244,18 @@ export function inventoryUnits(inventory: Inventory, state: GameState): number {
 }
 
 export function ownedMachines(state: GameState, factionId: FactionId): VendingMachine[] {
-  return Object.values(state.machines).filter((machine) => machine.ownerFactionId === factionId);
+  const signature = machineCollectionSignature(state);
+  const cache = ownedMachinesCache.get(state);
+  const cached = cache?.signature === signature ? cache.byFaction.get(factionId) : undefined;
+  if (cached) {
+    return cached;
+  }
+
+  const machines = Object.values(state.machines).filter((machine) => machine.ownerFactionId === factionId);
+  const nextCache = cache?.signature === signature ? cache.byFaction : new Map<FactionId, VendingMachine[]>();
+  nextCache.set(factionId, machines);
+  ownedMachinesCache.set(state, { byFaction: nextCache, signature });
+  return machines;
 }
 
 export function isMachineInstalled(machine: VendingMachine): boolean {
@@ -234,7 +263,19 @@ export function isMachineInstalled(machine: VendingMachine): boolean {
 }
 
 export function installedMachines(state: GameState, factionId?: FactionId): VendingMachine[] {
-  return Object.values(state.machines).filter((machine) => isMachineInstalled(machine) && (!factionId || machine.ownerFactionId === factionId));
+  const key = factionId ?? "__all";
+  const signature = machineCollectionSignature(state);
+  const cache = installedMachinesCache.get(state);
+  const cached = cache?.signature === signature ? cache.byFaction.get(key) : undefined;
+  if (cached) {
+    return cached;
+  }
+
+  const machines = Object.values(state.machines).filter((machine) => isMachineInstalled(machine) && (!factionId || machine.ownerFactionId === factionId));
+  const nextCache = cache?.signature === signature ? cache.byFaction : new Map<FactionId | "__all", VendingMachine[]>();
+  nextCache.set(key, machines);
+  installedMachinesCache.set(state, { byFaction: nextCache, signature });
+  return machines;
 }
 
 export function storedPlayerMachines(state: GameState): VendingMachine[] {
@@ -721,7 +762,19 @@ export function financeSummary(state: GameState): { revenueToday: number; expens
 }
 
 export function machineAtLocation(state: GameState, locationId: LocationId): VendingMachine | undefined {
-  return Object.values(state.machines).find((machine) => isMachineInstalled(machine) && machine.locationId === locationId);
+  const signature = machineCollectionSignature(state);
+  let cache = machineByLocationCache.get(state);
+  if (!cache || cache.signature !== signature) {
+    const byLocation = new Map<LocationId, VendingMachine>();
+    for (const machine of Object.values(state.machines)) {
+      if (isMachineInstalled(machine)) {
+        byLocation.set(machine.locationId, machine);
+      }
+    }
+    cache = { byLocation, signature };
+    machineByLocationCache.set(state, cache);
+  }
+  return cache.byLocation.get(locationId);
 }
 
 export function installableLocation(location: Location): boolean {
@@ -742,7 +795,22 @@ export function districtProgress(state: GameState, districtId: DistrictId): Dist
 }
 
 export function districtLocations(state: GameState, districtId: DistrictId): Location[] {
-  return Object.values(state.locations).filter((location) => location.districtId === districtId);
+  const signature = locationCollectionSignature(state);
+  let cache = locationsByDistrictCache.get(state);
+  if (!cache || cache.signature !== signature) {
+    const byDistrict = new Map<DistrictId, Location[]>();
+    for (const location of Object.values(state.locations)) {
+      const bucket = byDistrict.get(location.districtId);
+      if (bucket) {
+        bucket.push(location);
+      } else {
+        byDistrict.set(location.districtId, [location]);
+      }
+    }
+    cache = { byDistrict, signature };
+    locationsByDistrictCache.set(state, cache);
+  }
+  return cache.byDistrict.get(districtId) ?? [];
 }
 
 export function isDistrictUnlockedForPlacement(state: GameState, districtId: DistrictId): boolean {

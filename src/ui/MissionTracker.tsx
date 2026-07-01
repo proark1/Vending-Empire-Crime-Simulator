@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { GameState, Vec2 } from "../game/core/types";
 import { getStarterMissionStep, getStarterTutorialSteps } from "../game/core/mission";
 import { activeConflictEvents, activeMachineAlarms, playerHeatTier } from "../game/core/selectors";
+import { buildCurrentJob } from "./currentJob";
 
 const EXPAND_KEY = "vv:mission-expanded";
 
@@ -23,6 +24,7 @@ interface MissionTrackerProps {
 export function MissionTracker({ compact = false, state, playerPosition }: MissionTrackerProps) {
   const [expanded, setExpanded] = useState(loadExpanded);
   const step = getStarterMissionStep(state, playerPosition);
+  const currentJob = buildCurrentJob(state, playerPosition);
   const tutorialSteps = getStarterTutorialSteps(state);
   const showTutorial = !state.mission.completed && tutorialSteps.some((tutorialStep) => !tutorialStep.completed);
   const alarm = activeMachineAlarms(state)[0];
@@ -38,12 +40,12 @@ export function MissionTracker({ compact = false, state, playerPosition }: Missi
         ? `${heatTier.label}: ${heatTier.action}`
         : null;
   const pressureTone = alarm || conflict ? "danger" : heatTier.tone;
-  const activeTitle = alarm ? "Answer machine alarm" : conflict ? "Handle street trouble" : step.title;
+  const activeTitle = alarm ? "Answer machine alarm" : conflict ? "Handle street trouble" : currentJob.title;
   const activeGuidance = alarm
     ? `Follow the arrow to ${alarmLocationName} and face the machine.`
     : conflict
       ? `Follow the arrow to ${conflictLocationName} and choose a response.`
-      : step.guidance;
+      : currentJob.guidance;
 
   // Collapsed by default to the current step + progress; the dashboard forces it
   // collapsed. The chevron reveals the objective, guidance, and full checklist.
@@ -64,7 +66,7 @@ export function MissionTracker({ compact = false, state, playerPosition }: Missi
     <section className={collapsed ? "mission-tracker compact" : "mission-tracker"} aria-label="Current mission">
       <div className="mission-title-row">
         {state.mission.completed ? <CheckCircle2 size={17} aria-hidden="true" /> : <ClipboardList size={17} aria-hidden="true" />}
-        <span className="mission-eyebrow">{pressureLine ? "Priority" : "Next"}</span>
+        <span className="mission-eyebrow">{pressureLine ? "Priority" : "Current job"}</span>
         <strong className="mission-step-title">{activeTitle}</strong>
         {!compact && (
           <button
@@ -88,6 +90,12 @@ export function MissionTracker({ compact = false, state, playerPosition }: Missi
         <>
           <p>{step.objective}</p>
           <span className="mission-guidance">{activeGuidance}</span>
+          {!pressureLine && (
+            <div className="mission-stakes" aria-label="Current job stakes">
+              <span>{currentJob.payoff}</span>
+              <span className={currentJob.tone}>{currentJob.risk}</span>
+            </div>
+          )}
           {showTutorial && (
             <ol className="tutorial-steps" aria-label="Starter tutorial">
               {tutorialSteps.map((tutorialStep) => (

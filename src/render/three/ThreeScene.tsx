@@ -30,7 +30,7 @@ import { sidewalkFootprintsForRoads } from "../../game/world/sidewalks";
 import type { SceneFeedbackEvent, SceneTarget } from "./SceneTargets";
 import { resolveGraphicsProfile, type GraphicsQuality } from "./graphicsQuality";
 import { createAsphaltMaterial, createAtmosphere, createBuilding, createBush, createContactShadow, createEnvironmentMapTexture, createGrassMaterial, createNpcCharacter, createParkBench, createParkLamp, createParkPathMaterial, createPondMaterial, createRoadMaterial, createSidewalkMaterial, createSkyDome, createStreetProps, createTree } from "./proceduralArt";
-import { perfNow, recordPerfCount, recordPerfDuration } from "../../game/core/performance";
+import { perfNow, recordPerfCount, recordPerfDuration, recordPerfGauge } from "../../game/core/performance";
 
 interface ThreeSceneProps {
   feedbackEvent?: SceneFeedbackEvent | null;
@@ -70,6 +70,20 @@ interface RectBounds {
 
 interface PedestrianWalkZone extends RectBounds {
   kind: "crosswalk" | "sidewalk";
+}
+
+interface CollisionGrid {
+  all: CollisionBox[];
+  cellSize: number;
+  cells: Map<string, CollisionBox[]>;
+}
+
+interface SceneLayoutRuntime {
+  buildingCollisionBoxes: CollisionBox[];
+  contacts: Record<string, Vec2>;
+  hotspots: Record<string, Vec2>;
+  machineAnchors: Record<string, MachinePlacementAnchor>;
+  pedestrianWalkZones: PedestrianWalkZone[];
 }
 
 interface TrafficVehicleRuntime {
@@ -163,6 +177,11 @@ const productPackageTextureCache = new Map<string, THREE.CanvasTexture>();
 const crateLabelTextureCache = new Map<string, THREE.CanvasTexture>();
 const machineModelBadgeTextureCache = new Map<string, THREE.CanvasTexture>();
 const districtLandmarkTextureCache = new Map<string, THREE.CanvasTexture>();
+const machineSignTextureCache = new Map<string, THREE.CanvasTexture>();
+const machineDisplayTextureCache = new Map<string, THREE.CanvasTexture>();
+const vehicleDecalTextureCache = new Map<string, THREE.CanvasTexture>();
+const sceneLayoutRuntimeCache = new WeakMap<WorldMapLayout, SceneLayoutRuntime>();
+const buildingCollisionBoxesCache = new WeakMap<WorldMapLayout, CollisionBox[]>();
 
 const machineModelVisualLabels: Record<MachineModelId, string> = {
   armored_unit: "ARM",
@@ -246,7 +265,18 @@ function roundedBox(width: number, height: number, depth: number, radius: number
   return new RoundedBoxGeometry(width, height, depth, quality === "low" ? 1 : 3, radius);
 }
 
+function markSharedTexture(texture: THREE.CanvasTexture): THREE.CanvasTexture {
+  texture.userData.sharedTexture = true;
+  return texture;
+}
+
 function createVehicleDecalTexture(label: string, background: string, accent: string): THREE.CanvasTexture {
+  const cacheKey = `${label}:${background}:${accent}`;
+  const cached = vehicleDecalTextureCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
   const canvas = document.createElement("canvas");
   canvas.width = 512;
   canvas.height = 192;
@@ -277,6 +307,7 @@ function createVehicleDecalTexture(label: string, background: string, accent: st
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 4;
+  vehicleDecalTextureCache.set(cacheKey, markSharedTexture(texture));
   return texture;
 }
 
@@ -543,8 +574,13 @@ function walkableInteriorLocationIdsForLayout(layout: WorldMapLayout): Set<strin
 }
 
 function buildingCollisionBoxesForLayout(layout: WorldMapLayout): CollisionBox[] {
+  const cached = buildingCollisionBoxesCache.get(layout);
+  if (cached) {
+    return cached;
+  }
+
   const walkableInteriorLocationIds = walkableInteriorLocationIdsForLayout(layout);
-  return layout.buildings
+  const boxes = layout.buildings
     .filter((building) => !building.locationId || !walkableInteriorLocationIds.has(building.locationId))
     .map((building) =>
       collisionBoxFromRotatedCenter(
@@ -555,6 +591,8 @@ function buildingCollisionBoxesForLayout(layout: WorldMapLayout): CollisionBox[]
         facingToRotationY(building.facing ?? "north")
       )
     );
+  buildingCollisionBoxesCache.set(layout, boxes);
+  return boxes;
 }
 
 function clampToWorld(position: THREE.Vector3): void {
@@ -562,15 +600,15 @@ function clampToWorld(position: THREE.Vector3): void {
   position.z = THREE.MathUtils.clamp(position.z, worldBounds.minZ + playerRadius, worldBounds.maxZ - playerRadius);
 }
 
-function positionOverlapsBox(position: THREE.Vector3, box: CollisionBox, radius = playerRadius): boolean {
-  return position.x > box.minX - radius
-    && position.x < box.maxX + radius
-    && position.z > box.minZ - radius
-    && position.z < box.maxZ + radius;
+function positionOverlapsBoxCoords(x: number, z: number, box: CollisionBox, radius = playerRadius): boolean {
+  return x > box.minX - radius
+    && x < box.maxX + radius
+    && z > box.minZ - radius
+    && z < box.maxZ + radius;
 }
 
-function isPositionBlocked(position: THREE.Vector3, boxes: CollisionBox[]): boolean {
-  return boxes.some((box) => positionOverlapsBox(position, box));
+function isPositionBlockedCoords(x: number, z: number, boxes: CollisionBox[]): boolean {
+  return boxes.some((box) => positionOverlapsBoxCoords(x, z, box));
 }
 
 function machineCollisionBox(placement: { position: THREE.Vector3; rotationY: number }): CollisionBox {
@@ -657,8 +695,9 @@ function trafficImpactDamage(vehicle: THREE.Object3D): number {
 }
 
 function collisionBoxesForState(currentState: GameState, layout: WorldMapLayout, options: { excludeVehicleId?: string; extraStaticBoxes?: CollisionBox[] } = {}): CollisionBox[] {
-  const boxes = [...buildingCollisionBoxesForLayout(layout)];
-  const machineAnchors = anchorsForLayout(layout);
+  const layoutRuntime = sceneLayoutRuntimeForLayout(layout);
+  const boxes = [...layoutRuntime.buildingCollisionBoxes];
+  const machineAnchors = layoutRuntime.machineAnchors;
 
   if (options.extraStaticBoxes) {
     boxes.push(...options.extraStaticBoxes);
@@ -681,25 +720,73 @@ function collisionBoxesForState(currentState: GameState, layout: WorldMapLayout,
 
 function movePlayerWithCollision(position: THREE.Vector3, movement: THREE.Vector3, boxes: CollisionBox[]): boolean {
   let moved = false;
-  const nextX = position.clone();
-  nextX.x += movement.x;
-  clampToWorld(nextX);
+  const nextX = THREE.MathUtils.clamp(position.x + movement.x, worldBounds.minX + playerRadius, worldBounds.maxX - playerRadius);
 
-  if (!isPositionBlocked(nextX, boxes)) {
-    moved ||= Math.abs(nextX.x - position.x) > 0.0001;
-    position.x = nextX.x;
+  if (!isPositionBlockedCoords(nextX, position.z, boxes)) {
+    moved ||= Math.abs(nextX - position.x) > 0.0001;
+    position.x = nextX;
   }
 
-  const nextZ = position.clone();
-  nextZ.z += movement.z;
-  clampToWorld(nextZ);
+  const nextZ = THREE.MathUtils.clamp(position.z + movement.z, worldBounds.minZ + playerRadius, worldBounds.maxZ - playerRadius);
 
-  if (!isPositionBlocked(nextZ, boxes)) {
-    moved ||= Math.abs(nextZ.z - position.z) > 0.0001;
-    position.z = nextZ.z;
+  if (!isPositionBlockedCoords(position.x, nextZ, boxes)) {
+    moved ||= Math.abs(nextZ - position.z) > 0.0001;
+    position.z = nextZ;
   }
 
   return moved;
+}
+
+function collisionGridKey(indexX: number, indexZ: number): string {
+  return `${indexX}:${indexZ}`;
+}
+
+function collisionGridIndex(value: number, cellSize: number): number {
+  return Math.floor(value / cellSize);
+}
+
+function buildCollisionGrid(boxes: CollisionBox[], cellSize = 8): CollisionGrid {
+  const cells = new Map<string, CollisionBox[]>();
+  for (const box of boxes) {
+    const minX = collisionGridIndex(box.minX - playerRadius, cellSize);
+    const maxX = collisionGridIndex(box.maxX + playerRadius, cellSize);
+    const minZ = collisionGridIndex(box.minZ - playerRadius, cellSize);
+    const maxZ = collisionGridIndex(box.maxZ + playerRadius, cellSize);
+    for (let x = minX; x <= maxX; x += 1) {
+      for (let z = minZ; z <= maxZ; z += 1) {
+        const key = collisionGridKey(x, z);
+        const bucket = cells.get(key);
+        if (bucket) {
+          bucket.push(box);
+        } else {
+          cells.set(key, [box]);
+        }
+      }
+    }
+  }
+  return { all: boxes, cellSize, cells };
+}
+
+function nearbyCollisionBoxes(grid: CollisionGrid, position: THREE.Vector3, movement: THREE.Vector3): CollisionBox[] {
+  const minX = collisionGridIndex(Math.min(position.x, position.x + movement.x) - playerRadius * 2, grid.cellSize);
+  const maxX = collisionGridIndex(Math.max(position.x, position.x + movement.x) + playerRadius * 2, grid.cellSize);
+  const minZ = collisionGridIndex(Math.min(position.z, position.z + movement.z) - playerRadius * 2, grid.cellSize);
+  const maxZ = collisionGridIndex(Math.max(position.z, position.z + movement.z) + playerRadius * 2, grid.cellSize);
+  const boxes: CollisionBox[] = [];
+  const seen = new Set<CollisionBox>();
+
+  for (let x = minX; x <= maxX; x += 1) {
+    for (let z = minZ; z <= maxZ; z += 1) {
+      for (const box of grid.cells.get(collisionGridKey(x, z)) ?? []) {
+        if (!seen.has(box)) {
+          seen.add(box);
+          boxes.push(box);
+        }
+      }
+    }
+  }
+
+  return boxes;
 }
 
 function pathStateAt(path: THREE.Vector3[], distance: number): { direction: THREE.Vector3; position: THREE.Vector3 } | null {
@@ -939,6 +1026,13 @@ function updateTrafficVehicle(object: THREE.Object3D, time: number): void {
 }
 
 function createMachineSignTexture(color: string, damage: number): THREE.CanvasTexture {
+  const damageBucket = damage > 70 ? "damaged" : "ready";
+  const cacheKey = `${color}:${damageBucket}`;
+  const cached = machineSignTextureCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
   const canvas = document.createElement("canvas");
   canvas.width = 384;
   canvas.height = 128;
@@ -982,10 +1076,17 @@ function createMachineSignTexture(color: string, damage: number): THREE.CanvasTe
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
+  machineSignTextureCache.set(cacheKey, markSharedTexture(texture));
   return texture;
 }
 
 function createMachineDisplayTexture(damage: number): THREE.CanvasTexture {
+  const damageBucket = damage > 75 ? "damaged" : "ready";
+  const cached = machineDisplayTextureCache.get(damageBucket);
+  if (cached) {
+    return cached;
+  }
+
   const canvas = document.createElement("canvas");
   canvas.width = 192;
   canvas.height = 128;
@@ -1012,6 +1113,7 @@ function createMachineDisplayTexture(damage: number): THREE.CanvasTexture {
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
+  machineDisplayTextureCache.set(damageBucket, markSharedTexture(texture));
   return texture;
 }
 
@@ -1061,7 +1163,7 @@ function createProductPackageTexture(productId: ProductId, color: string): THREE
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
-  productPackageTextureCache.set(cacheKey, texture);
+  productPackageTextureCache.set(cacheKey, markSharedTexture(texture));
   return texture;
 }
 
@@ -1106,7 +1208,7 @@ function createCrateLabelTexture(productId: ProductId, quantity: number, color: 
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
-  crateLabelTextureCache.set(cacheKey, texture);
+  crateLabelTextureCache.set(cacheKey, markSharedTexture(texture));
   return texture;
 }
 
@@ -1141,7 +1243,7 @@ function createMachineModelBadgeTexture(modelId: MachineModelId, color: string):
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
-  machineModelBadgeTextureCache.set(cacheKey, texture);
+  machineModelBadgeTextureCache.set(cacheKey, markSharedTexture(texture));
   return texture;
 }
 
@@ -1181,7 +1283,7 @@ function createDistrictLandmarkTexture(districtId: string, label: string, color:
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
-  districtLandmarkTextureCache.set(cacheKey, texture);
+  districtLandmarkTextureCache.set(cacheKey, markSharedTexture(texture));
   return texture;
 }
 
@@ -3235,6 +3337,13 @@ function createMissionBeacon(color: string): THREE.Group {
 }
 
 function disposeObject(object: THREE.Object3D): void {
+  const disposeTexture = (texture?: THREE.Texture | null) => {
+    if (!texture || texture.userData.sharedTexture) {
+      return;
+    }
+    texture.dispose();
+  };
+
   object.traverse((child) => {
     if (child instanceof THREE.Mesh || child instanceof THREE.Line || child instanceof THREE.Points) {
       child.geometry.dispose();
@@ -3247,17 +3356,17 @@ function disposeObject(object: THREE.Object3D): void {
           normalMap?: THREE.Texture | null;
           roughnessMap?: THREE.Texture | null;
         };
-        mapped.map?.dispose();
-        mapped.alphaMap?.dispose();
-        mapped.emissiveMap?.dispose();
-        mapped.normalMap?.dispose();
-        mapped.roughnessMap?.dispose();
+        disposeTexture(mapped.map);
+        disposeTexture(mapped.alphaMap);
+        disposeTexture(mapped.emissiveMap);
+        disposeTexture(mapped.normalMap);
+        disposeTexture(mapped.roughnessMap);
         material.dispose();
       }
     }
 
     if (child instanceof THREE.Sprite) {
-      child.material.map?.dispose();
+      disposeTexture(child.material.map);
       child.material.dispose();
     }
   });
@@ -4426,6 +4535,23 @@ function pedestrianWalkZonesForLayout(layout: WorldMapLayout): PedestrianWalkZon
   ];
 }
 
+function sceneLayoutRuntimeForLayout(layout: WorldMapLayout): SceneLayoutRuntime {
+  const cached = sceneLayoutRuntimeCache.get(layout);
+  if (cached) {
+    return cached;
+  }
+
+  const runtime: SceneLayoutRuntime = {
+    buildingCollisionBoxes: buildingCollisionBoxesForLayout(layout),
+    contacts: crimeContactPositionOverrides(layout),
+    hotspots: hotspotPositionOverrides(layout),
+    machineAnchors: anchorsForLayout(layout),
+    pedestrianWalkZones: pedestrianWalkZonesForLayout(layout)
+  };
+  sceneLayoutRuntimeCache.set(layout, runtime);
+  return runtime;
+}
+
 // Zebra stripes across one approach of a crossing. Stripes run parallel to that
 // approach's traffic (stripeAxis), arrayed across the road width.
 function addZebraBandBuildJobs(specs: Map<string, WorldChunkBuildSpec>, bounds: RectBounds, stripeAxis: "x" | "z", material: THREE.Material): void {
@@ -5160,6 +5286,22 @@ function populateDynamicObjects(
   return interactables;
 }
 
+function collectDynamicAnimatedObjects(group: THREE.Group): THREE.Object3D[] {
+  const animated: THREE.Object3D[] = [];
+  group.traverse((object) => {
+    if (
+      object.userData.beacon
+      || object.userData.routePressure
+      || object.userData.activityPulse
+      || object.userData.activityBubble
+      || object.userData.dynamicNpc
+    ) {
+      animated.push(object);
+    }
+  });
+  return animated;
+}
+
 function setRouteVehicleRigPose(group: THREE.Group, vehicleId: string, position: THREE.Vector3, heading: number): void {
   group.traverse((object) => {
     if (object.userData.routeVehicleId === vehicleId) {
@@ -5292,6 +5434,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
   const debugGroupRef = useRef<THREE.Group | null>(null);
   const feedbackGroupRef = useRef<THREE.Group | null>(null);
   const animatedPropsRef = useRef<THREE.Object3D[]>([]);
+  const dynamicAnimatedObjectsRef = useRef<THREE.Object3D[]>([]);
   const carriedCrateMountRef = useRef<THREE.Group | null>(null);
   const playerAvatarCargoMountRef = useRef<THREE.Group | null>(null);
   const carriedCrateSignatureRef = useRef<string | null>(null);
@@ -5336,6 +5479,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     }
 
     const renderProfile = resolveGraphicsProfile(graphicsQuality, mapLayout);
+    const layoutRuntime = sceneLayoutRuntimeForLayout(mapLayout);
     const scene = new THREE.Scene();
     scene.background = new THREE.Color("#0f172a");
     scene.fog = new THREE.Fog(
@@ -5476,7 +5620,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     const roadMaterial = createRoadMaterial(renderProfile.detail);
     const sidewalkMaterial = createSidewalkMaterial(renderProfile.detail);
     const sidewalks = sidewalkFootprintsForRoads(mapLayout.roads, mapLayout.buildings);
-    const pedestrianWalkZones = pedestrianWalkZonesForLayout(mapLayout);
+    const pedestrianWalkZones = layoutRuntime.pedestrianWalkZones;
 
     for (const road of mapLayout.roads) {
       addRectMeshBuildJobsToWorldChunks(staticChunkSpecs, roadBounds(road), 0.025, 0.035, roadMaterial, (mesh) => {
@@ -5702,8 +5846,46 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
     let lastTime = performance.now();
     let lastChunkVisibilityUpdate = 0;
     let lastPositionEmit = 0;
+    let frameMetricCount = 0;
+    let frameMetricTotal = 0;
+    let frameMetricMax = 0;
+    let collisionGridCacheKey = "";
+    let collisionGridCache: CollisionGrid | null = null;
     let disposed = false;
     applyCameraMode(camera, playerAvatar, carriedCrateMount, cameraMode, pitch);
+
+    const collisionSignatureForState = (currentState: GameState, excludeVehicleId?: string): string => {
+      const machines = Object.values(currentState.machines)
+        .filter((machine) => (machine.placementStatus ?? "installed") === "installed")
+        .map((machine) => `${machine.id}:${machine.locationId}`)
+        .sort()
+        .join("|");
+      const vehicle = activeVehicle(currentState);
+      const vehicleSig = vehicle && vehicle.id !== excludeVehicleId
+        ? `${vehicle.id}:${vehicle.locationId}:${Math.round((vehicle.position?.x ?? 0) * 10)}:${Math.round((vehicle.position?.z ?? 0) * 10)}:${Math.round((vehicle.heading ?? 0) * 100)}`
+        : "";
+      return `${excludeVehicleId ?? ""}||${machines}||${vehicleSig}`;
+    };
+
+    const collisionBoxesForMovement = (
+      position: THREE.Vector3,
+      movement: THREE.Vector3,
+      options: { excludeVehicleId?: string; extraStaticBoxes?: CollisionBox[] } = {}
+    ): CollisionBox[] => {
+      const queryStart = perfNow();
+      const currentState = stateRef.current;
+      const signature = collisionSignatureForState(currentState, options.excludeVehicleId);
+      const key = `${signature}||${options.extraStaticBoxes?.length ?? 0}`;
+      if (!collisionGridCache || collisionGridCacheKey !== key) {
+        const rebuildStart = perfNow();
+        collisionGridCache = buildCollisionGrid(collisionBoxesForState(currentState, mapLayout, options));
+        collisionGridCacheKey = key;
+        recordPerfDuration("scene.collision.rebuild", perfNow() - rebuildStart);
+      }
+      const boxes = nearbyCollisionBoxes(collisionGridCache, position, movement);
+      recordPerfDuration("scene.collision.query", perfNow() - queryStart);
+      return boxes;
+    };
 
     const updateDynamicObjects = (force = false) => {
       if (!dynamicGroupRef.current) {
@@ -5719,11 +5901,12 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       dynamicSignatureRef.current = signature;
       const perfStart = perfNow();
       interactablesRef.current = populateDynamicObjects(dynamicGroupRef.current, stateRef.current, guidanceLocationIdRef.current, renderProfile.detail, modelConfig, {
-        contacts: crimeContactPositionOverrides(mapLayout),
-        hotspots: hotspotPositionOverrides(mapLayout),
-        machineAnchors: anchorsForLayout(mapLayout),
+        contacts: layoutRuntime.contacts,
+        hotspots: layoutRuntime.hotspots,
+        machineAnchors: layoutRuntime.machineAnchors,
         pedestrianWalkZones
       });
+      dynamicAnimatedObjectsRef.current = collectDynamicAnimatedObjects(dynamicGroupRef.current);
       recordPerfDuration("scene.dynamic.rebuild", perfNow() - perfStart);
       if (debugVisible && debugGroupRef.current) {
         populateDebugOverlay(debugGroupRef.current, stateRef.current, interactablesRef.current, animatedProps, mapLayout);
@@ -5747,7 +5930,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       }
 
       const now = performance.now();
-      if (!force && now - lastVehicleDriveEmit < 260 && drivenDistanceSinceSync < 1.2) {
+      if (!force && now - lastVehicleDriveEmit < 900 && drivenDistanceSinceSync < 4) {
         return;
       }
 
@@ -5919,6 +6102,15 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       renderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight);
     };
 
+    const yAxis = new THREE.Vector3(0, 1, 0);
+    const targetCameraWorld = new THREE.Vector3();
+    const targetOrigin = new THREE.Vector3();
+    const targetForward = new THREE.Vector3();
+    const targetTo = new THREE.Vector3();
+    const frameDirection = new THREE.Vector3();
+    const frameMovement = new THREE.Vector3();
+    const frameDriveForward = new THREE.Vector3();
+
     const updateTarget = () => {
       if (drivingVehicleId) {
         if (targetIdRef.current !== null) {
@@ -5928,30 +6120,30 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
         return;
       }
 
-      const cameraWorld = new THREE.Vector3();
-      camera.getWorldPosition(cameraWorld);
-      const targetOrigin = cameraMode === "third"
-        ? new THREE.Vector3(yaw.position.x, yaw.position.y + 1.35, yaw.position.z)
-        : cameraWorld;
-      const forward = new THREE.Vector3();
+      camera.getWorldPosition(targetCameraWorld);
       if (cameraMode === "third") {
-        forward.set(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw.rotation.y).normalize();
+        targetOrigin.set(yaw.position.x, yaw.position.y + 1.35, yaw.position.z);
       } else {
-        camera.getWorldDirection(forward);
+        targetOrigin.copy(targetCameraWorld);
+      }
+      if (cameraMode === "third") {
+        targetForward.set(0, 0, -1).applyAxisAngle(yAxis, yaw.rotation.y).normalize();
+      } else {
+        camera.getWorldDirection(targetForward);
       }
 
       let best: Interactable | null = null;
       let bestScore = Number.POSITIVE_INFINITY;
 
       for (const interactable of interactablesRef.current) {
-        const toTarget = interactable.position.clone().sub(targetOrigin);
-        const distance = toTarget.length();
+        targetTo.copy(interactable.position).sub(targetOrigin);
+        const distance = targetTo.length();
         const maxDistance = interactable.radius + (cameraMode === "third" ? 2.9 : 2.45);
         if (distance > maxDistance) {
           continue;
         }
 
-        const alignment = forward.dot(toTarget.normalize());
+        const alignment = targetForward.dot(targetTo.normalize());
         if (distance > interactable.radius + 1.2 && alignment < 0.32) {
           continue;
         }
@@ -5979,6 +6171,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
         return;
       }
 
+      const frameStart = perfNow();
       const delta = Math.min(0.05, (time - lastTime) / 1000);
       lastTime = time;
 
@@ -6043,7 +6236,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       const carryLoadRatio = currentState.player.carriedCrate ? carriedUnits / Math.max(1, currentState.player.cargoCapacity) : 0;
       const carryPenalty = currentState.player.carriedCrate ? Math.min(0.38, 0.08 + carryLoadRatio * 0.3) : 0;
       const speed = (keys.has("ShiftLeft") || keys.has("ShiftRight") ? 7.5 : 4.2) * (1 - carryPenalty);
-      const direction = new THREE.Vector3();
+      const direction = frameDirection.set(0, 0, 0);
       const playerTrafficLocked = playerTrafficDead || time < playerTrafficStunnedUntil;
 
       let playerMoved = false;
@@ -6075,15 +6268,15 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
         }
 
         yaw.rotation.y = vehicleHeading;
-        const driveForward = new THREE.Vector3(-Math.sin(vehicleHeading), 0, -Math.cos(vehicleHeading));
-        const movement = driveForward.multiplyScalar(vehicleVelocity * delta);
-        const before = yaw.position.clone();
+        const movement = frameMovement.copy(frameDriveForward.set(-Math.sin(vehicleHeading), 0, -Math.cos(vehicleHeading))).multiplyScalar(vehicleVelocity * delta);
+        const beforeX = yaw.position.x;
+        const beforeZ = yaw.position.z;
         if (movement.lengthSq() > 0.000001) {
-          playerMoved = movePlayerWithCollision(yaw.position, movement, collisionBoxesForState(stateRef.current, mapLayout, { excludeVehicleId: drivingVehicleId, extraStaticBoxes: backdropCollisionBoxes }));
+          playerMoved = movePlayerWithCollision(yaw.position, movement, collisionBoxesForMovement(yaw.position, movement, { excludeVehicleId: drivingVehicleId, extraStaticBoxes: backdropCollisionBoxes }));
           if (!playerMoved) {
             vehicleVelocity *= -0.16;
           } else {
-            drivenDistanceSinceSync += before.distanceTo(yaw.position);
+            drivenDistanceSinceSync += Math.hypot(yaw.position.x - beforeX, yaw.position.z - beforeZ);
           }
         }
 
@@ -6103,9 +6296,9 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
         if (keys.has("KeyD") || keys.has("ArrowRight")) direction.x += 1;
 
         if (direction.lengthSq() > 0) {
-          direction.normalize().applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw.rotation.y);
-          const movement = direction.multiplyScalar(speed * delta);
-          playerMoved = movePlayerWithCollision(yaw.position, movement, collisionBoxesForState(stateRef.current, mapLayout, { extraStaticBoxes: backdropCollisionBoxes }));
+          direction.normalize().applyAxisAngle(yAxis, yaw.rotation.y);
+          const movement = frameMovement.copy(direction).multiplyScalar(speed * delta);
+          playerMoved = movePlayerWithCollision(yaw.position, movement, collisionBoxesForMovement(yaw.position, movement, { extraStaticBoxes: backdropCollisionBoxes }));
         }
       }
 
@@ -6146,7 +6339,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       }
 
       atmosphere.rotation.y += delta * 0.015;
-      dynamicGroup.traverse((object) => {
+      for (const object of dynamicAnimatedObjectsRef.current) {
         if (object.userData.beacon) {
           const pulse = 1 + Math.sin(time * 0.004) * 0.08;
           object.scale.set(pulse, 1, pulse);
@@ -6174,7 +6367,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
         if (object.userData.dynamicNpc) {
           updateAnimatedStreetProp(object, time);
         }
-      });
+      }
       for (const object of animatedProps) {
         if (object.userData.trafficLoop) {
           updateTrafficVehicle(object, time);
@@ -6199,6 +6392,17 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
 
       updateTarget();
       renderer.render(scene, camera);
+      const frameMs = perfNow() - frameStart;
+      frameMetricCount += 1;
+      frameMetricTotal += frameMs;
+      frameMetricMax = Math.max(frameMetricMax, frameMs);
+      if (frameMetricCount >= 30) {
+        recordPerfDuration("scene.frame.avg", frameMetricTotal / frameMetricCount);
+        recordPerfGauge("scene.frame.max", frameMetricMax);
+        frameMetricCount = 0;
+        frameMetricTotal = 0;
+        frameMetricMax = 0;
+      }
       requestAnimationFrame(animate);
     };
 
@@ -6229,6 +6433,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       debugGroupRef.current = null;
       feedbackGroupRef.current = null;
       animatedPropsRef.current = [];
+      dynamicAnimatedObjectsRef.current = [];
       carriedCrateMountRef.current = null;
       playerAvatarCargoMountRef.current = null;
       carriedCrateSignatureRef.current = null;
@@ -6251,12 +6456,14 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
 
     dynamicSignatureRef.current = signature;
     const perfStart = perfNow();
+    const layoutRuntime = sceneLayoutRuntimeForLayout(mapLayout);
     interactablesRef.current = populateDynamicObjects(dynamicGroup, state, guidanceLocationId, graphicsQuality, modelConfig, {
-      contacts: crimeContactPositionOverrides(mapLayout),
-      hotspots: hotspotPositionOverrides(mapLayout),
-      machineAnchors: anchorsForLayout(mapLayout),
-      pedestrianWalkZones: pedestrianWalkZonesForLayout(mapLayout)
+      contacts: layoutRuntime.contacts,
+      hotspots: layoutRuntime.hotspots,
+      machineAnchors: layoutRuntime.machineAnchors,
+      pedestrianWalkZones: layoutRuntime.pedestrianWalkZones
     });
+    dynamicAnimatedObjectsRef.current = collectDynamicAnimatedObjects(dynamicGroup);
     recordPerfDuration("scene.dynamic.rebuild", perfNow() - perfStart);
     const debugGroup = debugGroupRef.current;
     if (debugGroup?.visible) {

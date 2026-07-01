@@ -20,6 +20,7 @@ import type {
   InsurancePlan,
   LawInspection,
   Location,
+  LocationId,
   LocationRightsApproach,
   MachineModelId,
   MachineSlot,
@@ -118,6 +119,34 @@ const STARTER_LOCATION_ID = "laundromat";
 
 function cloneState(state: GameState): GameState {
   return structuredClone(state) as GameState;
+}
+
+function withLoggedEvent(currentState: GameState, message: string, tone: GameEventTone = "neutral"): CommandResult {
+  const pacing = {
+    ...(currentState.pacing ?? {}),
+    nextDangerHour: currentState.pacing?.nextDangerHour ?? currentState.worldTimeHours,
+    dangerBeatsToday: currentState.pacing?.dangerBeatsToday ?? 0,
+    suppressedDangerToday: currentState.pacing?.suppressedDangerToday ?? 0,
+    ambientEventsToday: currentState.pacing?.ambientEventsToday ?? 0,
+    quietWindowsToday: currentState.pacing?.quietWindowsToday ?? 0,
+    toastEventsToday: (currentState.pacing?.toastEventsToday ?? 0) + 1
+  };
+  const event: GameEvent = {
+    id: `event_${currentState.eventSequence}`,
+    hour: currentState.worldTimeHours,
+    tone,
+    message
+  };
+
+  return {
+    events: [event],
+    state: {
+      ...currentState,
+      eventLog: [event, ...currentState.eventLog].slice(0, 12),
+      eventSequence: currentState.eventSequence + 1,
+      pacing
+    }
+  };
 }
 
 function ensurePacingState(state: GameState): void {
@@ -1188,6 +1217,7 @@ function expireMachineAlarm(state: GameState, events: GameEvent[], alarmId: stri
   alarm.outcome = "missed";
   startPostDangerQuiet(state);
   log(state, events, `Alarm missed: ${intruder?.name ?? "The intruder"} finished the job on ${machine.name}.`, "danger");
+  log(state, events, `Recovery route: repair ${machine.name}, restock the lowest slot, then check pressure before collecting routine cash.`, "warning");
   if (alarm.kind === "undercut" && machine.id === STARTER_MACHINE_ID) {
     triggerStarterRetaliation(state, events, "Redline saw the laundromat route go unanswered");
   }
@@ -1292,6 +1322,7 @@ function missInspection(state: GameState, events: GameEvent[], inspection: LawIn
     `Inspection missed: $${inspection.fine} fine posted and ${confiscated} stock confiscated.`,
     "danger"
   );
+  log(state, events, "Recovery route: cool heat with legal placements or paperwork before taking another grey-stock job.", "warning");
 }
 
 function resolveExpiredInspections(state: GameState, events: GameEvent[]): void {
@@ -2349,6 +2380,18 @@ function maybeTriggerStarterUndercut(state: GameState, events: GameEvent[], play
   if (rival) {
     rival.money = Math.max(0, rival.money - 12);
   }
+  addStrategyUnlock(state, "Redline read");
+  addMachineHistory(state, machine.id, "rival", "Redline posted cut-rate stickers and supplier rumors at Foam & Fold.", "warning");
+  addMachineTrait(state, machine, "rival_tagged", "Redline made the laundromat route public beef.");
+  logStreetActivity(state, events, {
+    actor: "rival",
+    kind: "rival_scout",
+    locationId: machine.locationId,
+    machineId: machine.id,
+    message: "A Redline scout slapped discount stickers near the laundromat machine while customers watched.",
+    tone: "warning"
+  });
+  log(state, events, "Redline Boss: Your little route is loud. Make it cheaper, cleaner, or scarier before we do it for you.", "warning");
   log(state, events, "Redline undercut your laundromat route with cut-rate stickers and supplier rumors.", "warning");
   createMachineAlarm(state, events, machine, "rival_redline", "undercut", 12);
 }
@@ -2364,15 +2407,20 @@ function travelHoursBetweenLocations(state: GameState, fromLocationId: string, t
 }
 
 function nearestVehicleStop(state: GameState, position: { x: number; z: number }): Location | undefined {
-  const ranked = Object.values(state.locations)
-    .map((location) => ({
-      location,
-      distance: Math.hypot(location.position.x - position.x, location.position.z - position.z)
-    }))
-    .sort((a, b) => a.distance - b.distance);
+  let nearest: Location | undefined;
+  let nearestDistanceSq = 6.25 * 6.25;
 
-  const nearest = ranked[0];
-  return nearest && nearest.distance <= 6.25 ? nearest.location : undefined;
+  for (const location of Object.values(state.locations)) {
+    const dx = location.position.x - position.x;
+    const dz = location.position.z - position.z;
+    const distanceSq = dx * dx + dz * dz;
+    if (distanceSq <= nearestDistanceSq) {
+      nearest = location;
+      nearestDistanceSq = distanceSq;
+    }
+  }
+
+  return nearest;
 }
 
 function parkedVehiclePose(location: Location): { heading: number; position: { x: number; z: number } } {
@@ -2393,6 +2441,114 @@ function normalizeHeading(heading: number): number {
 
   const fullTurn = Math.PI * 2;
   return ((heading % fullTurn) + fullTurn) % fullTurn;
+}
+
+function hasVehicleEscapeConflict(state: GameState, locationId: LocationId): boolean {
+  return Object.values(state.conflict?.activeEvents ?? {}).some(
+    (conflict) => conflict.status === "active"
+      && conflict.locationId === locationId
+      && (conflict.kind === "street_chase" || conflict.kind === "route_ambush")
+  );
+}
+
+function reduceFastCommand(currentState: GameState, command: GameCommand): CommandResult | null {
+  switch (command.type) {
+    case "set_player_location": {
+      if (command.actorId !== currentState.playerFactionId) {
+        return { events: [], state: currentState };
+      }
+
+      const locationId = command.locationId && currentState.locations[command.locationId] ? command.locationId : null;
+      if (currentState.player.currentLocationId === locationId) {
+        return { events: [], state: currentState };
+      }
+
+      return {
+        events: [],
+        state: {
+          ...currentState,
+          player: {
+            ...currentState.player,
+            currentLocationId: locationId
+          }
+        }
+      };
+    }
+
+    case "select_route_task": {
+      if (command.actorId !== currentState.playerFactionId) {
+        return { events: [], state: currentState };
+      }
+
+      const stateWithRoute = {
+        ...currentState,
+        routePlan: {
+          ...currentState.routePlan,
+          selectedTaskId: command.taskId
+        }
+      };
+
+      return command.taskId ? withLoggedEvent(stateWithRoute, "Route stop selected.", "neutral") : { events: [], state: stateWithRoute };
+    }
+
+    case "drive_vehicle": {
+      if (command.actorId !== currentState.playerFactionId) {
+        return { events: [], state: currentState };
+      }
+
+      const vehicle = currentState.vehicles[command.vehicleId];
+      const traffic = currentState.economy?.traffic;
+      if (!vehicle || !traffic?.vehicleMaintenanceDue) {
+        return null;
+      }
+
+      const distance = Math.max(0, Math.min(80, Number.isFinite(command.distance) ? command.distance : 0));
+      const position = {
+        x: Number.isFinite(command.position.x) ? command.position.x : currentState.locations[vehicle.locationId]?.position.x ?? 0,
+        z: Number.isFinite(command.position.z) ? command.position.z : currentState.locations[vehicle.locationId]?.position.z ?? 0
+      };
+      const nearest = nearestVehicleStop(currentState, position);
+      const nextLocationId = nearest?.id ?? vehicle.locationId;
+      if (distance > 0 && hasVehicleEscapeConflict(currentState, nextLocationId)) {
+        return null;
+      }
+
+      const wearMultiplier = vehicleWearMultiplier(vehicle);
+      const nextVehicle: RouteVehicle = {
+        ...vehicle,
+        condition: Math.max(0.28, (vehicle.condition ?? 1) - distance * 0.00045 * wearMultiplier),
+        heading: normalizeHeading(command.heading),
+        locationId: nextLocationId,
+        odometer: (vehicle.odometer ?? 0) + distance,
+        position
+      };
+      const vehicleMaintenanceDue = {
+        ...traffic.vehicleMaintenanceDue,
+        [vehicle.id]: (traffic.vehicleMaintenanceDue[vehicle.id] ?? 0) + distance * 0.035 * wearMultiplier
+      };
+
+      return {
+        events: [],
+        state: {
+          ...currentState,
+          economy: {
+            ...currentState.economy,
+            traffic: {
+              ...traffic,
+              vehicleMaintenanceDue
+            }
+          },
+          vehicles: {
+            ...currentState.vehicles,
+            [vehicle.id]: nextVehicle
+          }
+        }
+      };
+    }
+
+    default:
+      return null;
+  }
 }
 
 function contractProductOptions(location: Location): ProductId[] {
@@ -3957,7 +4113,15 @@ function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number):
 
 export function reduceGameState(currentState: GameState, command: GameCommand): CommandResult {
   const perfStart = perfNow();
+  const fastResult = reduceFastCommand(currentState, command);
+  if (fastResult) {
+    recordPerfDuration(`reducer.fast.${command.type}`, perfNow() - perfStart);
+    return fastResult;
+  }
+
+  const cloneStart = perfNow();
   const state = cloneState(currentState);
+  recordPerfDuration("reducer.clone", perfNow() - cloneStart);
   const events: GameEvent[] = [];
   ensurePacingState(state);
   ensureLawState(state);

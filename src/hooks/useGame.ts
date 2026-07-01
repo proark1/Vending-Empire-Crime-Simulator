@@ -45,6 +45,7 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
   const lastHostSnapshotAtRef = useRef(0);
   const lastRemoteSnapshotSequenceRef = useRef(0);
   const lastRoomPeerCountRef = useRef(0);
+  const lastStateChangeKindRef = useRef<GameCommand["type"] | "remote_snapshot" | "restart" | "reload">("reload");
   const sentCommandSequenceRef = useRef(0);
   const seenRemoteCommandIdsRef = useRef(new Set<string>());
   const transport = useMemo(() => new LocalTransport(), []);
@@ -97,6 +98,7 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
         updateStoredGameSessionSaveRevision(remote.save?.revision ?? null, remote.save?.updatedAt ?? null);
         const nextState = remote.save?.state ?? createInitialState(Date.now());
         persistLocalState(nextState);
+        lastStateChangeKindRef.current = "reload";
         setState(nextState);
       })
       .catch((error) => {
@@ -155,6 +157,21 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
       });
   }, [loadLatestRemoteSave, persistLocalState]);
 
+  const saveDebounceForChange = useCallback((kind: GameCommand["type"] | "remote_snapshot" | "restart" | "reload"): { localMs: number; remoteMs: number } => {
+    switch (kind) {
+      case "drive_vehicle":
+        return { localMs: 1600, remoteMs: 6000 };
+      case "set_player_location":
+        return { localMs: 1200, remoteMs: 4500 };
+      case "advance_time":
+        return { localMs: 900, remoteMs: 2600 };
+      case "remote_snapshot":
+        return { localMs: 1200, remoteMs: 0 };
+      default:
+        return { localMs: 250, remoteMs: 900 };
+    }
+  }, []);
+
   useEffect(() => {
     if (options.multiplayerRole === "guest") {
       return;
@@ -167,15 +184,19 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
       window.clearTimeout(localSaveTimerRef.current);
     }
 
+    const debounce = saveDebounceForChange(lastStateChangeKindRef.current);
+
     localSaveTimerRef.current = window.setTimeout(() => {
       localSaveTimerRef.current = null;
       persistLocalState();
-    }, 250);
+    }, debounce.localMs);
 
-    saveTimerRef.current = window.setTimeout(() => {
-      saveTimerRef.current = null;
-      persistState("normal", { saveLocal: false });
-    }, 900);
+    if (debounce.remoteMs > 0) {
+      saveTimerRef.current = window.setTimeout(() => {
+        saveTimerRef.current = null;
+        persistState("normal", { saveLocal: false });
+      }, debounce.remoteMs);
+    }
 
     return () => {
       if (localSaveTimerRef.current) {
@@ -187,7 +208,7 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
         saveTimerRef.current = null;
       }
     };
-  }, [options.multiplayerRole, persistLocalState, persistState, state]);
+  }, [options.multiplayerRole, persistLocalState, persistState, saveDebounceForChange, state]);
 
   useEffect(() => {
     const saveBeforeLeaving = () => {
@@ -212,6 +233,7 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
     (command: GameCommand) => {
       setState((current) => {
         const result = reduceGameState(current, command);
+        lastStateChangeKindRef.current = command.type;
         transport.emitEvents(result.events);
         transport.emitSnapshot(result.state);
         return result.state;
@@ -245,6 +267,7 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
           window.clearTimeout(localSaveTimerRef.current);
           localSaveTimerRef.current = null;
         }
+        lastStateChangeKindRef.current = "remote_snapshot";
         setState(message.state);
         transport.emitSnapshot(message.state);
         return;
@@ -346,6 +369,7 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
         const npcCommands = planNpcCommands(timeResult.state);
         const npcResult = reduceCommands(timeResult.state, npcCommands);
         const allEvents = [...timeResult.events, ...npcResult.events];
+        lastStateChangeKindRef.current = "advance_time";
         transport.emitEvents(allEvents);
         transport.emitSnapshot(npcResult.state);
         return npcResult.state;
@@ -365,6 +389,7 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
 
     const session = sessionRef.current;
     if (!session) {
+      lastStateChangeKindRef.current = "reload";
       setState(loadGame());
       return;
     }
@@ -380,6 +405,7 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
     const nextState = createInitialState(Date.now());
     clearSave();
     persistLocalState(nextState);
+    lastStateChangeKindRef.current = "restart";
     setState(nextState);
 
     const session = sessionRef.current;

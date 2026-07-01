@@ -9,6 +9,7 @@ import {
   installedMachines,
   machineStockUnits,
   missionProgress,
+  routeTasks,
   totalOwnedStockUnits
 } from "./selectors";
 
@@ -35,6 +36,14 @@ export interface PlaytestBalanceFlag {
   message: string;
 }
 
+export interface PlaytestUxSignal {
+  code: string;
+  label: string;
+  value: number | string;
+  note: string;
+  severity: "info" | "warning" | "error";
+}
+
 export interface PlaytestReport {
   exportedAt: string;
   runClock: string;
@@ -54,6 +63,7 @@ export interface PlaytestReport {
   };
   milestones: PlaytestMilestoneReport[];
   flags: PlaytestBalanceFlag[];
+  uxSignals: PlaytestUxSignal[];
 }
 
 function activeMinutesAt(hour: number): number {
@@ -226,6 +236,44 @@ function playtestFlags(state: GameState, milestones: PlaytestMilestoneReport[]):
   return flags;
 }
 
+function playtestUxSignals(state: GameState): PlaytestUxSignal[] {
+  const playerMachines = installedMachines(state, state.playerFactionId);
+  const stockedMachines = playerMachines.filter((machine) => machineStockUnits(machine) > 0);
+  const tasks = routeTasks(state);
+  const signals: PlaytestUxSignal[] = [
+    {
+      code: "open_route_tasks",
+      label: "Open route tasks",
+      value: tasks.length,
+      note: tasks.length > 5 ? "Planner may be asking the player to compare too many next actions." : "Task list is within a readable range.",
+      severity: tasks.length > 7 ? "error" : tasks.length > 5 ? "warning" : "info"
+    },
+    {
+      code: "selected_guidance",
+      label: "Selected guidance",
+      value: state.routePlan.selectedTaskId ?? "none",
+      note: !state.routePlan.selectedTaskId && tasks.length > 2 ? "Player has several jobs but no explicit guided task selected." : "Guidance state is clear.",
+      severity: !state.routePlan.selectedTaskId && tasks.length > 2 ? "warning" : "info"
+    },
+    {
+      code: "stocked_machine_ratio",
+      label: "Stocked machines",
+      value: `${stockedMachines.length}/${playerMachines.length}`,
+      note: playerMachines.length > 0 && stockedMachines.length === 0 ? "Installed route has no earning machine; tutorial/recovery copy should be visible." : "Installed route has at least one earning stop or no machines yet.",
+      severity: playerMachines.length > 0 && stockedMachines.length === 0 ? "warning" : "info"
+    },
+    {
+      code: "notification_density",
+      label: "Notifications today",
+      value: state.pacing?.toastEventsToday ?? 0,
+      note: (state.pacing?.toastEventsToday ?? 0) >= 18 ? "Opening may be noisy enough to hide objectives." : "Notification density is reasonable.",
+      severity: (state.pacing?.toastEventsToday ?? 0) >= 24 ? "error" : (state.pacing?.toastEventsToday ?? 0) >= 18 ? "warning" : "info"
+    }
+  ];
+
+  return signals;
+}
+
 export function buildPlaytestReport(state: GameState, exportedAt = new Date().toISOString()): PlaytestReport {
   const player = state.factions[state.playerFactionId];
   const playerMachines = installedMachines(state, state.playerFactionId);
@@ -341,7 +389,8 @@ export function buildPlaytestReport(state: GameState, exportedAt = new Date().to
       leadingEndingScore: leadingEnding?.score ?? 0
     },
     milestones,
-    flags: playtestFlags(state, milestones)
+    flags: playtestFlags(state, milestones),
+    uxSignals: playtestUxSignals(state)
   };
 }
 

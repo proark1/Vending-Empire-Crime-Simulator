@@ -55,7 +55,6 @@ import {
   rivalTerritoryByDistrict,
   routeDangerScore,
   routeTasks,
-  type RouteTask,
   narrativeQuestProgress,
   storyArcProgress,
   supplierRelationshipList,
@@ -70,8 +69,18 @@ import { supplierDeals } from "../game/content/suppliers";
 import { vehicleUpgradeList } from "../game/content/vehicleUpgrades";
 import { buildPlaytestReport, playtestReportFilename } from "../game/core/playtestTelemetry";
 import { activeRunModifier, machineTraitDefinitions, machineTraitsFor } from "../game/content/replayability";
+import { buildCurrentJob, heatForecast, machineLifeSummary, productTradeoffs, recoveryNotes, routeTaskDecision } from "./currentJob";
 
 type DashboardTab = "actions" | "machines" | "fleet" | "base" | "empire" | "suppliers" | "catalog" | "finance" | "districts" | "rights" | "jobs" | "route" | "logistics" | "crew" | "law" | "heat" | "conflict" | "rival" | "story" | "debug" | "log";
+type DashboardGroup = "now" | "assets" | "city" | "pressure" | "story";
+
+interface DashboardTabItem {
+  advanced?: boolean;
+  group: DashboardGroup;
+  icon: React.ReactNode;
+  id: DashboardTab;
+  label: string;
+}
 
 interface DashboardProps {
   state: GameState;
@@ -214,47 +223,28 @@ function relationshipBrief(relationship: string): string {
   return "Testing the route through pressure and offers.";
 }
 
-function taskStakes(task: RouteTask): { payoff: string; risk: string } {
-  switch (task.type) {
-    case "alarm":
-      return { payoff: "Protects the machine and keeps the stop yours.", risk: "Ignore it and damage, pressure, or lost sales stack up." };
-    case "conflict":
-      return { payoff: "Keeps the route from spiraling into a street problem.", risk: "Health, stamina, and vehicle position matter." };
-    case "inspection":
-      return { payoff: "Protects stock, reputation, and future legal routes.", risk: "Fines and confiscation land if you stall." };
-    case "contract":
-      return { payoff: "Pays cash and proves the route can keep promises.", risk: "Missed deadlines slow expansion requirements." };
-    case "supplier":
-      return { payoff: "Turns empty storage into future sales.", risk: "Cash leaves now, especially in shortages." };
-    case "garage":
-      return { payoff: "Preps cargo, repairs, or van readiness before the route.", risk: "Leaving unprepared wastes travel time." };
-    case "placement":
-      return { payoff: "Claims territory and opens another income stream.", risk: "Rent and rival attention rise with every claim." };
-    case "stock":
-      return { payoff: "Restarts sales at a stop with demand waiting.", risk: "Wrong stock mix can strand cargo." };
-    case "collect":
-      return { payoff: "Moves stored revenue into spendable cash.", risk: "Delaying slows upgrades and expansion." };
-    case "repair":
-      return { payoff: "Restores reliability and keeps rivals from exploiting damage.", risk: "Repair cash competes with stock and placements." };
-    case "pressure":
-      return { payoff: "Checks a contested block before it becomes an alarm.", risk: "Rivals push harder when pressure is ignored." };
-    default:
-      return { payoff: "Moves the route forward.", risk: "Leaving it open can create drag later." };
-  }
-}
-
 export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
   const [tab, setTab] = useState<DashboardTab>("actions");
+  const [navGroup, setNavGroup] = useState<DashboardGroup>("now");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [playtestExportStatus, setPlaytestExportStatus] = useState("");
+  const needsAssetsData = navGroup === "assets" || ["machines", "fleet", "base", "logistics", "catalog", "crew"].includes(tab);
+  const needsCityData = navGroup === "city" || ["districts", "rights", "suppliers", "finance", "empire"].includes(tab);
+  const needsPressureData = navGroup === "pressure" || ["law", "heat", "conflict", "rival"].includes(tab);
+  const needsStoryData = navGroup === "story" || ["story", "debug"].includes(tab);
   const playerMachines = useMemo(() => ownedMachines(state, state.playerFactionId), [state]);
   const installedPlayerMachines = useMemo(() => installedMachines(state, state.playerFactionId), [state]);
   const rivals = useMemo(() => Object.values(state.factions).filter((faction) => faction.type === "npc"), [state.factions]);
   const vehicle = useMemo(() => activeVehicle(state), [state]);
   const employees = useMemo(() => employeeList(state), [state]);
+  const unlockedDistrictCount = useMemo(() => Object.values(state.districtProgress).filter((progress) => progress.access !== "locked").length, [state.districtProgress]);
   const districtSummaries = useMemo(
-    () =>
-      Object.values(state.districts)
+    () => {
+      if (!needsCityData && !needsPressureData) {
+        return [];
+      }
+
+      return Object.values(state.districts)
         .map((district) => {
           const locations = districtLocations(state, district.id).filter(installableLocation);
           const openSites = locations.filter((location) => !machineAtLocation(state, location.id));
@@ -281,8 +271,9 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
             unmetRequirements: unlockInfo.unmetRequirements
           };
         })
-        .sort((a, b) => a.district.name.localeCompare(b.district.name)),
-    [state, vehicle]
+        .sort((a, b) => a.district.name.localeCompare(b.district.name));
+    },
+    [needsCityData, needsPressureData, state, vehicle]
   );
   const tasks = useMemo(() => routeTasks(state), [state]);
   const routePlan = useMemo(() => optimizedRoutePlan(state), [state]);
@@ -293,27 +284,37 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
   const conflicts = useMemo(() => activeConflictEvents(state), [state]);
   const districtEvents = useMemo(() => activeDistrictEvents(state), [state]);
   const rivalOrganizations = useMemo(() => Object.values(state.rivalOrganizations ?? {}), [state.rivalOrganizations]);
-  const empireAssets = useMemo(() => empireAssetList(state), [state]);
-  const majorRaids = useMemo(() => activeMajorRaids(state), [state]);
-  const suppliers = useMemo(() => supplierRelationshipList(state), [state]);
-  const fleet = useMemo(() => fleetSummary(state), [state]);
-  const procurementQuotes = useMemo(() => machineProcurementQuotes(state), [state]);
+  const empireAssets = useMemo(() => (tab === "empire" ? empireAssetList(state) : []), [state, tab]);
+  const majorRaids = useMemo(() => (tab === "empire" ? activeMajorRaids(state) : []), [state, tab]);
+  const suppliers = useMemo(() => (tab === "suppliers" ? supplierRelationshipList(state) : []), [state, tab]);
+  const fleet = useMemo(
+    () => needsAssetsData ? fleetSummary(state) : { averageCondition: 1, installedCount: installedPlayerMachines.length, modelVariety: 0, storedCount: 0, totalFleetValue: 0, vendorReputation: state.economy?.fleet?.vendorReputation ?? 0 },
+    [installedPlayerMachines.length, needsAssetsData, state]
+  );
+  const procurementQuotes = useMemo(() => (tab === "fleet" || tab === "machines" ? machineProcurementQuotes(state) : []), [state, tab]);
   const storedMachines = useMemo(() => playerMachines.filter((machine) => (machine.placementStatus ?? "installed") !== "installed"), [playerMachines]);
   const installableLocations = useMemo(() => Object.values(state.locations).filter(installableLocation), [state.locations]);
-  const activeRights = useMemo(() => activeLocationRights(state), [state]);
-  const quests = useMemo(() => narrativeQuestProgress(state), [state]);
-  const finance = useMemo(() => financeSummary(state), [state]);
+  const activeRights = useMemo(() => (tab === "rights" ? activeLocationRights(state) : []), [state, tab]);
+  const quests = useMemo(() => (needsStoryData || tab === "rival" ? narrativeQuestProgress(state) : []), [needsStoryData, state, tab]);
+  const finance = useMemo(() => (tab === "finance" ? financeSummary(state) : { expensesToday: 0, netToday: 0, revenueToday: 0 }), [state, tab]);
   const heatTier = useMemo(() => playerHeatTier(state), [state]);
-  const ledger = useMemo(() => financeLedger(state).slice(0, 16), [state]);
-  const territory = useMemo(() => rivalTerritoryByDistrict(state), [state]);
+  const ledger = useMemo(() => (tab === "finance" ? financeLedger(state).slice(0, 16) : []), [state, tab]);
+  const territory = useMemo(() => (tab === "rival" ? rivalTerritoryByDistrict(state) : []), [state, tab]);
   const dayReport = useMemo(() => latestDayReport(state), [state]);
-  const storyProgress = useMemo(() => storyArcProgress(state), [state]);
-  const campaignProgress = useMemo(() => campaignMissionProgress(state), [state]);
-  const endingScores = useMemo(() => endgamePathScores(state), [state]);
+  const storyProgress = useMemo(() => (needsStoryData ? storyArcProgress(state) : []), [needsStoryData, state]);
+  const campaignProgress = useMemo(() => (needsStoryData ? campaignMissionProgress(state) : []), [needsStoryData, state]);
+  const endingScores = useMemo(() => (needsStoryData || tab === "empire" || tab === "actions" ? endgamePathScores(state) : []), [needsStoryData, state, tab]);
   const playtestReport = useMemo(() => (tab === "story" ? buildPlaytestReport(state) : null), [state, tab]);
   const runModifier = useMemo(() => activeRunModifier(state), [state]);
   const strategyUnlocks = state.replay?.strategyUnlocks ?? [];
   const actionTasks = useMemo(() => tasks.slice(0, 5), [tasks]);
+  const currentJob = useMemo(() => {
+    const dashboardPosition = state.locations[state.player.currentLocationId ?? "garage"]?.position ?? state.locations.garage?.position ?? { x: 0, z: 0 };
+    return buildCurrentJob(state, dashboardPosition);
+  }, [state]);
+  const heatReadout = useMemo(() => heatForecast(state), [state]);
+  const recovery = useMemo(() => recoveryNotes(state), [state]);
+  const stockTradeoffs = useMemo(() => productTradeoffs(state), [state]);
   const runTraitCount = useMemo(() => Object.values(state.replay?.machineTraits ?? {}).reduce((sum, traits) => sum + traits.length, 0), [state.replay?.machineTraits]);
   const loudestRivalMemory = useMemo(() => {
     return Object.values(state.replay?.rivalMemory ?? {})
@@ -323,51 +324,57 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
       }))
       .sort((a, b) => b.total - a.total)[0];
   }, [state.replay?.rivalMemory]);
-  const advancedTabs = useMemo<DashboardTab[]>(
-    () => ["rights", "crew", "law", "empire", "suppliers", "catalog", "finance", "logistics", "heat", "conflict", "rival", "story", ...(showDebug ? (["debug"] as DashboardTab[]) : [])],
-    [showDebug]
-  );
-  const visibleTabs = useMemo<Array<{ icon: React.ReactNode; id: DashboardTab; label: string }>>(
+  const dashboardGroups = useMemo<Array<{ id: DashboardGroup; label: string; signal: string }>>(
     () => [
-      { id: "actions", label: "Plan", icon: <Navigation size={16} aria-hidden="true" /> },
-      { id: "machines", label: "Machines", icon: <Map size={16} aria-hidden="true" /> },
-      { id: "route", label: "Route", icon: <Route size={16} aria-hidden="true" /> },
-      { id: "jobs", label: "Jobs", icon: <ClipboardList size={16} aria-hidden="true" /> },
-      { id: "fleet", label: "Fleet", icon: <Boxes size={16} aria-hidden="true" /> },
-      { id: "base", label: "Base", icon: <Factory size={16} aria-hidden="true" /> },
-      { id: "districts", label: "Districts", icon: <Building2 size={16} aria-hidden="true" /> },
-      { id: "log", label: "Log", icon: <ClipboardList size={16} aria-hidden="true" /> },
-      ...(showAdvanced
-        ? [
-            { id: "catalog" as DashboardTab, label: "Market", icon: <FlaskConical size={16} aria-hidden="true" /> },
-            { id: "suppliers" as DashboardTab, label: "Suppliers", icon: <Truck size={16} aria-hidden="true" /> },
-            { id: "crew" as DashboardTab, label: "Crew", icon: <Users size={16} aria-hidden="true" /> },
-            { id: "rights" as DashboardTab, label: "Rights", icon: <Landmark size={16} aria-hidden="true" /> },
-            { id: "empire" as DashboardTab, label: "Empire", icon: <Building2 size={16} aria-hidden="true" /> },
-            { id: "finance" as DashboardTab, label: "Finance", icon: <Landmark size={16} aria-hidden="true" /> },
-            { id: "logistics" as DashboardTab, label: "Stock", icon: <Package size={16} aria-hidden="true" /> },
-            { id: "law" as DashboardTab, label: "Law", icon: <ShieldAlert size={16} aria-hidden="true" /> },
-            { id: "heat" as DashboardTab, label: "Heat", icon: <AlertTriangle size={16} aria-hidden="true" /> },
-            { id: "conflict" as DashboardTab, label: "Conflict", icon: <ShieldAlert size={16} aria-hidden="true" /> },
-            { id: "rival" as DashboardTab, label: "Rivals", icon: <Map size={16} aria-hidden="true" /> },
-            { id: "story" as DashboardTab, label: "Story", icon: <Trophy size={16} aria-hidden="true" /> },
-            ...(showDebug ? [{ id: "debug" as DashboardTab, label: "Debug", icon: <Wrench size={16} aria-hidden="true" /> }] : [])
-          ]
-        : [])
+      { id: "now", label: "Now", signal: tasks.length > 0 ? `${Math.min(9, tasks.length)} jobs` : "clear" },
+      { id: "assets", label: "Assets", signal: `${installedPlayerMachines.length} machines` },
+      { id: "city", label: "City", signal: `${unlockedDistrictCount} districts` },
+      { id: "pressure", label: "Pressure", signal: heatReadout.label },
+      { id: "story", label: "Story", signal: endingScores[0]?.path.title ?? "open" }
     ],
-    [showAdvanced, showDebug]
+    [endingScores, heatReadout.label, installedPlayerMachines.length, tasks.length, unlockedDistrictCount]
+  );
+  const visibleTabs = useMemo<DashboardTabItem[]>(
+    () => {
+      const tabItems: DashboardTabItem[] = [
+        { id: "actions", group: "now", label: "Plan", icon: <Navigation size={16} aria-hidden="true" /> },
+        { id: "route", group: "now", label: "Route", icon: <Route size={16} aria-hidden="true" /> },
+        { id: "jobs", group: "now", label: "Jobs", icon: <ClipboardList size={16} aria-hidden="true" /> },
+        { id: "log", group: "now", label: "Log", icon: <ClipboardList size={16} aria-hidden="true" /> },
+        { id: "machines", group: "assets", label: "Machines", icon: <Map size={16} aria-hidden="true" /> },
+        { id: "fleet", group: "assets", label: "Fleet", icon: <Boxes size={16} aria-hidden="true" /> },
+        { id: "base", group: "assets", label: "Base", icon: <Factory size={16} aria-hidden="true" /> },
+        { id: "logistics", group: "assets", label: "Stock", advanced: true, icon: <Package size={16} aria-hidden="true" /> },
+        { id: "catalog", group: "assets", label: "Market", advanced: true, icon: <FlaskConical size={16} aria-hidden="true" /> },
+        { id: "suppliers", group: "city", label: "Suppliers", advanced: true, icon: <Truck size={16} aria-hidden="true" /> },
+        { id: "districts", group: "city", label: "Districts", icon: <Building2 size={16} aria-hidden="true" /> },
+        { id: "rights", group: "city", label: "Rights", advanced: true, icon: <Landmark size={16} aria-hidden="true" /> },
+        { id: "finance", group: "city", label: "Finance", advanced: true, icon: <Landmark size={16} aria-hidden="true" /> },
+        { id: "empire", group: "city", label: "Empire", advanced: true, icon: <Building2 size={16} aria-hidden="true" /> },
+        { id: "law", group: "pressure", label: "Law", advanced: true, icon: <ShieldAlert size={16} aria-hidden="true" /> },
+        { id: "heat", group: "pressure", label: "Heat", advanced: true, icon: <AlertTriangle size={16} aria-hidden="true" /> },
+        { id: "conflict", group: "pressure", label: "Conflict", advanced: true, icon: <ShieldAlert size={16} aria-hidden="true" /> },
+        { id: "rival", group: "pressure", label: "Rivals", advanced: true, icon: <Map size={16} aria-hidden="true" /> },
+        { id: "crew", group: "story", label: "Crew", advanced: true, icon: <Users size={16} aria-hidden="true" /> },
+        { id: "story", group: "story", label: "Story", advanced: true, icon: <Trophy size={16} aria-hidden="true" /> },
+        ...(showDebug ? [{ id: "debug", group: "story", label: "Debug", advanced: true, icon: <Wrench size={16} aria-hidden="true" /> } as DashboardTabItem] : [])
+      ];
+      return tabItems.filter((item) => item.group === navGroup && (!item.advanced || showAdvanced || item.id === "story"));
+    },
+    [navGroup, showAdvanced, showDebug]
   );
 
   useEffect(() => {
-    if (!showAdvanced && advancedTabs.includes(tab)) {
+    if (tab === "debug" && !showDebug) {
       setTab("actions");
+      setNavGroup("now");
       return;
     }
 
-    if (tab === "debug" && !showDebug) {
-      setTab("actions");
+    if (!visibleTabs.some((item) => item.id === tab)) {
+      setTab(visibleTabs[0]?.id ?? "actions");
     }
-  }, [advancedTabs, showAdvanced, showDebug, tab]);
+  }, [showDebug, tab, visibleTabs]);
 
   const handleExportPlaytestReport = () => {
     const report = buildPlaytestReport(state);
@@ -410,9 +417,24 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
             Advanced
           </button>
         </div>
-        <div className="dashboard-next" aria-label="Recommended next stop">
-          <span>Next</span>
-          <strong>{nextTask ? nextTask.title : "Keep starter route stocked"}</strong>
+        <div className={`dashboard-next ${currentJob.tone}`} aria-label="Current operations job">
+          <span>Current job</span>
+          <strong>{currentJob.title}</strong>
+          <small>{currentJob.targetLabel}</small>
+        </div>
+        <div className="dashboard-groups" role="tablist" aria-label="Operations groups">
+          {dashboardGroups.map((group) => (
+            <button
+              aria-pressed={navGroup === group.id}
+              className={navGroup === group.id ? "dashboard-group active" : "dashboard-group"}
+              key={group.id}
+              onClick={() => setNavGroup(group.id)}
+              type="button"
+            >
+              <span>{group.label}</span>
+              <small>{group.signal}</small>
+            </button>
+          ))}
         </div>
       </div>
       <div className="tab-row" role="tablist" aria-label="Operations dashboard">
@@ -429,17 +451,21 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
             <div className="vehicle-heading">
               <Navigation size={18} aria-hidden="true" />
               <div>
-                <h3>{nextTask ? nextTask.title : "Keep the route earning"}</h3>
-                <p>{nextTask ? nextTask.detail : "No urgent stops are waiting. Stock, collect, or scout when the route is calm."}</p>
+                <h3>{currentJob.title}</h3>
+                <p>{currentJob.targetLabel} · {currentJob.detail}</p>
               </div>
+            </div>
+            <div className="action-stakes">
+              <span className="good">{currentJob.payoff}</span>
+              <span className={currentJob.tone}>{currentJob.risk}</span>
             </div>
             <div className="action-plan-stats">
               <span>
                 <strong>${Math.round(state.factions[state.playerFactionId].money)}</strong>
                 cash
               </span>
-              <span className={heatTier.tone}>
-                <strong>{heatTier.label}</strong>
+              <span className={heatReadout.tone}>
+                <strong>{heatReadout.label}</strong>
                 heat
               </span>
               <span>
@@ -470,6 +496,40 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
             )}
           </article>
 
+          {recovery.length > 0 && (
+            <div className="recovery-strip" aria-label="Recovery options">
+              {recovery.slice(0, 3).map((note) => (
+                <article className={`recovery-note ${note.tone}`} key={note.title}>
+                  <strong>{note.title}</strong>
+                  <span>{note.detail}</span>
+                  <em>{note.action}</em>
+                </article>
+              ))}
+            </div>
+          )}
+
+          {stockTradeoffs.length > 0 && (
+            <article className="vehicle-card product-choice-card">
+              <div className="vehicle-heading">
+                <FlaskConical size={18} aria-hidden="true" />
+                <div>
+                  <h3>Starter stock choices</h3>
+                  <p>Pick the route's personality early: safe volume, fast demand, or risky margin.</p>
+                </div>
+              </div>
+              <div className="product-choice-grid">
+                {stockTradeoffs.map((tradeoff) => (
+                  <div className={`product-choice ${tradeoff.tone}`} key={tradeoff.product.id}>
+                    <strong>{tradeoff.label}</strong>
+                    <span>{tradeoff.product.name} · ${Math.round(tradeoff.cost)}</span>
+                    <p>{tradeoff.payoff}</p>
+                    <em>{tradeoff.risk}</em>
+                  </div>
+                ))}
+              </div>
+            </article>
+          )}
+
           <div className="panel-section-title">Next best actions</div>
           {actionTasks.length === 0 ? (
             <article className="inventory-row good">
@@ -482,7 +542,7 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
           ) : (
             actionTasks.map((task, index) => {
               const location = state.locations[task.locationId];
-              const stakes = taskStakes(task);
+              const decision = routeTaskDecision(state, task);
               const isSelected = state.routePlan.selectedTaskId === task.id;
               const vehicleAtStop = vehicle?.locationId === task.locationId;
               return (
@@ -492,8 +552,9 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
                     <h3>{task.title}</h3>
                     <p>{location?.name ?? "Unknown stop"} · {task.detail}</p>
                     <div className="action-stakes">
-                      <span className="good">{stakes.payoff}</span>
-                      <span className={task.tone === "danger" ? "danger" : "warning"}>{stakes.risk}</span>
+                      <span className="good">{decision.payoff}</span>
+                      <span className={task.tone === "danger" ? "danger" : "warning"}>{decision.risk}</span>
+                      <span>{decision.cost}</span>
                     </div>
                   </div>
                   <div className="route-actions">
@@ -606,6 +667,7 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
                   {assignedCrew.length > 0 && <p className="remote-chip">Crew: {assignedCrew.map((employee) => employee.name).join(", ")}</p>}
                   {pressure && pressure.reasons.length > 0 && <p className={`route-chip ${pressure.tone}`}>{pressure.reasons.join(" · ")}</p>}
                   {installed && <p className="remote-chip">Customers: {Math.round(customerLoyalty)} loyalty · {complaints.toFixed(1)} complaints</p>}
+                  <p className="machine-life-note">{machineLifeSummary(state, machine)}</p>
                   {traits.length > 0 && (
                     <p className="remote-chip">
                       Traits: {traits.map((trait) => machineTraitDefinitions[trait.id]?.name ?? trait.id).join(" · ")}
@@ -1347,6 +1409,7 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
               <div className="storage-list">
                 {routePlan.stops.map((stop) => {
                   const location = state.locations[stop.locationId];
+                  const decision = routeTaskDecision(state, stop.task);
                   return (
                     <article className={`inventory-row ${stop.task.tone === "danger" ? "danger" : ""}`} key={`plan_${stop.task.id}`}>
                       <div>
@@ -1356,6 +1419,7 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
                         <p>
                           {location?.name ?? stop.locationId} · ETA {Math.max(1, Math.round(stop.etaHours * 60))}m · risk {Math.round(stop.riskScore * 100)}
                         </p>
+                        <p>{decision.cost} · {decision.payoff}</p>
                       </div>
                       <strong>{stop.task.type}</strong>
                     </article>
@@ -1370,6 +1434,7 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
               <div>
                 <h3>{selectedTask.title}</h3>
                 <p>{selectedTask.detail}</p>
+                <p>{routeTaskDecision(state, selectedTask).when} · {routeTaskDecision(state, selectedTask).cost}</p>
               </div>
               <strong>Guiding</strong>
             </article>
@@ -1388,6 +1453,7 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
               const location = state.locations[task.locationId];
               const isSelected = state.routePlan.selectedTaskId === task.id;
               const vehicleAtStop = vehicle?.locationId === task.locationId;
+              const decision = routeTaskDecision(state, task);
               return (
                 <article className={`route-task ${task.tone} ${isSelected ? "selected" : ""}`} key={task.id}>
                   <div>
@@ -1395,6 +1461,11 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
                     <p>
                       {location?.name ?? "Unknown stop"} · {task.detail}
                     </p>
+                    <div className="action-stakes">
+                      <span className="good">{decision.payoff}</span>
+                      <span className={task.tone === "danger" ? "danger" : "warning"}>{decision.risk}</span>
+                      <span>{decision.cost}</span>
+                    </div>
                   </div>
                   <div className="route-actions">
                     <MiniButton onClick={() => onCommand({ type: "select_route_task", actorId: state.playerFactionId, taskId: isSelected ? null : task.id })}>
@@ -1577,10 +1648,10 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
               <div>
                 <h3>Law pressure</h3>
                 <p>
-                  Next inspection window {formatClock(state.law.nextInspectionHour)} · {state.law.confiscatedUnitsToday} stock confiscated today
+                  {heatReadout.detail} · {state.law.confiscatedUnitsToday} stock confiscated today
                 </p>
-                <p className={`heat-tier-note ${heatTier.tone}`}>
-                  {heatTier.description} {heatTier.action}
+                <p className={`heat-tier-note ${heatReadout.tone}`}>
+                  {heatReadout.action}
                 </p>
               </div>
             </div>
@@ -1602,7 +1673,7 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
             <article className="inventory-row">
               <div>
                 <h3>No active inspections</h3>
-                <p>Placement method, grey stock, heat, and police presence decide the next check.</p>
+                <p>{heatReadout.detail} Placement method, grey stock, heat, and police presence decide the next check.</p>
               </div>
               <strong>0</strong>
             </article>
@@ -1653,7 +1724,7 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
               <div>
                 <h3>{heatTier.label}</h3>
                 <p>{heatTier.description}</p>
-                <p className={`heat-tier-note ${heatTier.tone}`}>{heatTier.action}</p>
+                <p className={`heat-tier-note ${heatReadout.tone}`}>{heatReadout.detail} {heatReadout.action}</p>
               </div>
             </div>
             <div className="report-grid">
@@ -1946,6 +2017,15 @@ export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
                     <p>{flag.message}</p>
                   </div>
                   <strong>{flag.severity}</strong>
+                </article>
+              ))}
+              {playtestReport.uxSignals.map((signal) => (
+                <article className={`inventory-row ${signal.severity === "error" ? "danger" : signal.severity === "warning" ? "contract-needed" : ""}`} key={signal.code}>
+                  <div>
+                    <h3>{signal.label}</h3>
+                    <p>{signal.note}</p>
+                  </div>
+                  <strong>{signal.value}</strong>
                 </article>
               ))}
             </div>

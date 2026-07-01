@@ -38,6 +38,7 @@ import { estimateMachineSalesPerHour } from "../game/systems/economy";
 import { baseFacilityList } from "../game/content/baseFacilities";
 import type { SceneTarget } from "../render/three/SceneTargets";
 import { getPrimaryInteraction, type PrimaryInteraction } from "./interactionActions";
+import { machineLifeSummary } from "./currentJob";
 
 interface InteractionPanelProps {
   state: GameState;
@@ -838,6 +839,11 @@ export function InteractionPanel({ state, target, onCommand, onSave, onReload, o
         <span>{formatPercent(visibility)} visibility</span>
         <span className={`route-tone ${pressure.tone}`}>{pressure.reasons[0] ?? "stable"}</span>
         <span>{installedUpgrades.length}/{machineUpgradeList.length} upgrades</span>
+      </div>
+
+      <div className={`machine-memory-strip ${pressure.tone}`}>
+        <strong>Route memory</strong>
+        <span>{machineLifeSummary(state, machine)}</span>
       </div>
 
       {isPlayerMachine ? (

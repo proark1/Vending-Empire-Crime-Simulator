@@ -1329,20 +1329,24 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
 
   return (
     <main className={gameShellClassName}>
-      <Suspense fallback={<div className="scene-loading" role="status">Loading city...</div>}>
-        <ThreeScene
-          graphicsQuality={graphicsQuality}
-          guidanceLocationId={guidanceLocationId}
-          mapLayout={mapLayout}
-          modelConfig={modelConfig}
-          state={state}
-          feedbackEvent={sceneFeedback}
-          onVehicleDrive={handleVehicleDrive}
-          onPlayerPositionChange={setPlayerPosition}
-          onPlayerHeadingChange={setPlayerHeadingDegrees}
-          onTargetChange={setTarget}
-        />
-      </Suspense>
+      {entered ? (
+        <Suspense fallback={<div className="scene-loading" role="status">Loading city...</div>}>
+          <ThreeScene
+            graphicsQuality={graphicsQuality}
+            guidanceLocationId={guidanceLocationId}
+            mapLayout={mapLayout}
+            modelConfig={modelConfig}
+            state={state}
+            feedbackEvent={sceneFeedback}
+            onVehicleDrive={handleVehicleDrive}
+            onPlayerPositionChange={setPlayerPosition}
+            onPlayerHeadingChange={setPlayerHeadingDegrees}
+            onTargetChange={setTarget}
+          />
+        </Suspense>
+      ) : (
+        <div className="scene-loading scene-loading-idle" aria-hidden="true" />
+      )}
       <div className="world-vignette" aria-hidden="true" />
       {entered && <Hud feedbackEvent={sceneFeedback} state={state} />}
       {entered && <MissionTracker compact={dashboardOpen} state={state} playerPosition={playerPosition} />}
@@ -1753,6 +1757,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
       )}
       {entered && <Minimap state={state} mapLayout={mapLayout} playerPosition={playerPosition} guidanceLocationId={guidanceLocationId} target={activeTarget} />}
       {entered && <InteractionPanel state={state} target={activeTarget} onCommand={sendCommandAtActiveTarget} onSave={save} onReload={reload} onRestart={handleRestart} />}
+      {entered && <DesktopFirstNotice />}
       <ToastStack docked={dashboardOpen} messages={toasts} />
       <PerformanceOverlay enabled={showPerfOverlay} />
     </main>
@@ -2071,6 +2076,15 @@ function PerformanceOverlay({ enabled }: { enabled: boolean }) {
           );
         })
       )}
+    </aside>
+  );
+}
+
+function DesktopFirstNotice() {
+  return (
+    <aside className="desktop-first-notice" aria-label="Desktop play notice">
+      <strong>Desktop route mode</strong>
+      <span>Use a keyboard and mouse window for driving, aiming, and service timing.</span>
     </aside>
   );
 }
