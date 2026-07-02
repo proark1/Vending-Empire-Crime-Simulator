@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GameCommand, GameState } from "../game/core/types";
 import { LocalTransport } from "../game/core/transport";
 import { createInitialState } from "../game/content/initialState";
+import { applyRunLegacy } from "../game/content/replayability";
 import { loadGame, saveGame, clearSave } from "../game/save/storage";
 import { ApiError, loadRemoteGame, saveRemoteGame, saveRemoteGameBeacon, updateStoredGameSessionSaveRevision, type GameSession } from "../game/save/api";
 import { planNpcCommands } from "../game/ai/rivalAi";
@@ -472,6 +473,8 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
     // showed so the new run gets exactly the previewed modifier instead of a
     // different one from a fresh Date.now() seed.
     const nextState = createInitialState(typeof seed === "number" && Number.isFinite(seed) ? seed : Date.now());
+    // New Game Plus: carry the finished run's unlocks/grudges into the fresh run.
+    applyRunLegacy(nextState, stateRef.current);
     clearSave();
     persistLocalState(nextState);
     lastStateChangeKindRef.current = "restart";

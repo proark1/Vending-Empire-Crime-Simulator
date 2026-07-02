@@ -397,6 +397,17 @@ export interface RivalMemoryState {
   undercut: number;
 }
 
+export interface RunLegacyState {
+  // Strategy unlocks carried from the previous run (New Game Plus perks).
+  unlocks: string[];
+  // The previous run's loudest rivalry, whose grudge persists into this run.
+  rivalFactionId?: FactionId;
+  // How many completed runs precede this one (1 = second run, etc.).
+  runCount: number;
+  // Starting cash bonus granted from the legacy, for display/recap.
+  startingBonus: number;
+}
+
 export interface ReplayState {
   runSeed: number;
   modifier: RunModifierState;
@@ -404,6 +415,8 @@ export interface ReplayState {
   machineTraits: Record<MachineId, MachineTraitState[]>;
   rivalMemory: Record<FactionId, RivalMemoryState>;
   strategyUnlocks: string[];
+  // Present only on New Game Plus runs seeded from a prior run's legacy.
+  legacy?: RunLegacyState;
 }
 
 export type FinanceLedgerCategory =

@@ -285,3 +285,63 @@ export function replayEndingSummary(state: GameState, baseSummary: string): stri
 
   return `${baseSummary} This run started under ${modifier.name}. You ended with ${installed.length} machines (${legalCount} legal, ${riskyCount} risky), ${traitCount} machine traits, and your loudest rivalry was with ${rivalName}. ${unlockNote}`;
 }
+
+function loudestRivalFactionId(state: GameState): FactionId | undefined {
+  const strongest = Object.values(state.replay?.rivalMemory ?? {})
+    .map((memory) => ({
+      factionId: memory.factionId,
+      total: memory.undercut + memory.sabotage + memory.expansion + memory.negotiation + memory.exposure + memory.disruption + memory.alarmConfronted
+    }))
+    .sort((a, b) => b.total - a.total)[0];
+  return strongest && strongest.total > 0 ? strongest.factionId : undefined;
+}
+
+/**
+ * New Game Plus: seed a fresh run from the previous run's legacy. Returns true when
+ * anything carried over (so a first-ever restart with no history stays a plain run).
+ * - Strategy unlocks carry forward as a small, capped starting-cash leg-up.
+ * - The previous run's loudest rival keeps its grudge (a persistent memory the AI
+ *   reads as vengeance, so they come after the player sooner this run).
+ */
+export function applyRunLegacy(nextState: GameState, previousState: GameState): boolean {
+  const unlocks = previousState.replay?.strategyUnlocks ?? [];
+  const rivalFactionId = loudestRivalFactionId(previousState);
+  if (unlocks.length === 0 && !rivalFactionId) {
+    return false;
+  }
+
+  const priorRunCount = previousState.replay?.legacy?.runCount ?? 0;
+  const startingBonus = Math.min(150, unlocks.length * 25);
+
+  nextState.replay.legacy = {
+    unlocks: unlocks.slice(-8),
+    rivalFactionId,
+    runCount: priorRunCount + 1,
+    startingBonus
+  };
+
+  if (startingBonus > 0) {
+    const player = nextState.factions[nextState.playerFactionId];
+    if (player) {
+      player.money += startingBonus;
+    }
+  }
+
+  // Grudge (exposure 2 = pushback 2): enough to shorten the rival's cooldown this
+  // run, but below the threshold that flips corporate rivals to sabotage.
+  if (rivalFactionId && nextState.factions[rivalFactionId]) {
+    nextState.replay.rivalMemory[rivalFactionId] = {
+      alarmConfronted: 0,
+      disruption: 0,
+      exposure: 2,
+      expansion: 0,
+      factionId: rivalFactionId,
+      negotiation: 0,
+      sabotage: 0,
+      undercut: 0,
+      lastInteractionHour: nextState.worldTimeHours
+    };
+  }
+
+  return true;
+}

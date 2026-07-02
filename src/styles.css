@@ -7547,3 +7547,8 @@ textarea:focus-visible,
 .stat-pill.health-pill {
   color: #fecaca;
 }
+
+.ending-ng-plus {
+  color: #5eead4;
+  font-weight: 600;
+}

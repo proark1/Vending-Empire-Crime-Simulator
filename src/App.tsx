@@ -1499,6 +1499,9 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
               <strong>{nextRunModifierPreview.name}</strong>
               <p>{nextRunModifierPreview.description}</p>
               {strategyUnlocks.length > 0 && <p>Recent unlocks: {strategyUnlocks.slice(-3).join(" / ")}</p>}
+              {strategyUnlocks.length > 0 && (
+                <p className="ending-ng-plus">New Game+: {strategyUnlocks.length} perk{strategyUnlocks.length === 1 ? "" : "s"} carry over (+${Math.min(150, strategyUnlocks.length * 25)} starting cash).</p>
+              )}
             </div>
             <div className="ending-actions">
               <button onClick={() => setDismissedEndingPathId(executedEnding.pathId)} type="button">
