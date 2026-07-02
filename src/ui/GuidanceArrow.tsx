@@ -1,5 +1,5 @@
 import { MapPin, Navigation } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { GameState, LocationId, Vec2 } from "../game/core/types";
 
 interface GuidanceArrowProps {
@@ -99,7 +99,9 @@ function GuidanceArrowReadout({ arrivedOverride = false, label, locationName, pl
   );
 }
 
-export function GuidanceArrow({ arrivedOverride, label, state, targetLocationId, targetPosition, playerHeadingDegrees, playerPosition }: GuidanceArrowProps) {
+export const GuidanceArrow = memo(GuidanceArrowInner);
+
+function GuidanceArrowInner({ arrivedOverride, label, state, targetLocationId, targetPosition, playerHeadingDegrees, playerPosition }: GuidanceArrowProps) {
   if (!targetLocationId) {
     return null;
   }

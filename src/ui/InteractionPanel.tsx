@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { Camera, ChevronDown, ChevronUp, CreditCard, HandCoins, Lightbulb, Lock, Minus, PackagePlus, Plus, RadioTower, RotateCcw, Save, Shield, ShieldAlert, ShoppingCart, Sparkles, Truck, Wrench, Zap } from "lucide-react";
 import type { ConflictEvent, GameCommand, GameState, MachineUpgradeId } from "../game/core/types";
 import { machineUpgradeList } from "../game/content/machineUpgrades";
@@ -218,7 +218,9 @@ function ConflictActions({ conflict, onCommand, state }: { conflict: ConflictEve
   );
 }
 
-export function InteractionPanel({ state, target, onCommand, onSave, onReload, onRestart }: InteractionPanelProps) {
+export const InteractionPanel = memo(InteractionPanelInner);
+
+function InteractionPanelInner({ state, target, onCommand, onSave, onReload, onRestart }: InteractionPanelProps) {
   const player = state.factions[state.playerFactionId];
   const primaryInteraction = getPrimaryInteraction(state, target);
   const [detailsOpen, setDetailsOpen] = useState(false);

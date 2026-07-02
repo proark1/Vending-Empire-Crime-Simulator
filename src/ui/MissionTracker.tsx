@@ -1,5 +1,5 @@
 import { CheckCircle2, ChevronDown, ChevronUp, Circle, ClipboardList } from "lucide-react";
-import { useState } from "react";
+import { memo, useState } from "react";
 import type { GameState, Vec2 } from "../game/core/types";
 import { getStarterMissionStep, getStarterTutorialSteps } from "../game/core/mission";
 import { activeConflictEvents, activeMachineAlarms, playerHeatTier } from "../game/core/selectors";
@@ -21,7 +21,9 @@ interface MissionTrackerProps {
   playerPosition: Vec2;
 }
 
-export function MissionTracker({ compact = false, state, playerPosition }: MissionTrackerProps) {
+export const MissionTracker = memo(MissionTrackerInner);
+
+function MissionTrackerInner({ compact = false, state, playerPosition }: MissionTrackerProps) {
   const [expanded, setExpanded] = useState(loadExpanded);
   const step = getStarterMissionStep(state, playerPosition);
   const currentJob = buildCurrentJob(state, playerPosition);

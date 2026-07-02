@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import type { GameState, Vec2 } from "../game/core/types";
 import { activeVehicle, districtProgress, machineAtLocation } from "../game/core/selectors";
 import { crimeContacts, worldBounds, type WorldMapLayout } from "../game/content/world";
@@ -48,7 +48,9 @@ function toDistrictRect(bounds: { maxX: number; maxZ: number; minX: number; minZ
   };
 }
 
-export function Minimap({ state, mapLayout, playerPosition, playerHeadingDegrees = 0, guidanceLocationId, target }: MinimapProps) {
+export const Minimap = memo(MinimapInner);
+
+function MinimapInner({ state, mapLayout, playerPosition, playerHeadingDegrees = 0, guidanceLocationId, target }: MinimapProps) {
   const locationOverrides = useMemo(() => locationPositionOverrides(mapLayout), [mapLayout]);
   const contactOverrides = useMemo(() => crimeContactPositionOverrides(mapLayout), [mapLayout]);
   const targetOperation = target?.type === "rival_operation"

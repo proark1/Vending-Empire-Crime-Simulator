@@ -1,5 +1,5 @@
 import { AlertTriangle, BarChart3, Boxes, Building2, ClipboardList, Factory, FlaskConical, HandCoins, Landmark, Lock, Map, Navigation, Package, PackagePlus, Route, Search, ShieldAlert, SlidersHorizontal, Trophy, Truck, Unlock, UserPlus, Users, Wrench } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import type { ConflictEvent, GameCommand, GameState, RivalOperationApproach } from "../game/core/types";
 import { employeeRoleList, employeeRoles } from "../game/content/employees";
 import { getMachineUpgradeEffects } from "../game/core/machineStats";
@@ -223,7 +223,9 @@ function relationshipBrief(relationship: string): string {
   return "Testing the route through pressure and offers.";
 }
 
-export function Dashboard({ state, onCommand, showDebug }: DashboardProps) {
+export const Dashboard = memo(DashboardInner);
+
+function DashboardInner({ state, onCommand, showDebug }: DashboardProps) {
   const [tab, setTab] = useState<DashboardTab>("actions");
   const [navGroup, setNavGroup] = useState<DashboardGroup>("now");
   const [showAdvanced, setShowAdvanced] = useState(false);

@@ -1,4 +1,5 @@
 import { AlertTriangle, CheckCircle2, Info, XCircle } from "lucide-react";
+import { memo } from "react";
 import type { GameEventTone } from "../game/core/types";
 
 export interface ToastMessage {
@@ -30,7 +31,9 @@ interface ToastStackProps {
   messages: ToastMessage[];
 }
 
-export function ToastStack({ docked = false, messages }: ToastStackProps) {
+export const ToastStack = memo(ToastStackInner);
+
+function ToastStackInner({ docked = false, messages }: ToastStackProps) {
   if (messages.length === 0) {
     return null;
   }

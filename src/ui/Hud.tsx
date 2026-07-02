@@ -1,5 +1,5 @@
 import { Flame, HandCoins, Heart, Package, Trophy } from "lucide-react";
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import type { GameState } from "../game/core/types";
 import { activeLawInspections, carriedCrateUnits, formatClock, missionProgress, playerHeatTier } from "../game/core/selectors";
 import type { SceneFeedbackEvent } from "../render/three/SceneTargets";
@@ -10,7 +10,9 @@ interface HudProps {
   health?: { hp: number; dead: boolean };
 }
 
-export function Hud({ feedbackEvent, state, health }: HudProps) {
+export const Hud = memo(HudInner);
+
+function HudInner({ feedbackEvent, state, health }: HudProps) {
   const player = state.factions[state.playerFactionId];
   const cargoUnits = carriedCrateUnits(state);
   const crate = state.player.carriedCrate;
