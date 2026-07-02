@@ -122,6 +122,26 @@ export function machineServicePointForLocation(layout: WorldMapLayout, location:
   };
 }
 
+// The reachable point on-foot guidance should steer to for a storefront: a specific
+// machine's service point when servicing one, otherwise the guidance location's own
+// placement service point (used before any machine exists there). This is the same
+// sidewalk anchor the 3D beacon and placement interactable use, so the HUD arrow and
+// proximity gate never point at a location's abstract foot-traffic centre — which sits
+// at the building wall and can't be walked to. Garage/supplier have no storefront
+// anchor, so they keep their own centre (returns undefined → caller's own fallback).
+export function guidanceServicePoint(
+  layout: WorldMapLayout,
+  serviceLocation: Location | undefined,
+  placementLocation: Location | undefined
+): Vec2 | undefined {
+  const location =
+    serviceLocation ??
+    (placementLocation && placementLocation.kind !== "garage" && placementLocation.kind !== "supplier"
+      ? placementLocation
+      : undefined);
+  return location ? machineServicePointForLocation(layout, location) : undefined;
+}
+
 // Location foot-traffic centres overridden by generated location buildings only
 // (presence of a derived `anchor` marks a building as generated). Hand-authored
 // layouts produce no overrides, so the default game is unaffected.

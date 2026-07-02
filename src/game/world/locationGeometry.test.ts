@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { regenerateCity } from "./cityRegenerator";
-import { crimeContactPositionOverrides, hotspotPositionOverrides, machineServicePointForLocation, resyncLocationGeometry } from "./locationGeometry";
+import { buildingFootprintsForLayout, crimeContactPositionOverrides, guidanceServicePoint, hotspotPositionOverrides, machineServicePointForLocation, resyncLocationGeometry } from "./locationGeometry";
 import { crimeContacts, defaultWorldMapLayout, locations, neighborhoodHotspots, worldBounds, type WorldBuilding } from "../content/world";
+import { pointInRect } from "./rectGrid";
 
 const inBounds = (p: { x: number; z: number }) =>
   p.x >= worldBounds.minX && p.x <= worldBounds.maxX && p.z >= worldBounds.minZ && p.z <= worldBounds.maxZ;
@@ -65,6 +66,34 @@ describe("machine service points", () => {
     expect(servicePoint.x).toBeCloseTo(-5.65);
     expect(servicePoint.z).toBeCloseTo(-4.13);
     expect(servicePoint).not.toEqual(locations.laundromat.position);
+  });
+});
+
+describe("guidanceServicePoint", () => {
+  it("steers initial placement to the storefront service point, not the foot-traffic centre in the wall", () => {
+    const point = guidanceServicePoint(defaultWorldMapLayout, undefined, locations.laundromat);
+
+    expect(point).toBeDefined();
+    // Matches the sidewalk anchor the 3D beacon/interactable use, which differs from
+    // the abstract location.position (which sits at the storefront wall).
+    expect(point).toEqual(machineServicePointForLocation(defaultWorldMapLayout, locations.laundromat));
+    expect(point).not.toEqual(locations.laundromat.position);
+
+    // The whole point of the fix: the guidance target must be walkable — clear of every
+    // solid building footprint — so the player is never steered into a wall.
+    const insideABuilding = buildingFootprintsForLayout(defaultWorldMapLayout).some((box) => pointInRect(point!, box));
+    expect(insideABuilding).toBe(false);
+  });
+
+  it("prefers the serviced machine's own location over the guidance location", () => {
+    const point = guidanceServicePoint(defaultWorldMapLayout, locations.gym, locations.laundromat);
+
+    expect(point).toEqual(machineServicePointForLocation(defaultWorldMapLayout, locations.gym));
+  });
+
+  it("leaves garage and supplier guidance on their own centre (no storefront anchor)", () => {
+    expect(guidanceServicePoint(defaultWorldMapLayout, undefined, locations.garage)).toBeUndefined();
+    expect(guidanceServicePoint(defaultWorldMapLayout, undefined, locations.supplier)).toBeUndefined();
   });
 });
 

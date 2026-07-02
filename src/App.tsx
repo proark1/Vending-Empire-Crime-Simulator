@@ -19,7 +19,7 @@ import { crimeContacts, districts, worldBounds, type WorldMapLayout } from "./ga
 import { endgamePaths, storyMissionArcs } from "./game/content/story";
 import { products } from "./game/content/products";
 import { clearWorldMapLayout, loadWorldMapLayout, normalizeLayout, saveWorldMapLayout } from "./game/world/mapLayoutStorage";
-import { machineServicePointForLocation } from "./game/world/locationGeometry";
+import { guidanceServicePoint } from "./game/world/locationGeometry";
 import { clearStoredGameSession, loadRemoteAudioConfig, loadRemoteGame, loadRemoteMapLayout, loadStoredGameSession, loginGame, registerGame, type GameSession } from "./game/save/api";
 import { loadGame } from "./game/save/storage";
 import { createInitialState } from "./game/content/initialState";
@@ -732,9 +732,10 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
   const guidanceTargetPosition = useMemo(() => {
     const machineId = activeAlarm?.machineId ?? routeTask?.machineId;
     const machine = machineId ? state.machines[machineId] : undefined;
-    const location = machine ? state.locations[machine.locationId] : undefined;
-    return location ? machineServicePointForLocation(mapLayout, location) : undefined;
-  }, [activeAlarm?.machineId, mapLayout, routeTask?.machineId, state]);
+    const serviceLocation = machine ? state.locations[machine.locationId] : undefined;
+    const placementLocation = guidanceLocationId ? state.locations[guidanceLocationId] : undefined;
+    return guidanceServicePoint(mapLayout, serviceLocation, placementLocation);
+  }, [activeAlarm?.machineId, guidanceLocationId, mapLayout, routeTask?.machineId, state]);
   const rawTarget = entered ? target : null;
   const guidedFallbackTarget = useMemo(() => {
     if (!entered || rawTarget || !guidanceLocationId) {
