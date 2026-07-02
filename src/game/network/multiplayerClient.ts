@@ -19,11 +19,19 @@ type GameMessageHandler = (message: MultiplayerGameMessage, fromPeerId: string) 
 
 const iceServers: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
 
-function multiplayerSocketUrl(token: string): string {
+const RECONNECT_BASE_MS = 1000;
+const RECONNECT_MAX_MS = 15000;
+
+function multiplayerSocketUrl(): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const url = new URL("/api/multiplayer/ws", `${protocol}//${window.location.host}`);
-  url.searchParams.set("token", token);
   return url.toString();
+}
+
+// The token travels as a WebSocket subprotocol rather than a URL query param so it
+// never lands in proxy/edge access logs. The server selects only "vendetta.v1".
+function multiplayerSocketProtocols(token: string): string[] {
+  return ["vendetta.v1", `vendetta.token.${token}`];
 }
 
 function emptyStatus(): MultiplayerStatus {
@@ -44,6 +52,14 @@ export class MultiplayerClient {
   private readonly statusHandlers = new Set<StatusHandler>();
   private status: MultiplayerStatus = emptyStatus();
   private socket: WebSocket | null = null;
+  // Set true only for a deliberate teardown (disconnect) so the close handler can
+  // tell a user-requested close from a dropped connection and skip auto-reconnect.
+  private intentionalClose = false;
+  private reconnectAttempts = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  // The last room this client was in, so a reconnect can rejoin/recreate it after a
+  // transient network drop instead of silently ending the session.
+  private lastRoom: { code: string; role: "guest" | "host" } | null = null;
 
   constructor(private readonly token: string) {}
 
@@ -52,20 +68,32 @@ export class MultiplayerClient {
       return;
     }
 
+    this.intentionalClose = false;
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
     this.updateStatus({
       connection: "connecting",
       message: undefined,
       relayAvailable: false
     });
 
-    const socket = new WebSocket(multiplayerSocketUrl(this.token));
+    const socket = new WebSocket(multiplayerSocketUrl(), multiplayerSocketProtocols(this.token));
     this.socket = socket;
 
     socket.addEventListener("open", () => {
+      this.reconnectAttempts = 0;
       this.updateStatus({
         connection: "connected",
         relayAvailable: true
       });
+      // Rejoin the previous room after a reconnect so a brief drop doesn't end the
+      // co-op session (guests rejoin by code; a host reopens a room).
+      if (this.lastRoom) {
+        this.sendServer(this.lastRoom.role === "host" ? { type: "room:create" } : { roomCode: this.lastRoom.code, type: "room:join" });
+      }
       while (this.pendingServerMessages.length > 0 && socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify(this.pendingServerMessages.shift()));
       }
@@ -78,26 +106,56 @@ export class MultiplayerClient {
     socket.addEventListener("close", () => {
       this.closePeerConnections();
       this.socket = null;
+      if (this.intentionalClose) {
+        this.updateStatus({
+          connection: "idle",
+          directConnections: 0,
+          localPeer: null,
+          relayAvailable: false,
+          room: null,
+          role: "idle"
+        });
+        return;
+      }
+
+      // Unexpected drop: keep the room target and retry with capped backoff.
       this.updateStatus({
-        connection: "idle",
+        connection: "connecting",
         directConnections: 0,
-        localPeer: null,
-        relayAvailable: false,
-        room: null,
-        role: "idle"
+        message: "Connection lost — reconnecting…",
+        relayAvailable: false
       });
+      this.scheduleReconnect();
     });
 
     socket.addEventListener("error", () => {
       this.updateStatus({
-        connection: "error",
+        connection: this.intentionalClose ? "error" : "connecting",
         message: "Multiplayer connection failed.",
         relayAvailable: false
       });
     });
   }
 
+  private scheduleReconnect(): void {
+    if (this.intentionalClose || this.reconnectTimer !== null) {
+      return;
+    }
+    const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** this.reconnectAttempts);
+    this.reconnectAttempts += 1;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect();
+    }, delay);
+  }
+
   disconnect(): void {
+    this.intentionalClose = true;
+    this.lastRoom = null;
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.sendServer({ type: "room:leave" });
     this.socket?.close();
     this.closePeerConnections();
@@ -115,6 +173,7 @@ export class MultiplayerClient {
   }
 
   leaveRoom(): void {
+    this.lastRoom = null;
     this.sendServer({ type: "room:leave" });
     this.closePeerConnections();
     this.updateStatus({
@@ -202,8 +261,10 @@ export class MultiplayerClient {
       case "room:created":
       case "room:joined":
         this.updateRoom(message.room, message.peerId);
+        this.lastRoom = { code: message.room.code, role: message.room.hostPeerId === message.peerId ? "host" : "guest" };
         break;
       case "room:left":
+        this.lastRoom = null;
         this.closePeerConnections();
         this.updateStatus({
           directConnections: 0,
@@ -213,6 +274,7 @@ export class MultiplayerClient {
         });
         break;
       case "room:closed":
+        this.lastRoom = null;
         this.closePeerConnections();
         this.updateStatus({
           directConnections: 0,

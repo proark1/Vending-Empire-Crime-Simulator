@@ -39,9 +39,13 @@ interface ThreeSceneProps {
   mapLayout: WorldMapLayout;
   modelConfig: ModelConfig;
   state: GameState;
+  paused?: boolean;
+  lookSensitivity?: number;
+  invertLookY?: boolean;
   onVehicleDrive?: (vehicleId: VehicleId, position: Vec2, heading: number, distance: number) => void;
   onPlayerPositionChange: (position: { x: number; z: number }) => void;
   onPlayerHeadingChange: (headingDegrees: number) => void;
+  onPlayerHealthChange?: (health: number, dead: boolean) => void;
   onTargetChange: (target: SceneTarget | null) => void;
 }
 
@@ -200,6 +204,8 @@ const playerRadius = WORLD_SCALE.human.radius;
 const playerGroundY = 0;
 const playerJumpVelocity = 5.6;
 const playerGravity = -15.8;
+// Radians/second the on-foot camera turns from the arrow keys (keyboard-only look).
+const keyboardTurnSpeed = 2.4;
 const worldWidth = worldBounds.maxX - worldBounds.minX;
 const worldDepth = worldBounds.maxZ - worldBounds.minZ;
 const worldCenterX = (worldBounds.minX + worldBounds.maxX) / 2;
@@ -5427,7 +5433,7 @@ function dynamicObjectsSignature(currentState: GameState, guidanceLocationId: st
   ].join("||");
 }
 
-export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId, mapLayout, modelConfig, state, onVehicleDrive, onPlayerPositionChange, onPlayerHeadingChange, onTargetChange }: ThreeSceneProps) {
+export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId, mapLayout, modelConfig, state, paused, lookSensitivity, invertLookY, onVehicleDrive, onPlayerPositionChange, onPlayerHeadingChange, onPlayerHealthChange, onTargetChange }: ThreeSceneProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const stateRef = useRef(state);
   const dynamicGroupRef = useRef<THREE.Group | null>(null);
@@ -5445,8 +5451,12 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
   const targetIdRef = useRef<string | null>(null);
   const onPlayerPositionChangeRef = useRef(onPlayerPositionChange);
   const onPlayerHeadingChangeRef = useRef(onPlayerHeadingChange);
+  const onPlayerHealthChangeRef = useRef(onPlayerHealthChange);
   const onTargetChangeRef = useRef(onTargetChange);
   const onVehicleDriveRef = useRef(onVehicleDrive);
+  const pausedRef = useRef(paused ?? false);
+  const lookSensitivityRef = useRef(lookSensitivity ?? 1);
+  const invertLookYRef = useRef(invertLookY ?? false);
 
   useEffect(() => {
     stateRef.current = state;
@@ -5471,6 +5481,22 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
   useEffect(() => {
     onVehicleDriveRef.current = onVehicleDrive;
   }, [onVehicleDrive]);
+
+  useEffect(() => {
+    onPlayerHealthChangeRef.current = onPlayerHealthChange;
+  }, [onPlayerHealthChange]);
+
+  useEffect(() => {
+    pausedRef.current = paused ?? false;
+  }, [paused]);
+
+  useEffect(() => {
+    lookSensitivityRef.current = lookSensitivity ?? 1;
+  }, [lookSensitivity]);
+
+  useEffect(() => {
+    invertLookYRef.current = invertLookY ?? false;
+  }, [invertLookY]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -6079,9 +6105,11 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
         return;
       }
 
-      yaw.rotation.y -= event.movementX * 0.0022;
+      const sensitivity = lookSensitivityRef.current;
+      const pitchSign = invertLookYRef.current ? -1 : 1;
+      yaw.rotation.y -= event.movementX * 0.0022 * sensitivity;
       pitch = THREE.MathUtils.clamp(
-        pitch - event.movementY * 0.002,
+        pitch - pitchSign * event.movementY * 0.002 * sensitivity,
         cameraMode === "third" ? -0.95 : -1.2,
         cameraMode === "third" ? 0.85 : 1.2
       );
@@ -6290,10 +6318,17 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
           onTargetChangeRef.current(null);
         }
       } else if (!playerTrafficLocked) {
+        // Left/right arrows turn the camera so keyboard-only players (no mouse) can
+        // rotate to face and target interactables; WASD still walks and strafes.
+        const turnInput = (keys.has("ArrowLeft") ? 1 : 0) - (keys.has("ArrowRight") ? 1 : 0);
+        if (turnInput !== 0) {
+          yaw.rotation.y += turnInput * keyboardTurnSpeed * delta;
+        }
+
         if (keys.has("KeyW") || keys.has("ArrowUp")) direction.z -= 1;
         if (keys.has("KeyS") || keys.has("ArrowDown")) direction.z += 1;
-        if (keys.has("KeyA") || keys.has("ArrowLeft")) direction.x -= 1;
-        if (keys.has("KeyD") || keys.has("ArrowRight")) direction.x += 1;
+        if (keys.has("KeyA")) direction.x -= 1;
+        if (keys.has("KeyD")) direction.x += 1;
 
         if (direction.lengthSq() > 0) {
           direction.normalize().applyAxisAngle(yAxis, yaw.rotation.y);
@@ -6318,6 +6353,7 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
         lastPositionEmit = time;
         onPlayerPositionChangeRef.current({ x: yaw.position.x, z: yaw.position.z });
         onPlayerHeadingChangeRef.current(THREE.MathUtils.radToDeg(-yaw.rotation.y));
+        onPlayerHealthChangeRef.current?.(Math.round(playerStreetHealth), playerTrafficDead);
       }
 
       const shouldRefreshChunks = playerMoved || time - lastChunkVisibilityUpdate > 500 || staticChunkQueue.length === 0;
@@ -6368,23 +6404,29 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
           updateAnimatedStreetProp(object, time);
         }
       }
-      for (const object of animatedProps) {
-        if (object.userData.trafficLoop) {
-          updateTrafficVehicle(object, time);
-        } else {
-          updateAnimatedStreetProp(object, time);
-        }
-      }
-      if (!drivingVehicleId && !playerTrafficDead && time - lastTrafficImpactAt > 620) {
+      // While paused (a menu/dashboard is open, or the player hit Pause) freeze
+      // traffic and NPC motion and suspend traffic collision — otherwise a car could
+      // run the player over while they read the ops dashboard behind the overlay.
+      const worldPaused = pausedRef.current;
+      if (!worldPaused) {
         for (const object of animatedProps) {
-          if (!object.userData.trafficLoop || !trafficVehicleHitsPlayer(object, yaw.position)) {
-            continue;
+          if (object.userData.trafficLoop) {
+            updateTrafficVehicle(object, time);
+          } else {
+            updateAnimatedStreetProp(object, time);
           }
+        }
+        if (!drivingVehicleId && !playerTrafficDead && time - lastTrafficImpactAt > 620) {
+          for (const object of animatedProps) {
+            if (!object.userData.trafficLoop || !trafficVehicleHitsPlayer(object, yaw.position)) {
+              continue;
+            }
 
-          const vehicleLastImpact = typeof object.userData.lastPlayerImpactAt === "number" ? object.userData.lastPlayerImpactAt : -10_000;
-          if (time - vehicleLastImpact > 900) {
-            applyTrafficImpact(object, time);
-            break;
+            const vehicleLastImpact = typeof object.userData.lastPlayerImpactAt === "number" ? object.userData.lastPlayerImpactAt : -10_000;
+            if (time - vehicleLastImpact > 900) {
+              applyTrafficImpact(object, time);
+              break;
+            }
           }
         }
       }

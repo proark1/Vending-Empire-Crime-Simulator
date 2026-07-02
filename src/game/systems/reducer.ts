@@ -4112,6 +4112,14 @@ function applyAdvanceTime(state: GameState, events: GameEvent[], hours: number):
 }
 
 export function reduceGameState(currentState: GameState, command: GameCommand): CommandResult {
+  // Debug/cheat commands are dev tooling only. Gate them out of production builds so
+  // they can't be invoked from the console or relayed in from a co-op guest, while
+  // staying available in `npm run dev` and tests (PROD is false/undefined there).
+  const isProductionBuild = (import.meta as ImportMeta & { env?: { PROD?: boolean } }).env?.PROD === true;
+  if (isProductionBuild && command.type.startsWith("debug_")) {
+    return { state: currentState, events: [] };
+  }
+
   const perfStart = perfNow();
   const fastResult = reduceFastCommand(currentState, command);
   if (fastResult) {

@@ -36,9 +36,13 @@ export function ToastStack({ docked = false, messages }: ToastStackProps) {
   }
 
   return (
-    <section className={docked ? "toast-stack docked" : "toast-stack"} aria-label="Notifications">
+    <section className={docked ? "toast-stack docked" : "toast-stack"} aria-label="Notifications" aria-live="polite" aria-atomic="false">
       {messages.map((message) => (
-        <article className={`toast-message ${message.tone}${message.leaving ? " toast-leaving" : ""}`} key={message.id}>
+        <article
+          className={`toast-message ${message.tone}${message.leaving ? " toast-leaving" : ""}`}
+          key={message.id}
+          role={message.tone === "danger" ? "alert" : "status"}
+        >
           {iconForTone(message.tone)}
           <div>
             <strong>{message.title}</strong>

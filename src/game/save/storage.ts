@@ -3,6 +3,38 @@ import { createInitialState } from "../content/initialState";
 import { createReplayState } from "../content/replayability";
 
 const SAVE_KEY = "vendetta-vending.save.v1";
+// Last-known-good raw payload, written just before any potentially lossy step
+// (unparseable JSON, a version bump, or a migration that throws) so a bad update
+// can be recovered instead of the empire being silently replaced by a new game.
+const SAVE_BACKUP_KEY = "vendetta-vending.save.v1.backup";
+
+export interface SaveResult {
+  bytes: number;
+  error?: string;
+  ok: boolean;
+}
+
+function backupRawSave(raw: string, reason: string): void {
+  try {
+    window.localStorage.setItem(SAVE_BACKUP_KEY, JSON.stringify({ at: new Date().toISOString(), raw, reason }));
+  } catch {
+    // Backup is best-effort; if storage is full we still fall through to load a
+    // playable state rather than throwing here.
+  }
+}
+
+export function loadBackupSave(): GameState | null {
+  try {
+    const raw = window.localStorage.getItem(SAVE_BACKUP_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as { raw?: string };
+    return parsed.raw ? migrateGameState(JSON.parse(parsed.raw) as GameState) : null;
+  } catch {
+    return null;
+  }
+}
 
 function isInstalledMachine(machine: { placementStatus?: string }): boolean {
   return (machine.placementStatus ?? "installed") === "installed";
@@ -63,10 +95,23 @@ function ensureStarterBankroll(state: GameState, baseline: GameState): GameState
 
 export function migrateGameState(parsed: GameState): GameState {
   const baseline = createInitialState();
-  if (parsed.version !== baseline.version) {
+  // Garbage or a non-object payload can't be migrated field-by-field — start fresh.
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     return baseline;
   }
 
+  try {
+    return migrateGameStateInner(parsed, baseline);
+  } catch (error) {
+    // A shape the migrator can't handle used to throw and, on the remote path,
+    // bounce the player to login forever. Fall back to a playable baseline instead
+    // (the raw payload is preserved in the backup key by loadGame).
+    console.warn("Save migration failed; starting a fresh run.", error);
+    return baseline;
+  }
+}
+
+function migrateGameStateInner(parsed: GameState, baseline: GameState): GameState {
   const parsedPlayer = (parsed.player ?? baseline.player) as Partial<GameState["player"]>;
   const parsedPlayerRecord = parsedPlayer as Record<string, unknown>;
   const isLegacyLogistics = !("garageStorage" in parsedPlayerRecord) && !("carriedCrate" in parsedPlayerRecord);
@@ -152,6 +197,9 @@ export function migrateGameState(parsed: GameState): GameState {
   const migrated: GameState = {
     ...baseline,
     ...parsed,
+    // Field-by-field merge above fills anything new/renamed from the baseline, so a
+    // migrated save adopts the current schema version instead of being discarded.
+    version: baseline.version,
     nextEmployeeNumber: parsed.nextEmployeeNumber ?? baseline.nextEmployeeNumber,
     player: {
       ...baseline.player,
@@ -408,18 +456,35 @@ export function loadGame(): GameState {
     return createInitialState();
   }
 
+  let parsed: GameState;
   try {
-    const parsed = JSON.parse(raw) as GameState;
-    return migrateGameState(parsed);
+    parsed = JSON.parse(raw) as GameState;
   } catch {
+    // Corrupt/truncated JSON: keep the raw copy before we hand back a fresh run.
+    backupRawSave(raw, "unparseable");
     return createInitialState();
   }
+
+  // A schema change is the one moment an old save could be silently rewritten, so
+  // snapshot it first. Migration itself is now non-destructive, but this guarantees
+  // a recovery point even if the merged result is later overwritten.
+  if (parsed?.version !== undefined && parsed.version !== createInitialState().version) {
+    backupRawSave(raw, "version-change");
+  }
+
+  return migrateGameState(parsed);
 }
 
-export function saveGame(state: GameState): number {
+export function saveGame(state: GameState): SaveResult {
   const payload = JSON.stringify(state);
-  window.localStorage.setItem(SAVE_KEY, payload);
-  return payload.length;
+  try {
+    window.localStorage.setItem(SAVE_KEY, payload);
+    return { bytes: payload.length, ok: true };
+  } catch (error) {
+    // Quota exceeded / storage disabled. Report failure instead of throwing so the
+    // caller can still attempt the remote/beacon save and surface a visible warning.
+    return { bytes: payload.length, error: error instanceof Error ? error.message : String(error), ok: false };
+  }
 }
 
 export function clearSave(): void {

@@ -10,6 +10,22 @@ import type { MultiplayerClient } from "../game/network/multiplayerClient";
 import type { MultiplayerRole } from "../game/network/protocol";
 import { perfNow, recordPerfCount, recordPerfDuration, recordPerfGauge } from "../game/core/performance";
 
+// Commands a co-op guest may never trigger on the host: cheat/debug commands and
+// host/AI-only actions. Everything else is ordinary shared-empire play.
+const GUEST_FORBIDDEN_COMMANDS = new Set<GameCommand["type"]>([
+  "debug_grant_cash",
+  "debug_complete_requirements",
+  "debug_set_district_access",
+  "debug_set_rival_pressure",
+  "debug_spawn_activity",
+  "rival_action",
+  "execute_ending"
+]);
+
+function isGuestCommandAllowed(command: GameCommand): boolean {
+  return !GUEST_FORBIDDEN_COMMANDS.has(command.type);
+}
+
 export interface UseGameOptions {
   initialState?: GameState;
   multiplayerClient?: MultiplayerClient | null;
@@ -17,7 +33,7 @@ export interface UseGameOptions {
   session?: GameSession | null;
 }
 
-export type SaveStatus = "idle" | "saving" | "saved" | "offline" | "conflict";
+export type SaveStatus = "idle" | "saving" | "saved" | "offline" | "conflict" | "error";
 
 export interface UseGameResult {
   state: GameState;
@@ -26,7 +42,7 @@ export interface UseGameResult {
   advanceWorld: (hours: number) => void;
   save: () => void;
   reload: () => void;
-  restart: () => void;
+  restart: (seed?: number) => void;
   saveStatus: SaveStatus;
 }
 
@@ -67,11 +83,17 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
     multiplayerRoleRef.current = options.multiplayerRole ?? "idle";
   }, [options.multiplayerRole]);
 
-  const persistLocalState = useCallback((currentState: GameState = stateRef.current) => {
+  const previousRoleRef = useRef<MultiplayerRole>(options.multiplayerRole ?? "idle");
+
+  const persistLocalState = useCallback((currentState: GameState = stateRef.current): boolean => {
     const perfStart = perfNow();
-    const bytes = saveGame(currentState);
+    const result = saveGame(currentState);
     recordPerfDuration("save.local", perfNow() - perfStart);
-    recordPerfGauge("save.local.bytes", bytes);
+    recordPerfGauge("save.local.bytes", result.bytes);
+    if (!result.ok) {
+      recordPerfCount("save.local.failed");
+    }
+    return result.ok;
   }, []);
 
   const sendHostSnapshot = useCallback(() => {
@@ -106,6 +128,34 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
       });
   }, [persistLocalState]);
 
+  useEffect(() => {
+    const previous = previousRoleRef.current;
+    const current = options.multiplayerRole ?? "idle";
+    previousRoleRef.current = current;
+
+    // Leaving a co-op room (leave / room closed / socket drop all flip the role away
+    // from "guest"). While a guest, the in-memory state was the host's world and
+    // local persistence was suppressed, so localStorage still holds this player's own
+    // pre-join save. Restore it before the persistence effect can write the host's
+    // world over the guest's own local/cloud save.
+    if (previous === "guest" && current !== "guest") {
+      if (saveTimerRef.current) {
+        window.clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      if (localSaveTimerRef.current) {
+        window.clearTimeout(localSaveTimerRef.current);
+        localSaveTimerRef.current = null;
+      }
+      lastStateChangeKindRef.current = "reload";
+      setState(loadGame());
+      const session = sessionRef.current;
+      if (session && !session.local) {
+        loadLatestRemoteSave(session);
+      }
+    }
+  }, [loadLatestRemoteSave, options.multiplayerRole]);
+
   const persistState = useCallback((mode: "normal" | "beacon" = "normal", options: { saveLocal?: boolean } = {}) => {
     if (multiplayerRoleRef.current === "guest") {
       return;
@@ -113,11 +163,12 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
 
     const currentState = stateRef.current;
     const session = sessionRef.current;
-    if (options.saveLocal !== false) {
-      persistLocalState(currentState);
-    }
+    const localOk = options.saveLocal !== false ? persistLocalState(currentState) : true;
 
     if (!session || session.local) {
+      // Pure-local player: the local write is the only copy, so a failure is worth
+      // surfacing. For remote players we fall through and let the cloud save carry it.
+      setSaveStatus(localOk ? (current) => (current === "error" ? "idle" : current) : "error");
       return;
     }
 
@@ -188,7 +239,10 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
 
     localSaveTimerRef.current = window.setTimeout(() => {
       localSaveTimerRef.current = null;
-      persistLocalState();
+      const ok = persistLocalState();
+      if (!sessionRef.current || sessionRef.current.local) {
+        setSaveStatus(ok ? (current) => (current === "error" ? "idle" : current) : "error");
+      }
     }, debounce.localMs);
 
     if (debounce.remoteMs > 0) {
@@ -252,9 +306,13 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
       return;
     }
 
-    return client.onGameMessage((message) => {
+    return client.onGameMessage((message, fromPeerId) => {
       if (message.type === "snapshot") {
-        if (multiplayerRoleRef.current !== "guest" || message.sequence <= lastRemoteSnapshotSequenceRef.current) {
+        // Only the room host authors world state. Ignore any snapshot that did not
+        // come from the host peer so a malicious guest can't forge a high-sequence
+        // snapshot straight into another player and hijack their game.
+        const hostPeerId = client.getStatus().room?.hostPeerId;
+        if (multiplayerRoleRef.current !== "guest" || fromPeerId !== hostPeerId || message.sequence <= lastRemoteSnapshotSequenceRef.current) {
           return;
         }
 
@@ -277,11 +335,19 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
         return;
       }
 
+      // The host runs the authoritative reducer, so a guest's relayed command is
+      // untrusted input. Drop cheat/AI-only commands outright and force the actor to
+      // the shared player faction so a modified guest can't grant itself cash,
+      // execute an ending, or act as a rival.
+      if (!isGuestCommandAllowed(message.command)) {
+        return;
+      }
+
       seenRemoteCommandIdsRef.current.add(message.commandId);
       if (seenRemoteCommandIdsRef.current.size > 500) {
         seenRemoteCommandIdsRef.current = new Set([...seenRemoteCommandIdsRef.current].slice(-250));
       }
-      transport.sendCommand(message.command);
+      transport.sendCommand({ ...message.command, actorId: stateRef.current.playerFactionId });
     });
   }, [options.multiplayerClient, transport]);
 
@@ -397,12 +463,15 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
     loadLatestRemoteSave(session);
   }, [loadLatestRemoteSave]);
 
-  const restart = useCallback(() => {
+  const restart = useCallback((seed?: number) => {
     if (multiplayerRoleRef.current === "guest") {
       return;
     }
 
-    const nextState = createInitialState(Date.now());
+    // A caller (e.g. the ending screen's "next run preview") can pass the seed it
+    // showed so the new run gets exactly the previewed modifier instead of a
+    // different one from a fresh Date.now() seed.
+    const nextState = createInitialState(typeof seed === "number" && Number.isFinite(seed) ? seed : Date.now());
     clearSave();
     persistLocalState(nextState);
     lastStateChangeKindRef.current = "restart";

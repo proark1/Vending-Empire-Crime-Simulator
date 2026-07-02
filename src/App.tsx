@@ -6,7 +6,7 @@ import { InteractionPanel } from "./ui/InteractionPanel";
 import { Minimap } from "./ui/Minimap";
 import { MissionTracker } from "./ui/MissionTracker";
 import { GuidanceArrow } from "./ui/GuidanceArrow";
-import { ClipboardList, Copy, DollarSign, Flame, LogOut, Map, Menu, Network, Package, Play, RotateCcw, Save, ShieldAlert, SlidersHorizontal, Sparkles, Truck, Users, Volume2, VolumeX, Wrench, X, Zap, type LucideIcon } from "lucide-react";
+import { ClipboardList, Copy, DollarSign, Flame, LogOut, Map, Menu, Network, Package, Pause, Play, RotateCcw, Save, ShieldAlert, SlidersHorizontal, Sparkles, Truck, Users, Volume2, VolumeX, Wrench, X, Zap, type LucideIcon } from "lucide-react";
 import { getStarterMissionStep, type MissionStep } from "./game/core/mission";
 import { activeConflictEvents, activeMachineAlarms, heatTierFor, latestDayReport, selectedRouteTask, type RouteTask } from "./game/core/selectors";
 import { executePrimaryInteraction, getPrimaryInteraction, type PrimaryInteraction, type PrimaryInteractionTone } from "./ui/interactionActions";
@@ -713,6 +713,9 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
   const [sceneFeedback, setSceneFeedback] = useState<SceneFeedbackEvent | null>(null);
   const [serviceHold, setServiceHold] = useState<ServiceHoldState | null>(null);
   const [graphicsQuality, setGraphicsQualityState] = useState<GraphicsQuality>(() => loadGraphicsQuality());
+  const [manualPaused, setManualPaused] = useState(false);
+  const [playerHealth, setPlayerHealth] = useState<{ hp: number; dead: boolean }>({ hp: 100, dead: false });
+  const [lookSettings, setLookSettings] = useState<LookSettings>(() => loadLookSettings());
   const gameMenuRef = useRef<HTMLDivElement | null>(null);
   const lastEventIdRef = useRef(state.eventLog[0]?.id ?? null);
   const lastMissionStepIdRef = useRef<string | null>(null);
@@ -770,7 +773,8 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
     [executedEnding?.pathId]
   );
   const runModifier = useMemo(() => activeRunModifier(state), [state]);
-  const nextRunModifierPreview = useMemo(() => chooseRunModifier(Math.round(state.worldTimeHours * 1000) + (executedEnding?.pathId?.length ?? 0)), [executedEnding?.pathId, state.worldTimeHours]);
+  const nextRunSeed = useMemo(() => Math.round(state.worldTimeHours * 1000) + (executedEnding?.pathId?.length ?? 0), [executedEnding?.pathId, state.worldTimeHours]);
+  const nextRunModifierPreview = useMemo(() => chooseRunModifier(nextRunSeed), [nextRunSeed]);
   const runTraitCount = useMemo(() => Object.values(state.replay?.machineTraits ?? {}).reduce((sum, traits) => sum + traits.length, 0), [state.replay?.machineTraits]);
   const loudestRival = useMemo(() => {
     return Object.values(state.replay?.rivalMemory ?? {})
@@ -785,6 +789,9 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
   const showPerfOverlay = useMemo(() => showDebugTools || new URLSearchParams(window.location.search).has("perf"), [showDebugTools]);
   const isLocalSession = session.local === true;
   const worldClockPaused = !entered || dashboardOpen || gameMenuOpen || showControls;
+  // Guests never own the clock, so a guest hitting Pause must not freeze the shared
+  // world; for them manualPaused only frees the cursor, it doesn't stop the sim.
+  const worldPaused = worldClockPaused || (manualPaused && multiplayerStatus.role !== "guest");
   const multiplayerRoom = multiplayerStatus.room;
   const multiplayerStatusLabel = multiplayerRoom
     ? multiplayerStatus.role === "host"
@@ -894,7 +901,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
   }, [gameMenuOpen]);
 
   useEffect(() => {
-    if (worldClockPaused) {
+    if (worldPaused) {
       return;
     }
 
@@ -903,7 +910,15 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
     }, WORLD_TICK_MS);
 
     return () => window.clearInterval(timer);
-  }, [advanceWorld, worldClockPaused]);
+  }, [advanceWorld, worldPaused]);
+
+  useEffect(() => {
+    saveLookSettings(lookSettings);
+  }, [lookSettings]);
+
+  const handlePlayerHealthChange = useCallback((hp: number, dead: boolean) => {
+    setPlayerHealth((current) => (current.hp === hp && current.dead === dead ? current : { hp, dead }));
+  }, []);
 
   useEffect(() => {
     const newestEvent = state.eventLog[0];
@@ -985,9 +1000,12 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
     setDismissedEndingPathId((current) => (current && current === executedEnding?.pathId ? current : null));
   }, [executedEnding?.pathId]);
 
-  const handleRestart = useCallback(() => {
+  const handleRestart = useCallback((seed?: number) => {
+    // Guard the seed: menu/panel callers pass a click event here, which must not
+    // become the run seed. Only a real number (the ending preview) is honored.
+    const runSeed = typeof seed === "number" && Number.isFinite(seed) ? seed : undefined;
     if (window.confirm("Restart this local MVP save?")) {
-      restart();
+      restart(runSeed);
     }
   }, [restart]);
 
@@ -1267,6 +1285,18 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
         return;
       }
 
+      if (event.code === "KeyP" && !event.repeat) {
+        event.preventDefault();
+        setManualPaused((current) => {
+          const next = !current;
+          if (next && document.pointerLockElement) {
+            document.exitPointerLock();
+          }
+          return next;
+        });
+        return;
+      }
+
       if (event.code !== "KeyE") {
         return;
       }
@@ -1337,10 +1367,14 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
             mapLayout={mapLayout}
             modelConfig={modelConfig}
             state={state}
+            paused={worldPaused}
+            lookSensitivity={lookSettings.sensitivity}
+            invertLookY={lookSettings.invertY}
             feedbackEvent={sceneFeedback}
             onVehicleDrive={handleVehicleDrive}
             onPlayerPositionChange={setPlayerPosition}
             onPlayerHeadingChange={setPlayerHeadingDegrees}
+            onPlayerHealthChange={handlePlayerHealthChange}
             onTargetChange={setTarget}
           />
         </Suspense>
@@ -1348,7 +1382,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
         <div className="scene-loading scene-loading-idle" aria-hidden="true" />
       )}
       <div className="world-vignette" aria-hidden="true" />
-      {entered && <Hud feedbackEvent={sceneFeedback} state={state} />}
+      {entered && <Hud feedbackEvent={sceneFeedback} state={state} health={playerHealth} />}
       {entered && <MissionTracker compact={dashboardOpen} state={state} playerPosition={playerPosition} />}
       {entered && (
         <div
@@ -1359,6 +1393,15 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
       {entered && hasLockedOnce && !pointerLocked && !dashboardOpen && !gameMenuOpen && !serviceHold && (
         <div className="pointer-lock-hint" aria-hidden="true">Click to look around</div>
       )}
+      {entered && manualPaused && (
+        <div className="pause-overlay" role="dialog" aria-label="Paused" aria-modal="true">
+          <div className="pause-overlay-card">
+            <h2>Paused</h2>
+            <p>Press <kbd>P</kbd> to resume{multiplayerStatus.role === "guest" ? "" : " — the world is frozen"}.</p>
+            <button onClick={() => setManualPaused(false)} type="button">Resume</button>
+          </div>
+        </div>
+      )}
       {entered && saveStatus !== "idle" && (
         <div className={`save-indicator save-${saveStatus}`} role="status" aria-live="polite">
           {saveStatus === "saving"
@@ -1367,7 +1410,9 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
               ? "Saved"
               : saveStatus === "conflict"
                 ? "Syncing latest save…"
-                : "Offline · saved on this device"}
+                : saveStatus === "error"
+                  ? "Save failed · device storage is full"
+                  : "Offline · saved on this device"}
         </div>
       )}
       {entered && voiceLine && (
@@ -1397,12 +1442,15 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
           <ul>
             <li><span className="controls-legend-keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span><span>Move</span></li>
             <li><span className="controls-legend-keys"><kbd>Mouse</kbd></span><span>Look around</span></li>
+            <li><span className="controls-legend-keys"><kbd>←</kbd><kbd>→</kbd></span><span>Turn camera (no mouse)</span></li>
             <li><span className="controls-legend-keys"><kbd>Click</kbd></span><span>Lock cursor · <kbd>Esc</kbd> frees it</span></li>
             <li><span className="controls-legend-keys"><kbd>Shift</kbd></span><span>Sprint</span></li>
-            <li><span className="controls-legend-keys"><kbd>Space</kbd></span><span>Jump</span></li>
+            <li><span className="controls-legend-keys"><kbd>Space</kbd></span><span>Jump · Brake while driving</span></li>
             <li><span className="controls-legend-keys"><kbd>E</kbd></span><span>Interact</span></li>
             <li><span className="controls-legend-keys"><kbd>F</kbd></span><span>Drive / exit vehicle</span></li>
+            <li><span className="controls-legend-keys"><kbd>V</kbd></span><span>First / third person</span></li>
             <li><span className="controls-legend-keys"><kbd>M</kbd></span><span>Dashboard &amp; map</span></li>
+            <li><span className="controls-legend-keys"><kbd>P</kbd></span><span>Pause</span></li>
           </ul>
         </div>
       )}
@@ -1456,7 +1504,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
               <button onClick={() => setDismissedEndingPathId(executedEnding.pathId)} type="button">
                 Keep running route
               </button>
-              <button className="danger" onClick={handleRestart} type="button">
+              <button className="danger" onClick={() => handleRestart(nextRunSeed)} type="button">
                 Restart run
               </button>
             </div>
@@ -1577,6 +1625,43 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
                 ))}
               </div>
             </div>
+            <div className="look-settings-control" aria-label="Look controls">
+              <label className="look-settings-row">
+                <span>Look sensitivity</span>
+                <input
+                  type="range"
+                  min={0.25}
+                  max={3}
+                  step={0.05}
+                  value={lookSettings.sensitivity}
+                  aria-label="Look sensitivity"
+                  onChange={(event) => setLookSettings((current) => ({ ...current, sensitivity: Number(event.target.value) }))}
+                />
+                <strong>{lookSettings.sensitivity.toFixed(2)}×</strong>
+              </label>
+              <button
+                aria-pressed={lookSettings.invertY}
+                className={lookSettings.invertY ? "look-toggle active" : "look-toggle"}
+                onClick={() => setLookSettings((current) => ({ ...current, invertY: !current.invertY }))}
+                type="button"
+              >
+                Invert vertical look {lookSettings.invertY ? "· On" : "· Off"}
+              </button>
+              <span className="look-settings-hint">Arrow keys turn the camera for mouse-free play.</span>
+            </div>
+            {entered && (
+              <button
+                onClick={() => {
+                  setManualPaused((current) => !current);
+                  setGameMenuOpen(false);
+                }}
+                role="menuitem"
+                type="button"
+              >
+                {manualPaused ? <Play size={16} aria-hidden="true" /> : <Pause size={16} aria-hidden="true" />}
+                {manualPaused ? "Resume" : "Pause"}
+              </button>
+            )}
             <button onClick={handleManualSave} role="menuitem" type="button">
               <Save size={16} aria-hidden="true" />
               Save game
@@ -1755,7 +1840,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
           />
         </Suspense>
       )}
-      {entered && <Minimap state={state} mapLayout={mapLayout} playerPosition={playerPosition} guidanceLocationId={guidanceLocationId} target={activeTarget} />}
+      {entered && <Minimap state={state} mapLayout={mapLayout} playerPosition={playerPosition} playerHeadingDegrees={playerHeadingDegrees} guidanceLocationId={guidanceLocationId} target={activeTarget} />}
       {entered && <InteractionPanel state={state} target={activeTarget} onCommand={sendCommandAtActiveTarget} onSave={save} onReload={reload} onRestart={handleRestart} />}
       {entered && <DesktopFirstNotice />}
       <ToastStack docked={dashboardOpen} messages={toasts} />
@@ -1982,6 +2067,37 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
 interface PlayerAudioPrefs {
   muted: boolean;
   volume: number;
+}
+
+interface LookSettings {
+  sensitivity: number;
+  invertY: boolean;
+}
+
+const LOOK_PREFS_KEY = "vv:look-prefs";
+
+function loadLookSettings(): LookSettings {
+  try {
+    const raw = window.localStorage.getItem(LOOK_PREFS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<LookSettings>;
+      return {
+        sensitivity: typeof parsed.sensitivity === "number" ? Math.max(0.25, Math.min(3, parsed.sensitivity)) : 1,
+        invertY: Boolean(parsed.invertY)
+      };
+    }
+  } catch {
+    // ignore unreadable/private-mode storage
+  }
+  return { sensitivity: 1, invertY: false };
+}
+
+function saveLookSettings(settings: LookSettings): void {
+  try {
+    window.localStorage.setItem(LOOK_PREFS_KEY, JSON.stringify(settings));
+  } catch {
+    // ignore storage failures (private mode etc.)
+  }
 }
 
 const AUDIO_PREFS_KEY = "vv:audio-prefs";

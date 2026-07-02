@@ -29,7 +29,10 @@ function defaultRoomCode(rooms) {
  * @param {object} [options]
  * @param {number} [options.maxPeers] Max peers per room (floored at 2).
  * @param {number} [options.maxMessageBytes] Reject larger client frames.
+ * @param {number} [options.maxMessagesPerSecond] Per-peer message rate cap (token bucket).
+ * @param {number} [options.maxJoinsPerMinute] Per-peer room:create/join rate cap (brute-force guard).
  * @param {() => string} [options.now] Timestamp source (ISO string).
+ * @param {() => number} [options.nowMs] Monotonic millisecond source (rate limiting).
  * @param {() => string} [options.makeRoomCode] Room-code generator (testing).
  * @param {(level: string, type: string, message: string, details?: object) => void} [options.log]
  * @param {() => void} [options.onRoomCreated] Fired when a room is created (metrics).
@@ -37,9 +40,27 @@ function defaultRoomCode(rooms) {
 export function createRoomManager(options = {}) {
   const maxPeers = Math.max(2, options.maxPeers ?? 4);
   const maxMessageBytes = options.maxMessageBytes ?? 8 * 1024 * 1024;
+  const maxMessagesPerSecond = Math.max(1, options.maxMessagesPerSecond ?? 40);
+  const maxJoinsPerMinute = Math.max(1, options.maxJoinsPerMinute ?? 12);
   const now = options.now ?? (() => new Date().toISOString());
+  const nowMs = options.nowMs ?? (() => Date.now());
   const log = options.log ?? (() => {});
   const onRoomCreated = options.onRoomCreated ?? (() => {});
+
+  // Per-peer token buckets. A flooding client burns its message tokens and gets
+  // RATE_LIMITED errors instead of amplifying an 8MB frame to every peer; a
+  // room-code guesser burns the scarcer join bucket. Both refill continuously.
+  function consumeToken(bucket, capacity, ratePerSecond) {
+    const at = nowMs();
+    const elapsed = Math.max(0, at - bucket.refillAt);
+    bucket.tokens = Math.min(capacity, bucket.tokens + (elapsed / 1000) * ratePerSecond);
+    bucket.refillAt = at;
+    if (bucket.tokens >= 1) {
+      bucket.tokens -= 1;
+      return true;
+    }
+    return false;
+  }
 
   const rooms = new Map(); // code -> { code, createdAt, hostPeerId, maxPeers, peers: Map<id, peer> }
   const peers = new Map(); // id -> { id, profile, role, roomCode, send, connectedAt }
@@ -217,6 +238,14 @@ export function createRoomManager(options = {}) {
         return;
       }
 
+      // A guest may only address the host. Guest->guest direct relay is how a
+      // malicious client forges snapshots straight into another player, so it is
+      // never allowed: only the host fans out to specific guests.
+      if (room.hostPeerId !== peer.id && target.id !== room.hostPeerId) {
+        sendError(peer, "RELAY_FORBIDDEN", "Guests can only message the room host.");
+        return;
+      }
+
       send(target, {
         data: message.data,
         fromPeerId: peer.id,
@@ -267,7 +296,9 @@ export function createRoomManager(options = {}) {
       profile: init.profile,
       role: "idle",
       roomCode: null,
-      send: init.send
+      send: init.send,
+      messageBucket: { refillAt: nowMs(), tokens: maxMessagesPerSecond },
+      joinBucket: { refillAt: nowMs(), tokens: maxJoinsPerMinute }
     };
     peers.set(peer.id, peer);
     send(peer, {
@@ -316,6 +347,20 @@ export function createRoomManager(options = {}) {
     if (!message || typeof message.type !== "string") {
       sendError(peer, "INVALID_MESSAGE", "Invalid multiplayer message.");
       return null;
+    }
+
+    if (!consumeToken(peer.messageBucket, maxMessagesPerSecond, maxMessagesPerSecond)) {
+      sendError(peer, "RATE_LIMITED", "Too many multiplayer messages. Slow down.");
+      return null;
+    }
+
+    // Room creation/joining is far scarcer than gameplay traffic, so it gets its
+    // own tight bucket — this is what makes online room-code guessing infeasible.
+    if (message.type === "room:create" || message.type === "room:join") {
+      if (!consumeToken(peer.joinBucket, maxJoinsPerMinute, maxJoinsPerMinute / 60)) {
+        sendError(peer, "JOIN_RATE_LIMITED", "Too many room attempts. Wait a moment.");
+        return message.type;
+      }
     }
 
     switch (message.type) {

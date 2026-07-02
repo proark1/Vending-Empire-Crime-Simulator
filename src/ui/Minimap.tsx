@@ -9,6 +9,7 @@ interface MinimapProps {
   state: GameState;
   mapLayout: WorldMapLayout;
   playerPosition: Vec2;
+  playerHeadingDegrees?: number;
   guidanceLocationId?: string;
   target: SceneTarget | null;
 }
@@ -47,7 +48,7 @@ function toDistrictRect(bounds: { maxX: number; maxZ: number; minX: number; minZ
   };
 }
 
-export function Minimap({ state, mapLayout, playerPosition, guidanceLocationId, target }: MinimapProps) {
+export function Minimap({ state, mapLayout, playerPosition, playerHeadingDegrees = 0, guidanceLocationId, target }: MinimapProps) {
   const locationOverrides = useMemo(() => locationPositionOverrides(mapLayout), [mapLayout]);
   const contactOverrides = useMemo(() => crimeContactPositionOverrides(mapLayout), [mapLayout]);
   const targetOperation = target?.type === "rival_operation"
@@ -95,9 +96,14 @@ export function Minimap({ state, mapLayout, playerPosition, guidanceLocationId, 
           const isGuidance = guidanceLocationId === location.id;
           const ownerClass = machine?.ownerFactionId === state.playerFactionId ? "player" : machine ? "rival" : location.kind;
 
+          const radius = isGuidance ? 5.2 : isTarget ? 4.4 : 3.1;
           return (
             <g className={`map-location ${ownerClass} ${isTarget ? "target" : ""} ${isGuidance ? "guidance" : ""}`} key={location.id}>
-              <circle cx={point.x} cy={point.y} r={isGuidance ? 5.2 : isTarget ? 4.4 : 3.1} />
+              <circle cx={point.x} cy={point.y} r={radius} />
+              {/* Shape cues so ownership reads without relying on colour alone:
+                  your machines get an outline ring, rival machines a centre dot. */}
+              {ownerClass === "player" && <circle className="owner-ring" cx={point.x} cy={point.y} r={radius + 1.2} />}
+              {ownerClass === "rival" && <circle className="owner-dot" cx={point.x} cy={point.y} r={radius * 0.42} />}
             </g>
           );
         })}
@@ -127,8 +133,20 @@ export function Minimap({ state, mapLayout, playerPosition, guidanceLocationId, 
             <rect x={vehiclePoint.x - 3.6} y={vehiclePoint.y - 2.8} width="7.2" height="5.6" rx="1.2" />
           </g>
         )}
-        <circle className="map-player" cx={player.x} cy={player.y} r="3.6" />
+        {/* Player marker is a heading wedge so the map agrees with the first-person
+            camera direction, not a directionless dot. */}
+        <g className="map-player" transform={`rotate(${playerHeadingDegrees} ${player.x} ${player.y})`}>
+          <path d={`M ${player.x} ${player.y - 5.4} L ${player.x + 3.3} ${player.y + 3.4} L ${player.x - 3.3} ${player.y + 3.4} Z`} />
+          <circle cx={player.x} cy={player.y} r="1.7" />
+        </g>
       </svg>
+      <ul className="minimap-legend" aria-label="Map legend">
+        <li><span className="legend-swatch player" aria-hidden="true" /> You / your machines</li>
+        <li><span className="legend-swatch rival" aria-hidden="true" /> Rival machines</li>
+        <li><span className="legend-swatch open" aria-hidden="true" /> Open pad</li>
+        <li><span className="legend-swatch contact" aria-hidden="true" /> Contact</li>
+        <li><span className="legend-swatch operation" aria-hidden="true" /> Rival op</li>
+      </ul>
     </aside>
   );
 }

@@ -108,14 +108,14 @@ export const machineModels: Record<MachineModelId, MachineModelDefinition> = {
   mobile_vendor: {
     id: "mobile_vendor",
     name: "Mobile Vending Unit",
-    description: "Small mobile rig for events and route experiments.",
-    baseCost: 230,
+    description: "Cheap, eye-catching rig that pulls crowds at busy stops — but it is fragile and thin on stock.",
+    baseCost: 150,
     maxSlots: 3,
-    capacityBonus: -4,
-    durabilityBonus: -0.02,
-    securityBonus: 0.02,
-    visibilityBonus: 0.12,
-    heatMultiplier: 1.1,
+    capacityBonus: -2,
+    durabilityBonus: -0.05,
+    securityBonus: -0.02,
+    visibilityBonus: 0.26,
+    heatMultiplier: 1.05,
     tags: ["mobile", "event"]
   },
   fake_broken_front: {

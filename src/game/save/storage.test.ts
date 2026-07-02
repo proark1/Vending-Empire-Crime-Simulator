@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createInitialState } from "../content/initialState";
-import { migrateGameState } from "./storage";
+import { migrateGameState, saveGame } from "./storage";
 
 describe("save migration", () => {
   it("restores starter cash for a broke pre-route save", () => {
@@ -53,5 +53,61 @@ describe("save migration", () => {
       quietWindowsToday: 0,
       toastEventsToday: 0
     });
+  });
+
+  it("migrates an older-version save instead of discarding the player's progress", () => {
+    const state = createInitialState();
+    state.factions.player.money = 4242;
+    state.machines.machine_player_1.damage = 0;
+    state.machines.machine_player_1.placementStatus = "installed";
+    state.progression.starterMachinePlaced = true;
+    (state as { version: number }).version = state.version - 1;
+
+    const migrated = migrateGameState(state);
+
+    expect(migrated.version).toBe(createInitialState().version);
+    expect(migrated.factions.player.money).toBe(4242);
+  });
+
+  it("returns a playable baseline instead of throwing on a garbage payload", () => {
+    const migrated = migrateGameState(null as unknown as ReturnType<typeof createInitialState>);
+    expect(migrated.version).toBe(createInitialState().version);
+  });
+});
+
+describe("saveGame storage safety", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("reports failure instead of throwing when localStorage is full", () => {
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: () => null,
+        removeItem: () => {},
+        setItem: () => {
+          throw new Error("QuotaExceededError");
+        }
+      }
+    });
+
+    const result = saveGame(createInitialState());
+    expect(result.ok).toBe(false);
+    expect(result.bytes).toBeGreaterThan(0);
+  });
+
+  it("persists and reports bytes when storage works", () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => store.get(key) ?? null,
+        removeItem: (key: string) => store.delete(key),
+        setItem: (key: string, value: string) => store.set(key, value)
+      }
+    });
+
+    const result = saveGame(createInitialState());
+    expect(result.ok).toBe(true);
+    expect(result.bytes).toBeGreaterThan(0);
   });
 });

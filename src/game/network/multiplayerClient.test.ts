@@ -16,9 +16,11 @@ class FakeWebSocket {
 
   readyState = FakeWebSocket.CONNECTING;
   sent: string[] = [];
+  readonly protocols: string[];
   private readonly listeners = new Map<string, Listener[]>();
 
-  constructor(readonly url: string) {
+  constructor(readonly url: string, protocols?: string | string[]) {
+    this.protocols = protocols === undefined ? [] : Array.isArray(protocols) ? protocols : [protocols];
     FakeWebSocket.instances.push(this);
   }
 
@@ -119,10 +121,11 @@ afterEach(() => {
 });
 
 describe("MultiplayerClient: connection", () => {
-  it("connects to the multiplayer ws endpoint carrying the token", () => {
+  it("connects to the multiplayer ws endpoint carrying the token as a subprotocol, not in the URL", () => {
     new MultiplayerClient("secret-tok").connect();
     expect(socket().url).toContain("/api/multiplayer/ws");
-    expect(socket().url).toContain("token=secret-tok");
+    expect(socket().url).not.toContain("secret-tok");
+    expect(socket().protocols).toContain("vendetta.token.secret-tok");
     expect(socket().url.startsWith("ws://")).toBe(true);
   });
 
@@ -144,17 +147,29 @@ describe("MultiplayerClient: connection", () => {
     expect(socket().sentFrames()).toEqual([{ type: "room:create" }]);
   });
 
-  it("resets status to idle when the socket closes", () => {
+  it("resets status to idle on an intentional disconnect", () => {
     const client = new MultiplayerClient("tok");
     client.createRoom();
     socket().open();
     socket().message({ type: "room:created", peerId: "me", room: room("me", ["me"]) });
     expect(client.getStatus().room).not.toBeNull();
 
+    client.disconnect();
     socket().close();
     expect(client.getStatus().connection).toBe("idle");
     expect(client.getStatus().room).toBeNull();
     expect(client.getStatus().role).toBe("idle");
+  });
+
+  it("keeps trying to reconnect after an unexpected socket drop", () => {
+    const client = new MultiplayerClient("tok");
+    client.createRoom();
+    socket().open();
+    socket().message({ type: "room:created", peerId: "me", room: room("me", ["me"]) });
+
+    socket().close(); // unexpected drop, no disconnect() first
+    expect(client.getStatus().connection).toBe("connecting");
+    client.disconnect(); // clear the pending reconnect timer so it doesn't leak past the test
   });
 });
 

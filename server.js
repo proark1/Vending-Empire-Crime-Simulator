@@ -20,6 +20,20 @@ const seedAdminName = process.env.ADMIN_NAME || "assad";
 const seedAdminPin = process.env.ADMIN_PIN || "4924";
 const sessionDays = Number(process.env.SESSION_DAYS ?? 14);
 const jsonLimitBytes = Number(process.env.JSON_LIMIT_BYTES ?? 8 * 1024 * 1024);
+// A real GameState serializes well under this; the generous 8MB HTTP limit only
+// needs to cover admin map/audio payloads. Reject bloated saves so one profile
+// can't stuff the DB (or OOM the monitoring dashboard) with a giant blob.
+const gameSaveLimitBytes = Number(process.env.GAME_SAVE_LIMIT_BYTES ?? 2 * 1024 * 1024);
+// Multiplayer frames (commands + snapshots) are tiny next to admin JSON, so the
+// relay gets a much smaller cap of its own instead of inheriting the 8MB limit.
+const multiplayerMaxPayloadBytes = Number(process.env.MULTIPLAYER_MAX_PAYLOAD_BYTES ?? 512 * 1024);
+const multiplayerMaxSocketsPerProfile = Number(process.env.MULTIPLAYER_MAX_SOCKETS_PER_PROFILE ?? 3);
+const multiplayerMessagesPerSecond = Number(process.env.MULTIPLAYER_MESSAGES_PER_SECOND ?? 40);
+const multiplayerJoinsPerMinute = Number(process.env.MULTIPLAYER_JOINS_PER_MINUTE ?? 12);
+// How many past save revisions to retain per profile for admin restore.
+const gameSaveRevisionHistory = Math.max(0, Number(process.env.GAME_SAVE_REVISION_HISTORY ?? 10));
+// Cap on how many player saves the admin monitoring query pulls into memory.
+const monitoringSaveLimit = Math.max(1, Number(process.env.MONITORING_SAVE_LIMIT ?? 100));
 const startedAt = new Date();
 
 // Last-resort guards so a stray async error can't silently take the whole server
@@ -64,9 +78,13 @@ const multiplayerRoomMaxPeers = Number(process.env.MULTIPLAYER_ROOM_MAX_PEERS ??
 // Live peer sockets, kept only so the admin "reset player data" path can force
 // them closed; all room/peer/relay state lives in the unit-tested room manager.
 const multiplayerSockets = new Map();
+// profileId -> live socket count, so one session token can't open unbounded sockets.
+const multiplayerSocketsByProfile = new Map();
 const multiplayerRoomManager = createRoomManager({
   maxPeers: multiplayerRoomMaxPeers,
-  maxMessageBytes: jsonLimitBytes,
+  maxMessageBytes: multiplayerMaxPayloadBytes,
+  maxMessagesPerSecond: multiplayerMessagesPerSecond,
+  maxJoinsPerMinute: multiplayerJoinsPerMinute,
   log: recordEvent,
   onRoomCreated: () => {
     metrics.multiplayerRoomsCreated += 1;
@@ -146,6 +164,30 @@ function createPinRecord(pin) {
   };
 }
 
+// TLS policy for the Postgres connection.
+// - PGSSLMODE=disable    -> no TLS (local dev).
+// - PGSSL_CA set         -> verify the server cert against the provided CA (verify-full).
+// - PGSSL_VERIFY=1       -> verify against the system trust store.
+// - otherwise            -> encrypted but unverified (rejectUnauthorized:false).
+// The last is the historical default and stays the default so managed providers
+// with self-signed internal certs (e.g. Railway) keep working, but it now warns
+// in production so an operator can opt into verification.
+function resolvePostgresSsl() {
+  if (process.env.PGSSLMODE === "disable") {
+    return false;
+  }
+  if (process.env.PGSSL_CA) {
+    return { ca: process.env.PGSSL_CA, rejectUnauthorized: true };
+  }
+  if (process.env.PGSSL_VERIFY === "1") {
+    return { rejectUnauthorized: true };
+  }
+  if (isProductionRuntime) {
+    recordEvent("warning", "postgres_ssl_unverified", "Postgres TLS certificate is not verified. Set PGSSL_CA or PGSSL_VERIFY=1 to enable verification.");
+  }
+  return { rejectUnauthorized: false };
+}
+
 function getPool() {
   if (!databaseUrl) {
     throw Object.assign(new Error("DATABASE_URL is not configured."), { statusCode: 503 });
@@ -154,7 +196,7 @@ function getPool() {
   if (!pool) {
     pool = new Pool({
       connectionString: databaseUrl,
-      ssl: process.env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: false }
+      ssl: resolvePostgresSsl()
     });
     // An idle client emitting 'error' (e.g. the DB dropping the connection) throws
     // on the pool and would crash the process for every connected player. Log and
@@ -200,6 +242,16 @@ async function ensureDatabase() {
           created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         );
+
+        CREATE TABLE IF NOT EXISTS game_save_revisions (
+          id TEXT PRIMARY KEY,
+          profile_id TEXT NOT NULL REFERENCES player_profiles(id) ON DELETE CASCADE,
+          revision INTEGER NOT NULL,
+          state JSONB NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+
+        CREATE INDEX IF NOT EXISTS game_save_revisions_profile_idx ON game_save_revisions(profile_id, created_at DESC);
 
         CREATE TABLE IF NOT EXISTS admin_users (
           id TEXT PRIMARY KEY,
@@ -512,45 +564,102 @@ async function handleGameRegister(response, body) {
   });
 }
 
+// Cheap structural sanity check so a truncated write or a hand-crafted POST can't
+// persist a save that later throws in the client's migrator and bricks the account.
+// This is deliberately shallow — it rejects obvious garbage, not every invariant.
+function validateGameSaveState(state) {
+  if (!state || typeof state !== "object" || Array.isArray(state)) {
+    return "Game state must be an object.";
+  }
+  if (typeof state.version !== "number" || !Number.isFinite(state.version)) {
+    return "Game state is missing a numeric version.";
+  }
+  for (const key of ["playerFactionId", "factions", "machines"]) {
+    if (!(key in state)) {
+      return `Game state is missing required field: ${key}.`;
+    }
+  }
+  if (typeof state.factions !== "object" || state.factions === null) {
+    return "Game state factions are malformed.";
+  }
+  return null;
+}
+
 async function handleGameSave(request, response, body) {
   const profile = await requirePlayer(request, body?.token);
-  if (!body?.state || typeof body.state !== "object") {
-    jsonResponse(response, 400, { error: "Missing game state." });
+  const shapeError = validateGameSaveState(body?.state);
+  if (shapeError) {
+    jsonResponse(response, 400, { error: shapeError });
+    return;
+  }
+
+  const stateBytes = Buffer.byteLength(JSON.stringify(body.state), "utf8");
+  if (stateBytes > gameSaveLimitBytes) {
+    recordEvent("warning", "game_save_too_large", "Rejected oversized game save.", { profileId: profile.id, stateBytes });
+    jsonResponse(response, 413, { error: "Save data is too large." });
     return;
   }
 
   const baseRevision = typeof body.baseRevision === "number" && Number.isFinite(body.baseRevision) ? Math.max(0, Math.floor(body.baseRevision)) : null;
-  const result = await getPool().query(
-    `INSERT INTO game_saves (profile_id, state, revision, updated_at)
-     VALUES ($1, $2, 1, now())
-     ON CONFLICT (profile_id)
-     DO UPDATE SET
-       state = EXCLUDED.state,
-       revision = game_saves.revision + 1,
-       updated_at = now()
-     WHERE $3::integer IS NULL OR game_saves.revision = $3::integer
-     RETURNING updated_at, revision`,
-    [profile.id, body.state, baseRevision]
-  );
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `INSERT INTO game_saves (profile_id, state, revision, updated_at)
+       VALUES ($1, $2, 1, now())
+       ON CONFLICT (profile_id)
+       DO UPDATE SET
+         state = EXCLUDED.state,
+         revision = game_saves.revision + 1,
+         updated_at = now()
+       WHERE $3::integer IS NULL OR game_saves.revision = $3::integer
+       RETURNING updated_at, revision`,
+      [profile.id, body.state, baseRevision]
+    );
 
-  if (!result.rows[0]) {
-    metrics.gameSaveConflicts += 1;
-    const current = await getPool().query("SELECT updated_at, revision FROM game_saves WHERE profile_id = $1", [profile.id]);
-    recordEvent("warning", "game_save_conflict", "Rejected stale game save.", {
-      baseRevision,
-      currentRevision: current.rows[0]?.revision ?? null,
-      profileId: profile.id
-    });
-    jsonResponse(response, 409, {
-      code: "SAVE_CONFLICT",
-      error: "This save is older than the database copy. Reloaded the latest saved state.",
-      save: current.rows[0] ? { updatedAt: current.rows[0].updated_at, revision: current.rows[0].revision } : null
-    });
-    return;
+    if (!result.rows[0]) {
+      await client.query("ROLLBACK");
+      metrics.gameSaveConflicts += 1;
+      const current = await getPool().query("SELECT updated_at, revision FROM game_saves WHERE profile_id = $1", [profile.id]);
+      recordEvent("warning", "game_save_conflict", "Rejected stale game save.", {
+        baseRevision,
+        currentRevision: current.rows[0]?.revision ?? null,
+        profileId: profile.id
+      });
+      jsonResponse(response, 409, {
+        code: "SAVE_CONFLICT",
+        error: "This save is older than the database copy. Reloaded the latest saved state.",
+        save: current.rows[0] ? { updatedAt: current.rows[0].updated_at, revision: current.rows[0].revision } : null
+      });
+      return;
+    }
+
+    // Retain a bounded history per profile so a corrupt/regretted save can be
+    // rolled back from the admin console instead of being gone forever.
+    if (gameSaveRevisionHistory > 0) {
+      await client.query(
+        "INSERT INTO game_save_revisions (id, profile_id, revision, state) VALUES ($1, $2, $3, $4)",
+        [randomUUID(), profile.id, result.rows[0].revision, body.state]
+      );
+      await client.query(
+        `DELETE FROM game_save_revisions
+          WHERE profile_id = $1
+            AND id NOT IN (
+              SELECT id FROM game_save_revisions WHERE profile_id = $1 ORDER BY created_at DESC LIMIT $2
+            )`,
+        [profile.id, gameSaveRevisionHistory]
+      );
+    }
+
+    await client.query("COMMIT");
+    metrics.gameSaves += 1;
+    jsonResponse(response, 200, { ok: true, updatedAt: result.rows[0].updated_at, revision: result.rows[0].revision });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
   }
-
-  metrics.gameSaves += 1;
-  jsonResponse(response, 200, { ok: true, updatedAt: result.rows[0].updated_at, revision: result.rows[0].revision });
 }
 
 async function handleGameSaveRead(request, response) {
@@ -1359,8 +1468,8 @@ async function handleAdminMonitoring(request, response) {
           FROM player_profiles
           LEFT JOIN game_saves ON game_saves.profile_id = player_profiles.id
           ORDER BY game_saves.updated_at DESC NULLS LAST, player_profiles.last_login_at DESC NULLS LAST
-          LIMIT 200
-        `);
+          LIMIT $1
+        `, [monitoringSaveLimit]);
         liveOps = analyzeLiveOpsSaveRows(saves.rows);
       } finally {
         client.release();
@@ -1420,8 +1529,96 @@ async function handlePlayerDataReset(request, response) {
   }
 }
 
+async function handleGameSaveRevisionsRead(request, response, url) {
+  await requireAdmin(request);
+  const profileId = String(url.searchParams.get("profileId") ?? "").trim();
+  if (!profileId) {
+    jsonResponse(response, 400, { error: "Missing profileId." });
+    return;
+  }
+
+  const result = await getPool().query(
+    `SELECT id, revision, created_at
+       FROM game_save_revisions
+      WHERE profile_id = $1
+      ORDER BY created_at DESC
+      LIMIT 50`,
+    [profileId]
+  );
+  jsonResponse(response, 200, {
+    revisions: result.rows.map((row) => ({ id: row.id, revision: row.revision, createdAt: row.created_at }))
+  });
+}
+
+async function handleGameSaveRestore(request, response, body) {
+  const admin = await requireAdmin(request);
+  const profileId = String(body?.profileId ?? "").trim();
+  const revisionId = String(body?.revisionId ?? "").trim();
+  if (!profileId || !revisionId) {
+    jsonResponse(response, 400, { error: "Missing profileId or revisionId." });
+    return;
+  }
+
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const snapshot = await client.query(
+      "SELECT state FROM game_save_revisions WHERE id = $1 AND profile_id = $2",
+      [revisionId, profileId]
+    );
+    if (!snapshot.rows[0]) {
+      await client.query("ROLLBACK");
+      jsonResponse(response, 404, { error: "Save revision not found." });
+      return;
+    }
+
+    const restored = await client.query(
+      `INSERT INTO game_saves (profile_id, state, revision, updated_at)
+       VALUES ($1, $2, 1, now())
+       ON CONFLICT (profile_id)
+       DO UPDATE SET state = EXCLUDED.state, revision = game_saves.revision + 1, updated_at = now()
+       RETURNING revision, updated_at`,
+      [profileId, snapshot.rows[0].state]
+    );
+    const row = restored.rows[0];
+    if (gameSaveRevisionHistory > 0) {
+      await client.query(
+        "INSERT INTO game_save_revisions (id, profile_id, revision, state) VALUES ($1, $2, $3, $4)",
+        [randomUUID(), profileId, row.revision, snapshot.rows[0].state]
+      );
+    }
+    await client.query("COMMIT");
+    recordEvent("warning", "game_save_restored", "Player save restored from revision.", { by: admin.name, profileId, revisionId });
+    jsonResponse(response, 200, { ok: true, revision: row.revision, updatedAt: row.updated_at });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    metrics.failedWrites += 1;
+    recordEvent("error", "game_save_restore_failed", "Player save restore failed.", { error: error.message });
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+// The session token is read from the Sec-WebSocket-Protocol header
+// ("vendetta.token.<token>") so it stays out of the request URL (and therefore out
+// of proxy/edge access logs). The old "?token=" query param is still accepted so a
+// client from a previous deploy keeps working during rollout.
+function multiplayerTokenFromRequest(request, url) {
+  const header = request.headers["sec-websocket-protocol"];
+  if (typeof header === "string") {
+    for (const raw of header.split(",")) {
+      const value = raw.trim();
+      if (value.startsWith("vendetta.token.")) {
+        return value.slice("vendetta.token.".length);
+      }
+    }
+  }
+  return url.searchParams.get("token");
+}
+
 async function handleMultiplayerUpgrade(request, socket, head, url, wss) {
-  const token = url.searchParams.get("token");
+  const token = multiplayerTokenFromRequest(request, url);
   let profile;
   try {
     profile = await requirePlayerToken(token);
@@ -1432,9 +1629,18 @@ async function handleMultiplayerUpgrade(request, socket, head, url, wss) {
     return;
   }
 
+  const activeForProfile = multiplayerSocketsByProfile.get(profile.id) ?? 0;
+  if (activeForProfile >= multiplayerMaxSocketsPerProfile) {
+    recordEvent("warning", "multiplayer_socket_limit", "Rejected multiplayer socket over per-profile cap.", { profileId: profile.id });
+    socket.write("HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+
   wss.handleUpgrade(request, socket, head, (ws) => {
     const peerId = `peer_${randomUUID()}`;
     multiplayerSockets.set(peerId, ws);
+    multiplayerSocketsByProfile.set(profile.id, (multiplayerSocketsByProfile.get(profile.id) ?? 0) + 1);
     metrics.multiplayerConnections += 1;
     multiplayerRoomManager.addPeer({
       id: peerId,
@@ -1462,6 +1668,12 @@ async function handleMultiplayerUpgrade(request, socket, head, url, wss) {
       metrics.multiplayerDisconnects += 1;
       multiplayerRoomManager.removePeer(peerId, "disconnected");
       multiplayerSockets.delete(peerId);
+      const remaining = (multiplayerSocketsByProfile.get(profile.id) ?? 1) - 1;
+      if (remaining > 0) {
+        multiplayerSocketsByProfile.set(profile.id, remaining);
+      } else {
+        multiplayerSocketsByProfile.delete(profile.id);
+      }
     });
     ws.on("error", (error) => {
       recordEvent("warning", "multiplayer_socket_error", "Multiplayer socket error.", {
@@ -1597,6 +1809,16 @@ async function routeApi(request, response, url) {
       return true;
     }
 
+    if (url.pathname === "/api/admin/game-saves/revisions" && request.method === "GET") {
+      await handleGameSaveRevisionsRead(request, response, url);
+      return true;
+    }
+
+    if (url.pathname === "/api/admin/game-saves/restore" && request.method === "POST") {
+      await handleGameSaveRestore(request, response, body);
+      return true;
+    }
+
     jsonResponse(response, 404, { error: "API route not found." });
     return true;
   } catch (error) {
@@ -1683,11 +1905,22 @@ async function serveGeneratedAudio(response, url) {
 }
 
 async function serveStatic(request, response, url) {
-  const decodedPath = decodeURIComponent(url.pathname);
+  let decodedPath;
+  try {
+    decodedPath = decodeURIComponent(url.pathname);
+  } catch {
+    // Malformed percent-encoding (e.g. "GET /%") — answer cleanly instead of
+    // letting the URIError reject the async handler and leave the socket hanging.
+    jsonResponse(response, 400, { error: "Bad request." });
+    return;
+  }
+
   const safePath = decodedPath === "/" ? "/index.html" : decodedPath;
   let filePath = path.normalize(path.join(distDir, safePath));
 
-  if (!filePath.startsWith(distDir)) {
+  // Require the separator (or an exact match) so a sibling like "dist-backup"
+  // whose path also startsWith "dist" can't be escaped into.
+  if (filePath !== distDir && !filePath.startsWith(distDir + path.sep)) {
     jsonResponse(response, 403, { error: "Forbidden." });
     return;
   }
@@ -1704,6 +1937,7 @@ async function serveStatic(request, response, url) {
   const ext = path.extname(filePath);
   response.writeHead(200, {
     "content-type": contentTypes[ext] ?? "application/octet-stream",
+    "x-content-type-options": "nosniff",
     "cache-control": filePath.endsWith("index.html") ? "no-cache" : "public, max-age=31536000, immutable"
   });
   createReadStream(filePath).pipe(response);
@@ -1724,7 +1958,14 @@ const server = createServer(async (request, response) => {
   await serveStatic(request, response, url);
 });
 
-const multiplayerWss = new WebSocketServer({ maxPayload: jsonLimitBytes, noServer: true });
+const multiplayerWss = new WebSocketServer({
+  maxPayload: multiplayerMaxPayloadBytes,
+  noServer: true,
+  // The client offers ["vendetta.v1", "vendetta.token.<token>"]; we select only the
+  // non-secret marker so the browser handshake completes without the server ever
+  // echoing the token back in the response header.
+  handleProtocols: (protocols) => (protocols.has("vendetta.v1") ? "vendetta.v1" : false)
+});
 
 // Reap half-open sockets (laptop sleep, crash, network drop) that never sent a
 // close frame — otherwise a ghost peer lingers in its room, and a ghost host keeps
@@ -1737,9 +1978,30 @@ const multiplayerHeartbeat = setInterval(() => {
 multiplayerHeartbeat.unref?.();
 multiplayerWss.on("close", () => clearInterval(multiplayerHeartbeat));
 
+function isAllowedWebSocketOrigin(request) {
+  const origin = request.headers.origin;
+  if (!origin || process.env.WS_ALLOW_CROSS_ORIGIN === "1") {
+    return true;
+  }
+  try {
+    return new URL(origin).host === request.headers.host;
+  } catch {
+    return false;
+  }
+}
+
 server.on("upgrade", (request, socket, head) => {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
   if (url.pathname !== "/api/multiplayer/ws") {
+    socket.destroy();
+    return;
+  }
+
+  // Reject cross-origin WebSocket handshakes in production (CSWSH defense). Skipped
+  // outside production so local tooling on a different port still connects.
+  if (isProductionRuntime && !isAllowedWebSocketOrigin(request)) {
+    recordEvent("warning", "multiplayer_bad_origin", "Rejected multiplayer upgrade from disallowed origin.", { origin: request.headers.origin });
+    socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
     socket.destroy();
     return;
   }

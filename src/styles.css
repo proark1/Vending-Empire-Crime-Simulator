@@ -4726,6 +4726,79 @@ kbd {
   stroke-width: 1.6;
 }
 
+.map-player path {
+  fill: #f8fafc;
+  stroke: #0f172a;
+  stroke-width: 1.2;
+}
+
+.map-player circle {
+  fill: #0f172a;
+  stroke: none;
+}
+
+/* Shape cues so machine ownership reads without depending on colour. */
+.map-location .owner-ring {
+  fill: none;
+  stroke: #f8fafc;
+  stroke-width: 0.7;
+  opacity: 0.9;
+}
+
+.map-location .owner-dot {
+  fill: #f8fafc;
+  stroke: none;
+}
+
+.minimap-legend {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 10px;
+  font-size: 10px;
+  color: #cbd5f5;
+}
+
+.minimap-legend li {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.legend-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(15, 23, 42, 0.7);
+}
+
+.legend-swatch.player {
+  background: #2dd4bf;
+  box-shadow: 0 0 0 1.5px #f8fafc;
+}
+
+.legend-swatch.rival {
+  background: #fb7185;
+}
+
+.legend-swatch.open {
+  background: #a3e635;
+}
+
+.legend-swatch.contact {
+  background: #fbbf24;
+  border-radius: 2px;
+}
+
+.legend-swatch.operation {
+  background: #fb7185;
+  border-radius: 0;
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+
 .map-vehicle rect {
   fill: #d9f99d;
   stroke: #0f172a;
@@ -7310,6 +7383,11 @@ textarea:focus-visible,
   border-color: rgba(251, 191, 36, 0.45);
 }
 
+.save-indicator.save-error {
+  color: #fca5a5;
+  border-color: rgba(248, 113, 113, 0.5);
+}
+
 @media (max-width: 820px) {
   .dashboard-groups {
     grid-template-columns: repeat(5, minmax(52px, 1fr));
@@ -7354,4 +7432,118 @@ textarea:focus-visible,
     font-size: 11px;
     line-height: 1.25;
   }
+}
+
+/* Pause overlay (P key / menu) */
+.pause-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(4, 8, 16, 0.62);
+  backdrop-filter: blur(3px);
+}
+
+.pause-overlay-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 26px 40px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 16px;
+  background: rgba(10, 16, 28, 0.94);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  text-align: center;
+}
+
+.pause-overlay-card h2 {
+  margin: 0;
+  font-size: 24px;
+  letter-spacing: 0.04em;
+  color: #f8fafc;
+}
+
+.pause-overlay-card p {
+  margin: 0;
+  color: #cbd5f5;
+  font-size: 13px;
+}
+
+.pause-overlay-card kbd {
+  padding: 1px 6px;
+  border-radius: 5px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: rgba(30, 41, 59, 0.8);
+  font-size: 12px;
+}
+
+.pause-overlay-card button {
+  margin-top: 4px;
+  padding: 8px 22px;
+  border: 1px solid rgba(45, 212, 191, 0.5);
+  border-radius: 999px;
+  background: rgba(13, 148, 136, 0.28);
+  color: #ccfbf1;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pause-overlay-card button:hover {
+  background: rgba(13, 148, 136, 0.42);
+}
+
+/* Look-controls block in the game menu */
+.look-settings-control {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 4px;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.look-settings-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #cbd5f5;
+}
+
+.look-settings-row input[type="range"] {
+  width: 100%;
+}
+
+.look-settings-row strong {
+  font-variant-numeric: tabular-nums;
+  color: #e2e8f0;
+}
+
+.look-toggle {
+  padding: 6px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.6);
+  color: #cbd5f5;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.look-toggle.active {
+  border-color: rgba(45, 212, 191, 0.5);
+  color: #ccfbf1;
+}
+
+.look-settings-hint {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+/* HUD health pill */
+.stat-pill.health-pill {
+  color: #fecaca;
 }

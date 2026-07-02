@@ -237,6 +237,27 @@ describe("roomManager: game relay routing", () => {
     expect(t.inboxes.get("host")).toHaveLength(0);
   });
 
+  it("forbids a guest addressing another guest directly (no snapshot hijack)", () => {
+    const t = setup();
+    t.connect("host");
+    t.connect("g1");
+    t.connect("g2");
+    const code = t.createRoom("host");
+    t.send("g1", { type: "room:join", roomCode: code });
+    t.send("g2", { type: "room:join", roomCode: code });
+    t.clearAll();
+
+    t.send("g1", { type: "game:relay", targetPeerId: "g2", data: { type: "snapshot", sequence: 999, state: {} } });
+    expect(t.last(t.inboxes.get("g1"))).toMatchObject({ type: "error", code: "RELAY_FORBIDDEN" });
+    expect(t.inboxes.get("g2")).toHaveLength(0);
+  });
+
+  it("still lets a guest address the host directly", () => {
+    const t = room2();
+    t.send("guest", { type: "game:relay", targetPeerId: "host", data: { type: "command", commandId: "c9", command: {} } });
+    expect(t.last(t.inboxes.get("host"))).toMatchObject({ type: "game:relay", fromPeerId: "guest", data: { commandId: "c9" } });
+  });
+
   it("rejects a relay before joining a room", () => {
     const t = setup();
     t.connect("a");
@@ -326,6 +347,40 @@ describe("roomManager: protocol robustness", () => {
     const t = setup();
     expect(t.send("ghost", { type: "room:create" })).toBeNull();
     expect(t.manager.roomCount).toBe(0);
+  });
+});
+
+describe("roomManager: rate limiting", () => {
+  it("rate-limits a peer that floods messages, then refills over time", () => {
+    let clock = 1000;
+    const manager = createRoomManager({ now: () => "t", nowMs: () => clock, maxMessagesPerSecond: 5 });
+    const inbox = [];
+    manager.addPeer({ id: "a", profile: { id: "pa", name: "a" }, send: (m) => inbox.push(m) });
+
+    for (let i = 0; i < 5; i += 1) {
+      expect(manager.handleMessage("a", JSON.stringify({ type: "ping" }))).toBe("ping");
+    }
+    // 6th message in the same instant exhausts the bucket.
+    expect(manager.handleMessage("a", JSON.stringify({ type: "ping" }))).toBeNull();
+    expect(inbox[inbox.length - 1]).toMatchObject({ type: "error", code: "RATE_LIMITED" });
+
+    // A second later the bucket has refilled.
+    clock += 1000;
+    expect(manager.handleMessage("a", JSON.stringify({ type: "ping" }))).toBe("ping");
+  });
+
+  it("throttles repeated room:join attempts (room-code brute force)", () => {
+    let clock = 1000;
+    const manager = createRoomManager({ now: () => "t", nowMs: () => clock, maxJoinsPerMinute: 3 });
+    const inbox = [];
+    manager.addPeer({ id: "a", profile: { id: "pa", name: "a" }, send: (m) => inbox.push(m) });
+
+    for (let i = 0; i < 3; i += 1) {
+      manager.handleMessage("a", JSON.stringify({ type: "room:join", roomCode: "NOPE" }));
+    }
+    // The join bucket is now empty even though message tokens remain.
+    manager.handleMessage("a", JSON.stringify({ type: "room:join", roomCode: "NOPE" }));
+    expect(inbox[inbox.length - 1]).toMatchObject({ type: "error", code: "JOIN_RATE_LIMITED" });
   });
 });
 

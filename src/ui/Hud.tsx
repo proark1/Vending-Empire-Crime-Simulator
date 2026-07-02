@@ -1,4 +1,4 @@
-import { Flame, HandCoins, Package, Trophy } from "lucide-react";
+import { Flame, HandCoins, Heart, Package, Trophy } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { GameState } from "../game/core/types";
 import { activeLawInspections, carriedCrateUnits, formatClock, missionProgress, playerHeatTier } from "../game/core/selectors";
@@ -7,9 +7,10 @@ import type { SceneFeedbackEvent } from "../render/three/SceneTargets";
 interface HudProps {
   feedbackEvent?: SceneFeedbackEvent | null;
   state: GameState;
+  health?: { hp: number; dead: boolean };
 }
 
-export function Hud({ feedbackEvent, state }: HudProps) {
+export function Hud({ feedbackEvent, state, health }: HudProps) {
   const player = state.factions[state.playerFactionId];
   const cargoUnits = carriedCrateUnits(state);
   const crate = state.player.carriedCrate;
@@ -59,6 +60,12 @@ export function Hud({ feedbackEvent, state }: HudProps) {
             {state.mission.completed ? "District claimed" : `${progress.profitableCount}/${progress.target} machines`}
           </span>
         </div>
+        {health && (health.dead || health.hp < 100) && (
+          <div className={`stat-pill health-pill ${health.dead || health.hp < 40 ? "pulse-danger" : ""}`} role="status" aria-live="polite">
+            <Heart size={17} aria-hidden="true" />
+            <span>{health.dead ? "Flattened — recovering" : `${Math.round(health.hp)} HP`}</span>
+          </div>
+        )}
       </div>
     </header>
   );
