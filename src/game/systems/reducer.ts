@@ -73,6 +73,7 @@ import {
   machineAtLocation,
   machineStockUnits,
   missionProgress,
+  nearestVehicleStop,
   ownedMachines,
   placementQuoteForLocation,
   placementCostForLocation,
@@ -2416,23 +2417,6 @@ function travelHoursBetweenLocations(state: GameState, fromLocationId: string, t
   return Math.max(0.08, Math.hypot(from.position.x - to.position.x, from.position.z - to.position.z) * 0.018 / Math.max(0.4, speed));
 }
 
-function nearestVehicleStop(state: GameState, position: { x: number; z: number }): Location | undefined {
-  let nearest: Location | undefined;
-  let nearestDistanceSq = 6.25 * 6.25;
-
-  for (const location of Object.values(state.locations)) {
-    const dx = location.position.x - position.x;
-    const dz = location.position.z - position.z;
-    const distanceSq = dx * dx + dz * dz;
-    if (distanceSq <= nearestDistanceSq) {
-      nearest = location;
-      nearestDistanceSq = distanceSq;
-    }
-  }
-
-  return nearest;
-}
-
 function parkedVehiclePose(location: Location): { heading: number; position: { x: number; z: number } } {
   const streetSide = location.position.z > 0 ? -1 : 1;
   return {
@@ -2523,14 +2507,18 @@ function reduceFastCommand(currentState: GameState, command: GameCommand): Comma
         return null;
       }
 
+      // Auto-park: a van that has reached a stop settles onto that stop's tidy
+      // designated spot instead of resting at the raw drive-end coordinates (which
+      // could be mid-street). Mirrors the menu "move to location" path.
+      const parked = nearest ? parkedVehiclePose(nearest) : undefined;
       const wearMultiplier = vehicleWearMultiplier(vehicle);
       const nextVehicle: RouteVehicle = {
         ...vehicle,
         condition: Math.max(0.28, (vehicle.condition ?? 1) - distance * 0.00045 * wearMultiplier),
-        heading: normalizeHeading(command.heading),
+        heading: parked ? parked.heading : normalizeHeading(command.heading),
         locationId: nextLocationId,
         odometer: (vehicle.odometer ?? 0) + distance,
-        position
+        position: parked ? parked.position : position
       };
       const vehicleMaintenanceDue = {
         ...traffic.vehicleMaintenanceDue,
@@ -4449,6 +4437,10 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       const nearest = nearestVehicleStop(state, vehicle.position);
       if (nearest) {
         vehicle.locationId = nearest.id;
+        // Auto-park onto the stop's tidy designated spot (see fast-path note).
+        const parked = parkedVehiclePose(nearest);
+        vehicle.position = parked.position;
+        vehicle.heading = parked.heading;
       }
       advanceVehicleConflictEscape(state, events, vehicle, distance);
       break;

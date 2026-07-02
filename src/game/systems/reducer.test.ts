@@ -16,6 +16,7 @@ import {
   machineProcurementQuotes,
   machineStockUnits,
   narrativeQuestProgress,
+  nearestVehicleStop,
   productLabSlots,
   routeTasks,
   selectedRouteTask,
@@ -48,6 +49,46 @@ function placeStarterWithContract() {
     { type: "place_machine", actorId: "player", locationId: "laundromat", machineId: "machine_player_1", method: "legal_contract" }
   ]).state;
 }
+
+describe("vehicle auto-parking", () => {
+  const drive = (state: ReturnType<typeof createInitialState>, position: { x: number; z: number }, heading: number, distance = 20) =>
+    reduceGameState(state, {
+      type: "drive_vehicle",
+      actorId: "player",
+      vehicleId: "vehicle_starter_van",
+      position,
+      heading,
+      distance
+    }).state;
+
+  it("settles a driven van onto the nearest stop's tidy spot, not the raw drive-end coordinates", () => {
+    const initial = createInitialState();
+    const laundromat = initial.locations.laundromat;
+    const streetSide = laundromat.position.z > 0 ? -1 : 1;
+    // A scruffy stopping point right beside the laundromat, as if the van halted in the street.
+    const messyPoint = { x: laundromat.position.x + 1.2, z: laundromat.position.z + 0.6 };
+    expect(nearestVehicleStop(initial, messyPoint)?.id).toBe("laundromat");
+
+    const van = drive(initial, messyPoint, 1).vehicles.vehicle_starter_van;
+
+    expect(van.locationId).toBe("laundromat");
+    expect(van.position).not.toEqual(messyPoint);
+    expect(van.position?.x).toBeCloseTo(laundromat.position.x + 4);
+    expect(van.position?.z).toBeCloseTo(laundromat.position.z + streetSide * 2.25);
+    expect(van.heading).toBeCloseTo(Math.PI / 2);
+  });
+
+  it("leaves a van at its driven spot when it stops away from every stop", () => {
+    const initial = createInitialState();
+    // Far outside the populated world, so it is beyond every stop's docking radius.
+    const openRoad = { x: 500, z: 500 };
+    expect(nearestVehicleStop(initial, openRoad)).toBeUndefined();
+
+    const van = drive(initial, openRoad, 0.5, 30).vehicles.vehicle_starter_van;
+
+    expect(van.position).toEqual(openRoad);
+  });
+});
 
 describe("game reducer", () => {
   it("buys product as a carried crate", () => {
@@ -1137,7 +1178,7 @@ describe("game reducer", () => {
     expect(result.economy.finance.ledger.some((entry) => entry.category === "fuel")).toBe(true);
   });
 
-  it("tracks direct driving position and snaps the van to nearby stops", () => {
+  it("auto-parks the van onto a nearby stop's tidy spot when it stops driving", () => {
     const initial = createInitialState();
     const result = reduceGameState(initial, {
       type: "drive_vehicle",
@@ -1149,8 +1190,10 @@ describe("game reducer", () => {
     }).state;
 
     const vehicle = result.vehicles.vehicle_starter_van;
-    expect(vehicle.position).toEqual({ x: -5.2, z: -5.4 });
     expect(vehicle.locationId).toBe("laundromat");
+    // Settled onto the laundromat's designated spot, not left at the raw drive-end coords.
+    expect(vehicle.position).toEqual({ x: -1, z: -2.75 });
+    expect(vehicle.heading).toBeCloseTo(Math.PI / 2);
     expect(vehicle.condition).toBeLessThan(1);
     expect(vehicle.odometer).toBeGreaterThanOrEqual(12);
     expect(result.economy.traffic.vehicleMaintenanceDue.vehicle_starter_van).toBeGreaterThan(0);

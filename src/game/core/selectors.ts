@@ -1731,6 +1731,26 @@ export function selectedRouteTask(state: GameState): RouteTask | undefined {
   return routeTasks(state).find((task) => task.id === selectedTaskId);
 }
 
+// The stop a vehicle should be considered "at" for a given position — the nearest
+// location within a short docking radius. Used to snap a driven van onto a tidy
+// designated parking spot when it comes to rest, so it never sits abandoned mid-road.
+export function nearestVehicleStop(state: GameState, position: { x: number; z: number }): Location | undefined {
+  let nearest: Location | undefined;
+  let nearestDistanceSq = 6.25 * 6.25;
+
+  for (const location of Object.values(state.locations)) {
+    const dx = location.position.x - position.x;
+    const dz = location.position.z - position.z;
+    const distanceSq = dx * dx + dz * dz;
+    if (distanceSq <= nearestDistanceSq) {
+      nearest = location;
+      nearestDistanceSq = distanceSq;
+    }
+  }
+
+  return nearest;
+}
+
 function locationDistance(state: GameState, fromLocationId: LocationId, toLocationId: LocationId): number {
   const from = state.locations[fromLocationId];
   const to = state.locations[toLocationId];

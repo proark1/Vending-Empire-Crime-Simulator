@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import type { DistrictAccess, DistrictEvent, Employee, GameState, GameEventTone, Location, MachineId, MachineModelId, MachineUpgradeId, ProductId, RivalOperation, RouteVehicle, StockCrate, StreetActivity, Vec2, VehicleId, VendingMachine } from "../../game/core/types";
-import { activeConflictEvents, activeDistrictEvents, activeMachineAlarms, activeVehicle, carriedCrateUnits, districtProgress, garageStorageUnits, machineAtLocation, machineRoutePressure, optimizedRoutePlan } from "../../game/core/selectors";
+import { activeConflictEvents, activeDistrictEvents, activeMachineAlarms, activeVehicle, carriedCrateUnits, districtProgress, garageStorageUnits, machineAtLocation, machineRoutePressure, nearestVehicleStop, optimizedRoutePlan } from "../../game/core/selectors";
 import { modelTransformFor, type ModelConfig, type ModelTransform } from "../../game/content/modelConfig";
 import {
   crimeContacts,
@@ -6001,7 +6001,17 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
         return;
       }
 
+      const parkedVehicleId = drivingVehicleId;
       emitVehicleDrive(true);
+      // Settle the parked van onto its stop's tidy pose immediately (matching the
+      // reducer's auto-park), so it doesn't linger where the player stepped out
+      // until the next scene rebuild. Falls back to the raw exit spot if it stopped
+      // away from any stop.
+      const parkStop = nearestVehicleStop(stateRef.current, { x: yaw.position.x, z: yaw.position.z });
+      if (parkStop && dynamicGroupRef.current) {
+        const parked = activeVehiclePlacementForLocation(parkStop);
+        setRouteVehicleRigPose(dynamicGroupRef.current, parkedVehicleId, parked.position, parked.rotationY);
+      }
       const side = new THREE.Vector3(Math.cos(vehicleHeading), 0, -Math.sin(vehicleHeading));
       yaw.position.add(side.multiplyScalar(2.1));
       clampToWorld(yaw.position);
