@@ -64,6 +64,44 @@ describe("rival AI", () => {
     expect(commands.some((command) => command.type === "rival_action" && command.targetMachineId === "machine_player_1")).toBe(false);
   });
 
+  it("corporate rivals pressure with undercuts, not sabotage, when unprovoked", () => {
+    const state = withSabotageableTarget();
+    // Isolate Glassline (corporate) instead of Redline.
+    for (const controller of Object.values(state.npcControllers)) {
+      controller.lastActedHour = controller.factionId === "rival_glassline" ? 0 : state.worldTimeHours;
+    }
+    state.npcControllers.rival_glassline.lastSabotagedHour = undefined;
+
+    const commands = planNpcCommands(state);
+
+    expect(commands.some((command) => command.type === "rival_action" && command.action === "sabotage")).toBe(false);
+    expect(commands.some((command) => command.type === "rival_action" && command.action === "undercut" && command.targetMachineId === "machine_player_1")).toBe(true);
+  });
+
+  it("a corporate rival the player has repeatedly exposed turns to sabotage", () => {
+    const state = withSabotageableTarget();
+    for (const controller of Object.values(state.npcControllers)) {
+      controller.lastActedHour = controller.factionId === "rival_glassline" ? 0 : state.worldTimeHours;
+    }
+    state.npcControllers.rival_glassline.lastSabotagedHour = undefined;
+    state.replay.rivalMemory.rival_glassline = {
+      alarmConfronted: 1,
+      disruption: 1,
+      exposure: 2,
+      expansion: 0,
+      factionId: "rival_glassline",
+      negotiation: 0,
+      sabotage: 0,
+      undercut: 0
+    };
+
+    const sabotage = planNpcCommands(state).find(
+      (command) => command.type === "rival_action" && command.action === "sabotage"
+    );
+
+    expect(sabotage).toMatchObject({ action: "sabotage", targetMachineId: "machine_player_1" });
+  });
+
   it("expands into opened expansion districts once the player signals expansion", () => {
     const state = createInitialState();
     delete state.machines.machine_player_1;
