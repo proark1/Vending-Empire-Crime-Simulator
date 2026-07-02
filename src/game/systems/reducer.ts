@@ -37,7 +37,14 @@ import type {
   SupplierRelationshipState,
   VendingMachine
 } from "../core/types";
+import { createDraft, finishDraft, setAutoFreeze } from "immer";
 import { perfNow, recordPerfDuration } from "../core/performance";
+
+// Reducer results were historically fully-detached structuredClone copies, so
+// downstream code (and tests) freely reads/mutates them. Immer would freeze
+// produced state by default; disable that to keep the previous mutable semantics
+// while still getting structural sharing (only touched paths are copied).
+setAutoFreeze(false);
 import {
   activeContracts,
   activeAlarmForMachine,
@@ -117,8 +124,11 @@ const FIRST_UNDERCUT_MIN_ROUTE_HOURS = 14;
 const STARTER_MACHINE_ID = "machine_player_1";
 const STARTER_LOCATION_ID = "laundromat";
 
+// Structural-sharing clone: returns a mutable Immer draft of the state. Mutate it
+// freely like the old structuredClone copy, then call finishDraft() to get the next
+// immutable state — unchanged subtrees are shared by reference instead of deep-copied.
 function cloneState(state: GameState): GameState {
-  return structuredClone(state) as GameState;
+  return createDraft(state) as GameState;
 }
 
 function withLoggedEvent(currentState: GameState, message: string, tone: GameEventTone = "neutral"): CommandResult {
@@ -6161,7 +6171,8 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
   advanceNarrativeQuests(state, events);
 
   recordPerfDuration(`reducer.${command.type}`, perfNow() - perfStart);
-  return { state, events };
+  // Materialize the draft into the next immutable state (structural sharing).
+  return { state: finishDraft(state) as GameState, events };
 }
 
 export function reduceCommands(state: GameState, commands: GameCommand[]): CommandResult {
