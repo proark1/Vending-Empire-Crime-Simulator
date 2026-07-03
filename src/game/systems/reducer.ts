@@ -177,13 +177,14 @@ function ensurePacingState(state: GameState): void {
   state.pacing.toastEventsToday ??= 0;
 }
 
-function log(state: GameState, events: GameEvent[], message: string, tone: GameEventTone = "neutral"): void {
+function log(state: GameState, events: GameEvent[], message: string, tone: GameEventTone = "neutral", audioCue?: string): void {
   ensurePacingState(state);
   const event: GameEvent = {
     id: `event_${state.eventSequence++}`,
     hour: state.worldTimeHours,
     tone,
-    message
+    message,
+    ...(audioCue ? { audioCue } : {})
   };
   events.push(event);
   state.eventLog = [event, ...state.eventLog].slice(0, 12);
@@ -1927,7 +1928,16 @@ function districtEventTemplate(kind: DistrictEventKind, state: GameState, distri
   };
 }
 
-function updateDistrictEvents(state: GameState, _events: GameEvent[]): void {
+// Cue triggers for district events whose designed sound isn't one of the four
+// generic tones. police_surge falls back to its tone-based cue.
+const districtEventAudioCues: Partial<Record<DistrictEventKind, string>> = {
+  festival: "event.festival",
+  weather: "event.weather",
+  shortage: "event.shortage",
+  trend: "event.trend"
+};
+
+function updateDistrictEvents(state: GameState, events: GameEvent[]): void {
   ensureEconomyState(state);
   for (const [eventId, event] of Object.entries(state.economy.districtEvents.activeEvents)) {
     if (event.expiresHour <= state.worldTimeHours) {
@@ -1966,6 +1976,11 @@ function updateDistrictEvents(state: GameState, _events: GameEvent[]): void {
   if (districtEvent.kind === "shortage" && districtEvent.productId) {
     state.economy.supply.priceMultipliers[districtEvent.productId] = Math.max(1.12, state.economy.supply.priceMultipliers[districtEvent.productId] ?? 1.18);
   }
+
+  // Announce the event so the player sees it and its designed audio cue fires
+  // (previously these events changed the economy silently, so festival/weather/
+  // shortage/trend sounds could never play).
+  log(state, events, districtEvent.title, districtEvent.tone, districtEventAudioCues[districtEvent.kind]);
 }
 
 function updateTrafficAndCheckpoints(state: GameState, _events: GameEvent[]): void {

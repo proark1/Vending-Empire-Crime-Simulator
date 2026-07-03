@@ -775,6 +775,12 @@ export interface GameEvent {
   hour: number;
   tone: GameEventTone;
   message: string;
+  /**
+   * Optional specific audio cue trigger (e.g. "event.festival") for events whose
+   * designed sound isn't captured by the four generic tones. When absent, the UI
+   * falls back to playing the tone-based cue.
+   */
+  audioCue?: string;
 }
 
 export type StreetActivityKind =

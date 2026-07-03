@@ -24,7 +24,7 @@ import { clearStoredGameSession, loadRemoteAudioConfig, loadRemoteGame, loadRemo
 import { loadGame } from "./game/save/storage";
 import { createInitialState } from "./game/content/initialState";
 import { activeRunModifier, chooseRunModifier } from "./game/content/replayability";
-import { configureGameAudio, playEventCue, playFeedbackCue, playVoiceCue, startGameAmbience, unlockGameAudio, updateGameAmbience } from "./ui/audio";
+import { configureGameAudio, playEventCue, playFeedbackCue, playTaggedCue, playVoiceCue, startGameAmbience, unlockGameAudio, updateGameAmbience } from "./ui/audio";
 import { MultiplayerClient } from "./game/network/multiplayerClient";
 import type { MultiplayerStatus } from "./game/network/protocol";
 import { getPerfSnapshot } from "./game/core/performance";
@@ -973,7 +973,11 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
     }
 
     lastEventIdRef.current = newestEvent.id;
-    playEventCue(newestEvent.tone);
+    if (newestEvent.audioCue) {
+      playTaggedCue(newestEvent.audioCue);
+    } else {
+      playEventCue(newestEvent.tone);
+    }
     const voiceMatch = VOICE_EVENT_PATTERNS.find((entry) => entry.test.test(newestEvent.message));
     if (voiceMatch) {
       playVoiceCue(voiceMatch.trigger);
