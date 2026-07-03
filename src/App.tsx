@@ -690,6 +690,13 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
   const [roomCodeInput, setRoomCodeInput] = useState("");
   const [empireNameDraft, setEmpireNameDraft] = useState("");
   const [seedDraft, setSeedDraft] = useState("");
+  const [captionsEnabled, setCaptionsEnabled] = useState(() => {
+    try {
+      return window.localStorage.getItem("vendetta.captions") !== "off";
+    } catch {
+      return true;
+    }
+  });
   const [playerPosition, setPlayerPosition] = useState<Vec2>(() => ({ ...PLAYER_SPAWN }));
   const [playerHeadingDegrees, setPlayerHeadingDegrees] = useState(-180);
   const [showControls, setShowControls] = useState(false);
@@ -1540,7 +1547,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
                   : "Offline · saved on this device"}
         </div>
       )}
-      {entered && voiceLine && (
+      {entered && voiceLine && captionsEnabled && (
         <div className="voice-subtitle" aria-live="polite">
           {voiceLine.speaker && <span className="voice-subtitle-speaker">{voiceLine.speaker}</span>}
           <span className="voice-subtitle-line">{voiceLine.subtitle}</span>
@@ -1743,6 +1750,24 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
                 </button>
               </div>
             </div>
+            <button
+              aria-pressed={captionsEnabled}
+              role="menuitem"
+              type="button"
+              onClick={() => {
+                setCaptionsEnabled((current) => {
+                  const next = !current;
+                  try {
+                    window.localStorage.setItem("vendetta.captions", next ? "on" : "off");
+                  } catch {
+                    // ignore persistence failure — the toggle still works this session
+                  }
+                  return next;
+                });
+              }}
+            >
+              Captions: {captionsEnabled ? "On" : "Off"}
+            </button>
             {!isLocalSession && <div className="multiplayer-menu-panel" role="group" aria-label="Multiplayer room">
               <div className="multiplayer-menu-heading">
                 <Network size={16} aria-hidden="true" />
