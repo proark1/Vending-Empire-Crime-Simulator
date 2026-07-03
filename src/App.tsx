@@ -701,6 +701,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
   const [gameMenuOpen, setGameMenuOpen] = useState(false);
   const [roomCodeInput, setRoomCodeInput] = useState("");
   const [empireNameDraft, setEmpireNameDraft] = useState("");
+  const [seedDraft, setSeedDraft] = useState("");
   const [playerPosition, setPlayerPosition] = useState<Vec2>(() => ({ ...PLAYER_SPAWN }));
   const [playerHeadingDegrees, setPlayerHeadingDegrees] = useState(-180);
   const [showControls, setShowControls] = useState(false);
@@ -1058,6 +1059,32 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
       restart(runSeed);
     }
   }, [restart]);
+
+  // growth-2: the run seed fully determines a run, so it doubles as a shareable
+  // "beat my city" challenge. Let players copy the current seed and start a run
+  // from a pasted one.
+  const handleCopySeed = useCallback(() => {
+    const seed = state.replay?.runSeed;
+    if (seed == null) {
+      return;
+    }
+    const nav = typeof navigator !== "undefined" ? navigator : null;
+    if (nav?.clipboard) {
+      void nav.clipboard.writeText(String(seed));
+    }
+    addToast({ title: "Seed copied", message: `Seed ${seed} copied — share it as a challenge.`, tone: "good" });
+  }, [state.replay?.runSeed, addToast]);
+
+  const handlePlaySeed = useCallback(() => {
+    const parsed = Number.parseInt(seedDraft.trim(), 10);
+    if (!Number.isFinite(parsed)) {
+      addToast({ title: "Seed", message: "Enter a numeric seed to play it.", tone: "neutral" });
+      return;
+    }
+    if (window.confirm(`Start a fresh run from seed ${parsed}? This restarts the current save.`)) {
+      restart(parsed);
+    }
+  }, [seedDraft, restart, addToast]);
 
   const handleManualSave = useCallback(() => {
     if (multiplayerStatus.role === "guest") {
@@ -1553,6 +1580,18 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
                 <p className="ending-ng-plus">New Game+: {strategyUnlocks.length} perk{strategyUnlocks.length === 1 ? "" : "s"} carry over (+${Math.min(150, strategyUnlocks.length * 25)} starting cash).</p>
               )}
             </div>
+            <div className="ending-seed-row" role="group" aria-label="Run seed">
+              <span>Seed <strong>{state.replay?.runSeed ?? "—"}</strong></span>
+              <button type="button" onClick={handleCopySeed}>Copy</button>
+              <input
+                aria-label="Play a seed"
+                inputMode="numeric"
+                placeholder="Play a seed…"
+                value={seedDraft}
+                onChange={(event) => setSeedDraft(event.target.value.replace(/[^0-9-]/g, ""))}
+              />
+              <button type="button" disabled={!seedDraft.trim()} onClick={handlePlaySeed}>Play</button>
+            </div>
             <div className="ending-actions">
               <button
                 className="ending-share"
@@ -1563,11 +1602,12 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
                     : "nobody worth naming";
                   const empire = state.player?.empireName?.trim();
                   const who = empire ? `${empire}` : "My terrible logo";
+                  const seed = state.replay?.runSeed;
                   const caption =
                     `Vendetta Vending — ${executedEndingPath.title}\n` +
                     `Day ${day}: $${Math.round(playerFaction.money).toLocaleString()}, ${installedPlayerMachines} machines, heat ${Math.round(playerFaction.heat)}. ` +
                     `My loudest rival was ${rivalName}. ${who} owns the block.\n` +
-                    `${window.location.origin}`;
+                    `${seed != null ? `Beat my city — seed ${seed}. ` : ""}${window.location.origin}`;
                   const nav = typeof navigator !== "undefined" ? navigator : null;
                   if (nav?.share) {
                     void nav.share({ title: "Vendetta Vending", text: caption }).catch(() => {});

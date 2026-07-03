@@ -2824,6 +2824,50 @@ kbd {
   color: #04211d;
 }
 
+.ending-seed-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.ending-seed-row strong {
+  color: #f8fafc;
+  font-variant-numeric: tabular-nums;
+}
+
+.ending-seed-row input {
+  min-height: 32px;
+  flex: 1 1 120px;
+  min-width: 90px;
+  border: 1px solid rgba(226, 232, 240, 0.16);
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.82);
+  color: #f8fafc;
+  padding: 6px 9px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.ending-seed-row button {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid rgba(45, 212, 191, 0.36);
+  border-radius: 7px;
+  background: rgba(20, 184, 166, 0.16);
+  color: #f8fafc;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ending-seed-row button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .dashboard {
   position: absolute;
   top: 132px;
