@@ -16,9 +16,17 @@ const generatedAudioDir = path.join(__dirname, "generated-audio");
 const port = Number(process.env.PORT ?? 3000);
 const databaseUrl = process.env.DATABASE_URL;
 const isProductionRuntime = process.env.NODE_ENV === "production" || process.env.RAILWAY_ENVIRONMENT === "production" || process.env.RAILWAY_ENVIRONMENT_NAME === "production";
-const seedAdminName = process.env.ADMIN_NAME || "assad";
-const seedAdminPin = process.env.ADMIN_PIN || "4924";
+// Never fall back to a committed default in production — a publicly-known admin
+// credential (seeded live) is a full remote takeover with data-wipe + PII-read
+// reach. Locally, a dev-only fallback keeps `npm start` working without config.
+// In production, an unset ADMIN_NAME/ADMIN_PIN leaves these empty so
+// ensureSeededAdminUser() refuses to seed and logs a warning instead.
+const seedAdminName = process.env.ADMIN_NAME || (isProductionRuntime ? "" : "assad");
+const seedAdminPin = process.env.ADMIN_PIN || (isProductionRuntime ? "" : "dev-pin-1234");
 const sessionDays = Number(process.env.SESSION_DAYS ?? 14);
+// Admin sessions are high-privilege (data wipe, PII read, config edits), so they
+// live hours, not the 14-day player window, and can be revoked via logout.
+const adminSessionHours = Math.max(1, Number(process.env.ADMIN_SESSION_HOURS ?? 12));
 const jsonLimitBytes = Number(process.env.JSON_LIMIT_BYTES ?? 8 * 1024 * 1024);
 // A real GameState serializes well under this; the generous 8MB HTTP limit only
 // needs to cover admin map/audio payloads. Reject bloated saves so one profile
@@ -42,7 +50,17 @@ process.on("unhandledRejection", (reason) => {
   console.error("Unhandled promise rejection:", reason);
 });
 process.on("uncaughtException", (error) => {
+  // Node leaves the process in an undefined state after an uncaught exception, so
+  // the correct move is to log and exit and let the supervisor (Railway) restart
+  // a clean process — rather than keep serving every connected player from a
+  // half-broken event loop. Set UNCAUGHT_KEEP_ALIVE=1 to fall back to
+  // log-and-continue if a deploy ever needs it.
   console.error("Uncaught exception:", error);
+  if (process.env.UNCAUGHT_KEEP_ALIVE === "1") {
+    return;
+  }
+  process.exitCode = 1;
+  setTimeout(() => process.exit(1), 100).unref?.();
 });
 
 let pool = null;
@@ -154,6 +172,10 @@ function validateGameCredentials(body) {
 
 function sessionExpiry() {
   return new Date(Date.now() + sessionDays * 24 * 60 * 60 * 1000);
+}
+
+function adminSessionExpiry() {
+  return new Date(Date.now() + adminSessionHours * 60 * 60 * 1000);
 }
 
 function createPinRecord(pin) {
@@ -401,6 +423,37 @@ function emptyResponse(response, statusCode = 204) {
   response.end();
 }
 
+// Defense-in-depth HTTP headers applied to every response. Set via setHeader
+// before any writeHead so per-response headers (content-type, cache-control)
+// merge on top. CSP is self-contained (the whole app is same-origin, all assets
+// procedural) but can be disabled with DISABLE_CSP=1 if a build ever needs it.
+const contentSecurityPolicy = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'self'",
+  "img-src 'self' data: blob:",
+  "media-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "style-src 'self' 'unsafe-inline'",
+  "script-src 'self'",
+  "worker-src 'self' blob:",
+  "connect-src 'self' ws: wss:"
+].join("; ");
+
+function applyBaseSecurityHeaders(response) {
+  response.setHeader("x-content-type-options", "nosniff");
+  response.setHeader("x-frame-options", "DENY");
+  response.setHeader("referrer-policy", "same-origin");
+  if (isProductionRuntime) {
+    response.setHeader("strict-transport-security", "max-age=31536000; includeSubDomains");
+  }
+  if (process.env.DISABLE_CSP !== "1") {
+    response.setHeader("content-security-policy", contentSecurityPolicy);
+  }
+}
+
 async function readJson(request) {
   let size = 0;
   const chunks = [];
@@ -469,9 +522,20 @@ async function createAdminSession(name) {
   const token = randomBytes(32).toString("base64url");
   await getPool().query(
     "INSERT INTO admin_sessions (token_hash, name, expires_at) VALUES ($1, $2, $3)",
-    [hashValue(token), name, sessionExpiry()]
+    [hashValue(token), name, adminSessionExpiry()]
   );
   return token;
+}
+
+// Revoke the presented admin token so a leaked/stale session can be killed
+// server-side before its (now short) expiry.
+async function handleAdminLogout(request, response) {
+  const token = bearerToken(request);
+  if (token) {
+    await ensureDatabase();
+    await getPool().query("DELETE FROM admin_sessions WHERE token_hash = $1", [hashValue(token)]);
+  }
+  emptyResponse(response, 204);
 }
 
 async function requireAdmin(request) {
@@ -494,10 +558,98 @@ async function requireAdmin(request) {
   return result.rows[0];
 }
 
-async function handleGameLogin(response, body) {
+// --- Login throttling -------------------------------------------------------
+// Single-process server, so an in-memory Map is enough to blunt PIN brute-force
+// on the HTTP login endpoints. We track failures on two keys per attempt — one
+// per client IP and one per account name — so neither "hammer one account from
+// many IPs" nor "hammer many accounts from one IP" slips through. A successful
+// login clears the keys; a locked key answers 429 with Retry-After.
+const loginAttempts = new Map();
+const loginMaxFails = Math.max(1, Number(process.env.LOGIN_MAX_FAILS ?? 8));
+const loginWindowMs = Math.max(1000, Number(process.env.LOGIN_WINDOW_MS ?? 15 * 60 * 1000));
+const loginLockMs = Math.max(1000, Number(process.env.LOGIN_LOCK_MS ?? 15 * 60 * 1000));
+
+function clientIp(request) {
+  const forwarded = request.headers["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded.length > 0) {
+    return forwarded.split(",")[0].trim();
+  }
+  return request.socket?.remoteAddress ?? "unknown";
+}
+
+function loginKeys(scope, request, accountName) {
+  const account = String(accountName ?? "").trim().toLowerCase();
+  return [`${scope}:ip:${clientIp(request)}`, `${scope}:acct:${account}`];
+}
+
+// Returns the largest remaining lockout (ms) across the given keys, or 0 if none
+// are locked. Also drops entries whose window has fully expired.
+function loginLockRemainingMs(keys) {
+  const now = Date.now();
+  let remaining = 0;
+  for (const key of keys) {
+    const entry = loginAttempts.get(key);
+    if (!entry) continue;
+    if (entry.lockedUntil > now) {
+      remaining = Math.max(remaining, entry.lockedUntil - now);
+    } else if (entry.lockedUntil <= now && entry.firstFailAt + loginWindowMs <= now) {
+      loginAttempts.delete(key);
+    }
+  }
+  return remaining;
+}
+
+function recordLoginFailure(keys) {
+  const now = Date.now();
+  for (const key of keys) {
+    const entry = loginAttempts.get(key) ?? { fails: 0, firstFailAt: now, lockedUntil: 0 };
+    if (entry.firstFailAt + loginWindowMs <= now) {
+      entry.fails = 0;
+      entry.firstFailAt = now;
+    }
+    entry.fails += 1;
+    if (entry.fails >= loginMaxFails) {
+      entry.lockedUntil = now + loginLockMs;
+    }
+    loginAttempts.set(key, entry);
+  }
+  // Bound memory: prune fully-expired entries if the map grows unusually large.
+  if (loginAttempts.size > 5000) {
+    for (const [key, entry] of loginAttempts) {
+      if (entry.lockedUntil <= now && entry.firstFailAt + loginWindowMs <= now) {
+        loginAttempts.delete(key);
+      }
+    }
+  }
+}
+
+function clearLoginFailures(keys) {
+  for (const key of keys) {
+    loginAttempts.delete(key);
+  }
+}
+
+function respondLoginThrottled(response, remainingMs) {
+  const retryAfter = Math.max(1, Math.ceil(remainingMs / 1000));
+  response.writeHead(429, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+    "retry-after": String(retryAfter)
+  });
+  response.end(JSON.stringify({ error: "Too many attempts. Try again later." }));
+}
+
+async function handleGameLogin(request, response, body) {
   const credentials = validateGameCredentials(body);
   if (credentials.error) {
     jsonResponse(response, 400, { error: credentials.error });
+    return;
+  }
+
+  const throttleKeys = loginKeys("game", request, credentials.nameKey);
+  const lockedMs = loginLockRemainingMs(throttleKeys);
+  if (lockedMs > 0) {
+    respondLoginThrottled(response, lockedMs);
     return;
   }
 
@@ -507,15 +659,19 @@ async function handleGameLogin(response, body) {
   let profile = existing.rows[0];
 
   if (!profile) {
+    recordLoginFailure(throttleKeys);
     jsonResponse(response, 401, { error: "Name or PIN is incorrect." });
     return;
   }
 
   const expectedHash = hashPin(credentials.pin, profile.pin_salt);
   if (!safeEqual(expectedHash, profile.pin_hash)) {
+    recordLoginFailure(throttleKeys);
     jsonResponse(response, 401, { error: "Name or PIN is incorrect." });
     return;
   }
+
+  clearLoginFailures(throttleKeys);
 
   await db.query("UPDATE player_profiles SET name = $1, updated_at = now(), last_login_at = now() WHERE id = $2", [credentials.name, profile.id]);
 
@@ -671,9 +827,25 @@ async function handleGameSaveRead(request, response) {
   });
 }
 
-async function handleAdminLogin(response, body) {
+async function handleAdminLogin(request, response, body) {
   const name = normalizeName(body?.name);
   const pin = String(body?.pin ?? "").trim();
+
+  const throttleKeys = loginKeys("admin", request, name);
+  const lockedMs = loginLockRemainingMs(throttleKeys);
+  if (lockedMs > 0) {
+    respondLoginThrottled(response, lockedMs);
+    return;
+  }
+
+  // Shape the input before touching the DB so the admin path isn't the least
+  // validated login. Charset stays permissive (admin PINs may be passphrases),
+  // but empty/absurd lengths are rejected as a failed attempt.
+  if (name.length === 0 || pin.length < 4 || pin.length > 128) {
+    recordLoginFailure(throttleKeys);
+    jsonResponse(response, 401, { error: "Admin name or PIN is incorrect." });
+    return;
+  }
 
   await ensureDatabase();
   const result = await getPool().query(
@@ -684,12 +856,14 @@ async function handleAdminLogin(response, body) {
   const expectedHash = admin ? hashPin(pin, admin.pin_salt) : "";
 
   if (!admin || !safeEqual(expectedHash, admin.pin_hash)) {
+    recordLoginFailure(throttleKeys);
     metrics.adminFailedLogins += 1;
     recordEvent("warning", "admin_login_failed", "Admin login failed.", { name });
     jsonResponse(response, 401, { error: "Admin name or PIN is incorrect." });
     return;
   }
 
+  clearLoginFailures(throttleKeys);
   await getPool().query("DELETE FROM admin_sessions WHERE expires_at <= now()");
   const token = await createAdminSession(admin.name);
   metrics.adminLogins += 1;
@@ -1449,7 +1623,10 @@ async function handleAudioProviderGenerate(request, response, body) {
 }
 
 async function handleAdminMonitoring(request, response) {
-  await requireAdmin(request);
+  const admin = await requireAdmin(request);
+  // Monitoring returns every player's profile name + progress — treat reads as
+  // PII access and log who pulled the dossier, so access is auditable.
+  recordEvent("info", "admin_monitoring_read", "Admin read the player monitoring dossier (PII).", { by: admin.name });
   let database = { ok: false, latencyMs: null };
   let liveOps = analyzeLiveOpsSaveRows([]);
   if (databaseUrl) {
@@ -1710,7 +1887,7 @@ async function routeApi(request, response, url) {
     const body = request.method === "GET" || request.method === "DELETE" ? {} : await readJson(request);
 
     if (url.pathname === "/api/game/login" && request.method === "POST") {
-      await handleGameLogin(response, body);
+      await handleGameLogin(request, response, body);
       return true;
     }
 
@@ -1730,7 +1907,12 @@ async function routeApi(request, response, url) {
     }
 
     if (url.pathname === "/api/admin/login" && request.method === "POST") {
-      await handleAdminLogin(response, body);
+      await handleAdminLogin(request, response, body);
+      return true;
+    }
+
+    if (url.pathname === "/api/admin/logout" && request.method === "POST") {
+      await handleAdminLogout(request, response);
       return true;
     }
 
@@ -1944,6 +2126,7 @@ async function serveStatic(request, response, url) {
 }
 
 const server = createServer(async (request, response) => {
+  applyBaseSecurityHeaders(response);
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
   const handledApi = await routeApi(request, response, url);
   if (handledApi) {
@@ -1979,9 +2162,14 @@ multiplayerHeartbeat.unref?.();
 multiplayerWss.on("close", () => clearInterval(multiplayerHeartbeat));
 
 function isAllowedWebSocketOrigin(request) {
-  const origin = request.headers.origin;
-  if (!origin || process.env.WS_ALLOW_CROSS_ORIGIN === "1") {
+  if (process.env.WS_ALLOW_CROSS_ORIGIN === "1") {
     return true;
+  }
+  const origin = request.headers.origin;
+  if (!origin) {
+    // No Origin header = a non-browser client. Allowed only outside production so
+    // local tooling still connects; in production a browser always sends Origin.
+    return !isProductionRuntime;
   }
   try {
     return new URL(origin).host === request.headers.host;
@@ -1997,9 +2185,10 @@ server.on("upgrade", (request, socket, head) => {
     return;
   }
 
-  // Reject cross-origin WebSocket handshakes in production (CSWSH defense). Skipped
-  // outside production so local tooling on a different port still connects.
-  if (isProductionRuntime && !isAllowedWebSocketOrigin(request)) {
+  // Reject cross-origin WebSocket handshakes in all environments (CSWSH defense).
+  // A missing Origin (non-browser client) is allowed only outside production, and
+  // WS_ALLOW_CROSS_ORIGIN=1 opts out entirely for local tooling on another port.
+  if (!isAllowedWebSocketOrigin(request)) {
     recordEvent("warning", "multiplayer_bad_origin", "Rejected multiplayer upgrade from disallowed origin.", { origin: request.headers.origin });
     socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
     socket.destroy();

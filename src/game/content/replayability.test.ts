@@ -40,6 +40,35 @@ describe("replayability content", () => {
     expect(next.replay.rivalMemory.rival_redline?.exposure).toBe(2);
   });
 
+  it("compounds the New Game Plus leg-up and rival grudge with run count", () => {
+    const previous = createInitialState(1);
+    previous.replay.strategyUnlocks = ["truce_broker", "contract_operator"];
+    previous.replay.legacy = { unlocks: ["truce_broker"], rivalFactionId: "rival_redline", runCount: 3, startingBonus: 50 };
+    previous.replay.rivalMemory.rival_redline = {
+      alarmConfronted: 0,
+      disruption: 1,
+      exposure: 1,
+      expansion: 0,
+      factionId: "rival_redline",
+      negotiation: 0,
+      sabotage: 3,
+      undercut: 2
+    };
+
+    const next = createInitialState(2);
+    const startingMoney = next.factions[next.playerFactionId].money;
+    const startingRep = next.factions[next.playerFactionId].streetReputation;
+    applyRunLegacy(next, previous);
+
+    // 2 unlocks (=$50) + veteran bonus for 3 prior runs (3*40=$120) = $170.
+    expect(next.replay.legacy).toMatchObject({ runCount: 4, startingBonus: 170 });
+    expect(next.factions[next.playerFactionId].money).toBe(startingMoney + 170);
+    // Grudge escalates: base 2 + priorRunCount, capped at 5.
+    expect(next.replay.rivalMemory.rival_redline?.exposure).toBe(5);
+    // Reputation precedes you: min(6, 3 * 1.5) = 4.5.
+    expect(next.factions[next.playerFactionId].streetReputation).toBeCloseTo(startingRep + 4.5);
+  });
+
   it("does not mark a plain fresh restart as New Game Plus", () => {
     const previous = createInitialState(1);
     const next = createInitialState(2);

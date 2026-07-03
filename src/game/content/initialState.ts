@@ -385,6 +385,8 @@ export function createInitialState(runSeed = 1): GameState {
     playerFactionId: "player",
     player: {
       factionId: "player",
+      empireName: "Vendetta Vending",
+      arrears: 0,
       activeVehicleId: starterVehicle.id,
       currentLocationId: null,
       cargo: {},

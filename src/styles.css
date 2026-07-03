@@ -1113,6 +1113,14 @@ button {
   text-align: center;
 }
 
+.access-privacy-note {
+  margin-top: 2px !important;
+  color: #64748b !important;
+  font-size: 11px !important;
+  line-height: 1.45;
+  text-align: center;
+}
+
 .access-panel button:disabled,
 .access-panel input:disabled {
   cursor: not-allowed;
@@ -1296,6 +1304,44 @@ button {
   font-size: 13px;
   line-height: 1.2;
   overflow-wrap: anywhere;
+}
+
+.game-menu-empire {
+  display: grid;
+  gap: 6px;
+  padding: 10px 8px;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.12);
+}
+
+.game-menu-empire label {
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.game-menu-empire-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.game-menu-empire-row input {
+  min-height: 34px;
+  width: 100%;
+  border: 1px solid rgba(226, 232, 240, 0.16);
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.82);
+  color: #f8fafc;
+  padding: 7px 9px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.game-menu-empire-row button {
+  justify-content: center;
+  min-width: 60px;
 }
 
 .game-menu-popover button {
@@ -1564,6 +1610,12 @@ button {
 .crosshair-active::before,
 .crosshair-active::after {
   background: #5eead4;
+}
+
+/* Blocked state also changes shape (+ becomes ×), not just colour, so it stays
+   legible for colour-blind players who can't rely on the teal/amber hue alone. */
+.crosshair-disabled {
+  transform: translate(-50%, -50%) rotate(45deg);
 }
 
 .crosshair-disabled::before,
@@ -2778,6 +2830,56 @@ kbd {
 .ending-actions button.danger {
   border-color: rgba(251, 113, 133, 0.36);
   background: rgba(190, 18, 60, 0.22);
+}
+
+.ending-actions button.ending-share {
+  border-color: rgba(62, 224, 196, 0.7);
+  background: #3ee0c4;
+  color: #04211d;
+}
+
+.ending-seed-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.ending-seed-row strong {
+  color: #f8fafc;
+  font-variant-numeric: tabular-nums;
+}
+
+.ending-seed-row input {
+  min-height: 32px;
+  flex: 1 1 120px;
+  min-width: 90px;
+  border: 1px solid rgba(226, 232, 240, 0.16);
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.82);
+  color: #f8fafc;
+  padding: 6px 9px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.ending-seed-row button {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid rgba(45, 212, 191, 0.36);
+  border-radius: 7px;
+  background: rgba(20, 184, 166, 0.16);
+  color: #f8fafc;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ending-seed-row button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .dashboard {
@@ -4048,6 +4150,12 @@ kbd {
   border-radius: 8px;
   background: rgba(45, 212, 191, 0.1);
   width: fit-content;
+}
+
+.primary-hint-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .primary-hint-copy {
@@ -7014,6 +7122,25 @@ kbd {
 .controls-help-toggle[aria-pressed="true"] {
   border-color: rgba(125, 211, 252, 0.55);
   color: #f8fafc;
+}
+
+.screenshot-toggle {
+  position: absolute;
+  top: 16px;
+  right: 106px;
+  z-index: 12;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(226, 232, 240, 0.22);
+  border-radius: 50%;
+  background: rgba(8, 13, 26, 0.85);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.screenshot-toggle:hover {
+  border-color: rgba(125, 211, 252, 0.55);
 }
 
 @keyframes controls-legend-in {

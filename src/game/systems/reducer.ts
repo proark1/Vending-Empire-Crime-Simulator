@@ -177,13 +177,14 @@ function ensurePacingState(state: GameState): void {
   state.pacing.toastEventsToday ??= 0;
 }
 
-function log(state: GameState, events: GameEvent[], message: string, tone: GameEventTone = "neutral"): void {
+function log(state: GameState, events: GameEvent[], message: string, tone: GameEventTone = "neutral", audioCue?: string): void {
   ensurePacingState(state);
   const event: GameEvent = {
     id: `event_${state.eventSequence++}`,
     hour: state.worldTimeHours,
     tone,
-    message
+    message,
+    ...(audioCue ? { audioCue } : {})
   };
   events.push(event);
   state.eventLog = [event, ...state.eventLog].slice(0, 12);
@@ -251,9 +252,22 @@ function activeDangerBeatCount(state: GameState): number {
   );
 }
 
+// A bigger empire attracts more heat at once, so the number of simultaneous
+// danger beats scales with the installed machine count instead of being capped at
+// one. Small routes still face one-at-a-time pressure; a sprawling empire can be
+// hit on several fronts (up to a ceiling so it never becomes unmanageable).
+function maxConcurrentDangerBeats(state: GameState): number {
+  const installed = installedMachines(state, state.playerFactionId).length;
+  return Math.min(4, 1 + Math.floor(installed / 6));
+}
+
 function canStartAmbientDangerBeat(state: GameState): boolean {
   ensurePacingState(state);
-  if (!playerRouteHasBeenStocked(state) || activeDangerBeatCount(state) > 0 || state.worldTimeHours < state.pacing.nextDangerHour) {
+  if (
+    !playerRouteHasBeenStocked(state) ||
+    activeDangerBeatCount(state) >= maxConcurrentDangerBeats(state) ||
+    state.worldTimeHours < state.pacing.nextDangerHour
+  ) {
     state.pacing.suppressedDangerToday += 1;
     return false;
   }
@@ -1927,7 +1941,16 @@ function districtEventTemplate(kind: DistrictEventKind, state: GameState, distri
   };
 }
 
-function updateDistrictEvents(state: GameState, _events: GameEvent[]): void {
+// Cue triggers for district events whose designed sound isn't one of the four
+// generic tones. police_surge falls back to its tone-based cue.
+const districtEventAudioCues: Partial<Record<DistrictEventKind, string>> = {
+  festival: "event.festival",
+  weather: "event.weather",
+  shortage: "event.shortage",
+  trend: "event.trend"
+};
+
+function updateDistrictEvents(state: GameState, events: GameEvent[]): void {
   ensureEconomyState(state);
   for (const [eventId, event] of Object.entries(state.economy.districtEvents.activeEvents)) {
     if (event.expiresHour <= state.worldTimeHours) {
@@ -1966,6 +1989,11 @@ function updateDistrictEvents(state: GameState, _events: GameEvent[]): void {
   if (districtEvent.kind === "shortage" && districtEvent.productId) {
     state.economy.supply.priceMultipliers[districtEvent.productId] = Math.max(1.12, state.economy.supply.priceMultipliers[districtEvent.productId] ?? 1.18);
   }
+
+  // Announce the event so the player sees it and its designed audio cue fires
+  // (previously these events changed the economy silently, so festival/weather/
+  // shortage/trend sounds could never play).
+  log(state, events, districtEvent.title, districtEvent.tone, districtEventAudioCues[districtEvent.kind]);
 }
 
 function updateTrafficAndCheckpoints(state: GameState, _events: GameEvent[]): void {
@@ -2114,6 +2142,8 @@ function applyDailyOperatingEconomy(state: GameState, events: GameEvent[]): void
   recordFinance(state, "rent", -rentPaid, "Base storage rent");
   if (rentPaid < rent) {
     player.publicReputation = Math.max(0, player.publicReputation - 0.2);
+    // The unpaid remainder is no longer forgiven — it becomes debt.
+    state.player.arrears = (state.player.arrears ?? 0) + (rent - rentPaid);
     log(state, events, `Storage rent was short by $${rent - rentPaid}.`, "warning");
   }
 
@@ -2124,8 +2154,96 @@ function applyDailyOperatingEconomy(state: GameState, events: GameEvent[]): void
     recordFinance(state, "insurance", -paid, `${insurance.label} premium`);
     if (paid < insurance.dailyCost) {
       state.economy.finance.insurancePlan = "none";
+      state.player.arrears = (state.player.arrears ?? 0) + (insurance.dailyCost - paid);
       log(state, events, "Insurance lapsed after a missed premium.", "warning");
     }
+  }
+
+  escalateInsolvency(state, events);
+}
+
+// Return the machine value to the debt-holder and remove it from the world,
+// detaching anything that referenced it so nothing dangles after removal.
+function repossessMachine(state: GameState, machine: VendingMachine): number {
+  const resale = machineResaleValue(state, machine);
+  for (const employee of Object.values(state.employees)) {
+    if (employee.assignedMachineIds?.includes(machine.id)) {
+      employee.assignedMachineIds = employee.assignedMachineIds.filter((id) => id !== machine.id);
+    }
+  }
+  if (state.machineAlarms) {
+    for (const [alarmId, alarm] of Object.entries(state.machineAlarms)) {
+      if (alarm.machineId === machine.id) {
+        delete state.machineAlarms[alarmId];
+      }
+    }
+  }
+  delete state.machines[machine.id];
+  return resale;
+}
+
+// The soft-failure spiral (gd-1). Runs once per in-game day. Debt is first paid
+// down with any spare cash (the recovery path), then accrues interest and raises
+// heat + political pressure while it stands. Heavy debt makes creditors repossess
+// your least valuable machine; hitting rock bottom (deep debt, nothing left to
+// take) collapses the empire — a recoverable game-over the player rebuilds from.
+const insolvencyRepossessThreshold = 120;
+const insolvencyCollapseThreshold = 260;
+
+function escalateInsolvency(state: GameState, events: GameEvent[]): void {
+  const player = state.factions[state.playerFactionId];
+  let arrears = state.player.arrears ?? 0;
+  if (arrears <= 0) {
+    state.player.arrears = 0;
+    return;
+  }
+
+  // Recovery path: throw any spare cash at the debt first.
+  if (player.money > 0) {
+    const payDown = Math.min(player.money, arrears);
+    chargePlayer(state, "rent", payDown, "Debt repayment");
+    arrears -= payDown;
+  }
+
+  if (arrears <= 0) {
+    state.player.arrears = 0;
+    log(state, events, "You cleared your debts. The books are clean again.", "good");
+    return;
+  }
+
+  // Interest accrues and the pressure climbs while debt stands.
+  arrears = Math.round(arrears * 1.06);
+  player.heat = Math.min(100, player.heat + 1.5);
+  if (state.empire) {
+    state.empire.politicalPressure = Math.min(100, (state.empire.politicalPressure ?? 0) + 2);
+  }
+  state.player.arrears = arrears;
+  log(state, events, `Debt is mounting — you owe $${arrears}. Creditors are circling.`, "warning");
+
+  if (arrears < insolvencyRepossessThreshold) {
+    return;
+  }
+
+  const installed = installedMachines(state, state.playerFactionId);
+  if (installed.length > 0) {
+    const target = installed.slice().sort((a, b) => machineResaleValue(state, a) - machineResaleValue(state, b))[0];
+    const recovered = repossessMachine(state, target);
+    state.player.arrears = Math.max(0, arrears - recovered);
+    log(state, events, `Creditors repossessed ${target.name}, clearing $${recovered} of debt.`, "danger");
+    return;
+  }
+
+  // Nothing left to take and still deep in debt: the empire collapses. Creditors
+  // write off the remainder after stripping everything; reputation and pressure
+  // crater. The run is effectively over — rebuild from scraps or restart.
+  if (arrears >= insolvencyCollapseThreshold) {
+    state.player.arrears = 0;
+    player.publicReputation = Math.max(0, player.publicReputation - 25);
+    if (state.empire) {
+      state.empire.politicalPressure = Math.min(100, (state.empire.politicalPressure ?? 0) + 25);
+      state.empire.legitimacy = Math.max(0, state.empire.legitimacy - 20);
+    }
+    log(state, events, "EMPIRE COLLAPSED: creditors stripped everything and wrote off the rest. Rebuild from scraps or restart the run.", "danger");
   }
 }
 
@@ -3188,7 +3306,13 @@ function runCollector(state: GameState, events: GameEvent[], employee: Employee)
     return false;
   }
 
-  const amount = Math.round(machine.revenueStored);
+  const gross = Math.round(machine.revenueStored);
+  // Crew collection isn't free: a small handling skim means automation is a
+  // convenience with a cost, not a strictly-better replacement for the core loop.
+  // Hand-collecting still nets full value, so a fully-automated empire keeps
+  // leaving money on the table — preserving a reason to run the route yourself.
+  const skim = Math.min(gross, Math.round(gross * 0.08));
+  const amount = gross - skim;
   creditPlayer(state, "sales", amount, `${machine.name} cash collection`);
   machine.revenueStored = 0;
   machine.lastServicedHour = state.worldTimeHours;
@@ -3196,7 +3320,7 @@ function runCollector(state: GameState, events: GameEvent[], employee: Employee)
   employee.status = "working";
   employee.statusDetail = `Collected from ${machine.name}.`;
   markEmployeeRoute(state, employee, machine.locationId, "collect", `${employee.name} is pulling cash from ${machine.name}.`, machine.id);
-  log(state, events, `${employee.name} collected $${amount} from ${machine.name}.`, "good");
+  log(state, events, `${employee.name} collected $${amount} from ${machine.name}${skim > 0 ? ` (crew cut $${skim})` : ""}.`, "good");
   return true;
 }
 
@@ -3473,6 +3597,7 @@ function payEmployeeWages(state: GameState, events: GameEvent[]): void {
   recordFinance(state, "wages", -paid, "Daily crew wages");
 
   if (paid < wageTotal) {
+    state.player.arrears = (state.player.arrears ?? 0) + (wageTotal - paid);
     for (const employee of employees) {
       employee.loyalty = Math.max(0, employee.loyalty - 0.08);
       employee.reliability = Math.max(0.25, employee.reliability - 0.04);
@@ -4784,6 +4909,19 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
         addStrategyUnlock(state, `${mode.label} product lab`);
       }
       log(state, events, `${product.name} launched as ${mode.brandName}: ${mode.tagline}`, "good");
+      break;
+    }
+
+    case "set_empire_name": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+      const trimmed = command.name.replace(/\s+/g, " ").trim().slice(0, 28);
+      if (!trimmed || trimmed === state.player.empireName) {
+        break;
+      }
+      state.player.empireName = trimmed;
+      log(state, events, `Empire rebranded as ${trimmed}. The block will learn the name.`, "good");
       break;
     }
 

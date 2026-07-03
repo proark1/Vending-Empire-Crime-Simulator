@@ -287,11 +287,19 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
   const applyCommand = useCallback(
     (command: GameCommand) => {
       setState((current) => {
-        const result = reduceGameState(current, command);
-        lastStateChangeKindRef.current = command.type;
-        transport.emitEvents(result.events);
-        transport.emitSnapshot(result.state);
-        return result.state;
+        try {
+          const result = reduceGameState(current, command);
+          lastStateChangeKindRef.current = command.type;
+          transport.emitEvents(result.events);
+          transport.emitSnapshot(result.state);
+          return result.state;
+        } catch (error) {
+          // A single bad command must not take down the whole session. Roll back to
+          // the prior state so the game keeps running instead of throwing through
+          // render into the ErrorBoundary.
+          console.error("Reducer threw while applying command", command.type, error);
+          return current;
+        }
       });
     },
     [transport]
@@ -432,14 +440,21 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
       }
 
       setState((current) => {
-        const timeResult = reduceGameState(current, { type: "advance_time", actorId: current.playerFactionId, hours });
-        const npcCommands = planNpcCommands(timeResult.state);
-        const npcResult = reduceCommands(timeResult.state, npcCommands);
-        const allEvents = [...timeResult.events, ...npcResult.events];
-        lastStateChangeKindRef.current = "advance_time";
-        transport.emitEvents(allEvents);
-        transport.emitSnapshot(npcResult.state);
-        return npcResult.state;
+        try {
+          const timeResult = reduceGameState(current, { type: "advance_time", actorId: current.playerFactionId, hours });
+          const npcCommands = planNpcCommands(timeResult.state);
+          const npcResult = reduceCommands(timeResult.state, npcCommands);
+          const allEvents = [...timeResult.events, ...npcResult.events];
+          lastStateChangeKindRef.current = "advance_time";
+          transport.emitEvents(allEvents);
+          transport.emitSnapshot(npcResult.state);
+          return npcResult.state;
+        } catch (error) {
+          // This runs every world tick — a throw here would otherwise white-screen
+          // the game mid-session. Keep the last good state and skip this tick.
+          console.error("Reducer threw while advancing the world", error);
+          return current;
+        }
       });
     },
     [transport]

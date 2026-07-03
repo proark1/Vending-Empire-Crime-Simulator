@@ -545,6 +545,27 @@ function playSynthAsset(cue: AudioCue, asset: AudioAsset): boolean {
     return true;
   }
 
+  if (preset.includes("alert")) {
+    // One shared "alert" asset backs three very different cues; differentiate by
+    // the cue's trigger so a territory unlock, a defensive lockdown, and a plain
+    // warning don't all sound like the same generic beep.
+    if (cue.trigger === "feedback.district") {
+      // Territory unlocked — bright ascending triad, a small win.
+      synthTone(523, now, 0.08, 0.03, "triangle", category, asset.volume);
+      synthTone(659, now + 0.08, 0.09, 0.028, "triangle", category, asset.volume);
+      synthTone(784, now + 0.17, 0.12, 0.024, "sine", category, asset.volume);
+    } else if (cue.trigger === "feedback.lockdown") {
+      // Defensive remote lockdown — firm two-tone clunk.
+      synthTone(300, now, 0.09, 0.032, "square", category, asset.volume);
+      synthTone(220, now + 0.1, 0.12, 0.028, "square", category, asset.volume);
+    } else {
+      // Generic warning — terse mid alert.
+      synthTone(520, now, 0.07, 0.028, "sawtooth", category, asset.volume);
+      synthTone(430, now + 0.08, 0.09, 0.024, "sawtooth", category, asset.volume);
+    }
+    return true;
+  }
+
   synthTone(520, now, 0.07, 0.028, "triangle", category, asset.volume);
   synthTone(780, now + 0.08, 0.09, 0.022, "triangle", category, asset.volume);
   return true;
@@ -814,6 +835,22 @@ export function playEventCue(toneName: GameEventTone): void {
       tone(640, now, 0.07, 0.026, "triangle");
       tone(960, now + 0.07, 0.08, 0.02, "triangle");
     }
+  });
+}
+
+// Play a specific configured cue by its trigger (e.g. "event.festival") for
+// events whose designed sound isn't one of the four generic tones. Falls back to
+// a soft two-tone chirp if the cue/asset can't be resolved.
+export function playTaggedCue(trigger: string): void {
+  const context = getContext();
+  if (!context || !unlocked) {
+    return;
+  }
+
+  playConfiguredCue(trigger, () => {
+    const now = context.currentTime;
+    tone(520, now, 0.06, 0.024, "triangle");
+    tone(760, now + 0.06, 0.08, 0.02, "triangle");
   });
 }
 

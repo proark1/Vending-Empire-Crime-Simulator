@@ -24,7 +24,8 @@ import { clearStoredGameSession, loadRemoteAudioConfig, loadRemoteGame, loadRemo
 import { loadGame } from "./game/save/storage";
 import { createInitialState } from "./game/content/initialState";
 import { activeRunModifier, chooseRunModifier } from "./game/content/replayability";
-import { configureGameAudio, playEventCue, playFeedbackCue, playVoiceCue, startGameAmbience, unlockGameAudio, updateGameAmbience } from "./ui/audio";
+import { configureGameAudio, playEventCue, playFeedbackCue, playTaggedCue, playVoiceCue, startGameAmbience, unlockGameAudio, updateGameAmbience } from "./ui/audio";
+import { VOICE_EVENT_PATTERNS } from "./ui/voiceEventPatterns";
 import { MultiplayerClient } from "./game/network/multiplayerClient";
 import type { MultiplayerStatus } from "./game/network/protocol";
 import { getPerfSnapshot } from "./game/core/performance";
@@ -675,19 +676,6 @@ const PLAYER_SPAWN: Vec2 = { x: -9, z: 5.9 };
 
 // Maps distinctive event-log phrases to voiced lines. First match wins; the voice
 // cue's own cooldown throttles repeats. Phrases are specific enough not to misfire.
-const VOICE_EVENT_PATTERNS: Array<{ test: RegExp; trigger: string }> = [
-  { test: /inspection notice/i, trigger: "voice.inspector_notice" },
-  { test: /permit lapsed into a challenge/i, trigger: "voice.lawyer_notice" },
-  { test: /bought time with local paperwork/i, trigger: "voice.fixer_tip" },
-  { test: /supplier market shifted/i, trigger: "voice.supplier_offer" },
-  { test: /rent was short/i, trigger: "voice.landlord_pressure" },
-  { test: /expansion cell/i, trigger: "voice.rival_boss_threat" },
-  { test: /route ambush/i, trigger: "voice.driver_warning" },
-  { test: /tipped off/i, trigger: "voice.informant_tip" },
-  { test: /joined the route crew/i, trigger: "voice.guard_contact" },
-  { test: /delivered to the garage/i, trigger: "voice.mechanic_unlock" }
-];
-
 const WORLD_TICK_HOURS = 0.04;
 const WORLD_TICK_MS = 1500;
 
@@ -700,6 +688,15 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
   const [dashboardOpen, setDashboardOpen] = useState(false);
   const [gameMenuOpen, setGameMenuOpen] = useState(false);
   const [roomCodeInput, setRoomCodeInput] = useState("");
+  const [empireNameDraft, setEmpireNameDraft] = useState("");
+  const [seedDraft, setSeedDraft] = useState("");
+  const [captionsEnabled, setCaptionsEnabled] = useState(() => {
+    try {
+      return window.localStorage.getItem("vendetta.captions") !== "off";
+    } catch {
+      return true;
+    }
+  });
   const [playerPosition, setPlayerPosition] = useState<Vec2>(() => ({ ...PLAYER_SPAWN }));
   const [playerHeadingDegrees, setPlayerHeadingDegrees] = useState(-180);
   const [showControls, setShowControls] = useState(false);
@@ -867,15 +864,59 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
       return;
     }
 
+    // Share a full join link, not a bare code: an invited friend clicks it and
+    // lands with the room pre-filled (see the ?room= effect below) instead of
+    // having to find the game, find the join field, and type the code.
+    const shareUrl = `${window.location.origin}${window.location.pathname}?room=${encodeURIComponent(multiplayerRoom.code)}`;
     if (navigator.clipboard) {
-      void navigator.clipboard.writeText(multiplayerRoom.code);
+      void navigator.clipboard.writeText(shareUrl);
     }
     addToast({
-      title: "Room code",
-      message: `${multiplayerRoom.code} ready to share.`,
+      title: "Invite link copied",
+      message: "Send it to a friend — one tap drops them into your room.",
       tone: "good"
     });
   }, [addToast, multiplayerRoom]);
+
+  // Co-op invite links carry ?room=CODE. On load, pre-fill the join field from
+  // it and strip the param so a refresh doesn't re-trigger, so an invited player
+  // is one click from joining.
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const invited = params.get("room");
+      if (!invited) {
+        return;
+      }
+      const normalized = invited.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
+      if (normalized) {
+        setRoomCodeInput(normalized);
+        addToast({ title: "Co-op invite", message: `Room ${normalized} is ready — join when your route loads.`, tone: "neutral" });
+      }
+      params.delete("room");
+      const query = params.toString();
+      window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`);
+    } catch {
+      // Non-fatal — the invite pre-fill is a convenience only.
+    }
+  }, [addToast]);
+
+  // Keep the empire-name editor in sync with the authoritative state (e.g. after
+  // a load or a remote rename), without clobbering what the player is typing.
+  useEffect(() => {
+    if (!gameMenuOpen) {
+      setEmpireNameDraft(state.player.empireName ?? "");
+    }
+  }, [gameMenuOpen, state.player.empireName]);
+
+  const handleRenameEmpire = useCallback(() => {
+    const trimmed = empireNameDraft.replace(/\s+/g, " ").trim().slice(0, 28);
+    if (!trimmed || trimmed === state.player.empireName) {
+      return;
+    }
+    sendCommand({ type: "set_empire_name", actorId: state.playerFactionId, name: trimmed });
+    addToast({ title: "Empire renamed", message: `You're running "${trimmed}" now.`, tone: "good" });
+  }, [empireNameDraft, sendCommand, state.playerFactionId, state.player.empireName, addToast]);
 
   useEffect(() => {
     if (!gameMenuOpen) {
@@ -928,7 +969,11 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
     }
 
     lastEventIdRef.current = newestEvent.id;
-    playEventCue(newestEvent.tone);
+    if (newestEvent.audioCue) {
+      playTaggedCue(newestEvent.audioCue);
+    } else {
+      playEventCue(newestEvent.tone);
+    }
     const voiceMatch = VOICE_EVENT_PATTERNS.find((entry) => entry.test.test(newestEvent.message));
     if (voiceMatch) {
       playVoiceCue(voiceMatch.trigger);
@@ -1009,6 +1054,73 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
       restart(runSeed);
     }
   }, [restart]);
+
+  // growth-2: the run seed fully determines a run, so it doubles as a shareable
+  // "beat my city" challenge. Let players copy the current seed and start a run
+  // from a pasted one.
+  const handleCopySeed = useCallback(() => {
+    const seed = state.replay?.runSeed;
+    if (seed == null) {
+      return;
+    }
+    const nav = typeof navigator !== "undefined" ? navigator : null;
+    if (nav?.clipboard) {
+      void nav.clipboard.writeText(String(seed));
+    }
+    addToast({ title: "Seed copied", message: `Seed ${seed} copied — share it as a challenge.`, tone: "good" });
+  }, [state.replay?.runSeed, addToast]);
+
+  const handlePlaySeed = useCallback(() => {
+    const parsed = Number.parseInt(seedDraft.trim(), 10);
+    if (!Number.isFinite(parsed)) {
+      addToast({ title: "Seed", message: "Enter a numeric seed to play it.", tone: "neutral" });
+      return;
+    }
+    if (window.confirm(`Start a fresh run from seed ${parsed}? This restarts the current save.`)) {
+      restart(parsed);
+    }
+  }, [seedDraft, restart, addToast]);
+
+  // growth-8: capture the first-person scene as a branded, shareable PNG. Reads
+  // the WebGL canvas directly (renderer uses preserveDrawingBuffer) and stamps the
+  // empire identity so a shared shot is unmistakably the player's.
+  const handleScreenshot = useCallback(() => {
+    const canvas =
+      document.querySelector<HTMLCanvasElement>(".scene-mount canvas") ??
+      document.querySelector<HTMLCanvasElement>("canvas");
+    if (!canvas || canvas.width === 0 || canvas.height === 0) {
+      addToast({ title: "Photo", message: "Couldn't capture the view — try again once the scene is loaded.", tone: "neutral" });
+      return;
+    }
+    try {
+      const shot = document.createElement("canvas");
+      shot.width = canvas.width;
+      shot.height = canvas.height;
+      const ctx = shot.getContext("2d");
+      if (!ctx) {
+        throw new Error("no 2d context");
+      }
+      ctx.drawImage(canvas, 0, 0);
+      const empire = state.player?.empireName?.trim() || "Vendetta Vending";
+      const label = `${empire} · Vendetta Vending`;
+      const pad = Math.round(shot.width * 0.018);
+      const fontSize = Math.max(14, Math.round(shot.width * 0.022));
+      ctx.font = `700 ${fontSize}px system-ui, -apple-system, sans-serif`;
+      ctx.textBaseline = "alphabetic";
+      const metrics = ctx.measureText(label);
+      ctx.fillStyle = "rgba(6, 10, 14, 0.55)";
+      ctx.fillRect(pad - 6, shot.height - pad - fontSize - 8, metrics.width + 16, fontSize + 14);
+      ctx.fillStyle = "#3ee0c4";
+      ctx.fillText(label, pad + 2, shot.height - pad - 2);
+      const link = document.createElement("a");
+      link.href = shot.toDataURL("image/png");
+      link.download = `vendetta-${Date.now()}.png`;
+      link.click();
+      addToast({ title: "Photo saved", message: "Screenshot downloaded — show off your empire.", tone: "good" });
+    } catch {
+      addToast({ title: "Photo", message: "Couldn't capture the view on this device.", tone: "neutral" });
+    }
+  }, [addToast, state.player?.empireName]);
 
   const handleManualSave = useCallback(() => {
     if (multiplayerStatus.role === "guest") {
@@ -1318,6 +1430,25 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
     };
   }, [entered, handlePrimaryInteraction]);
 
+  // Click-to-interact (ux-2): while the pointer is locked (i.e. aiming), a
+  // left-click mirrors the E key, so players who instinctively click the thing
+  // they're aiming at get the same result. Only bound while locked, so the click
+  // that acquires pointer lock doesn't also fire an interaction.
+  useEffect(() => {
+    if (!entered || !pointerLocked) {
+      return;
+    }
+    const onMouseDown = (event: MouseEvent) => {
+      if (event.button !== 0) {
+        return;
+      }
+      unlockGameAudio();
+      handlePrimaryInteraction();
+    };
+    window.addEventListener("mousedown", onMouseDown);
+    return () => window.removeEventListener("mousedown", onMouseDown);
+  }, [entered, pointerLocked, handlePrimaryInteraction]);
+
   // First-run controls legend: auto-show once after entering the district, then
   // remember it so returning players aren't nagged (still recallable via the ? button).
   useEffect(() => {
@@ -1416,7 +1547,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
                   : "Offline · saved on this device"}
         </div>
       )}
-      {entered && voiceLine && (
+      {entered && voiceLine && captionsEnabled && (
         <div className="voice-subtitle" aria-live="polite">
           {voiceLine.speaker && <span className="voice-subtitle-speaker">{voiceLine.speaker}</span>}
           <span className="voice-subtitle-line">{voiceLine.subtitle}</span>
@@ -1504,7 +1635,48 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
                 <p className="ending-ng-plus">New Game+: {strategyUnlocks.length} perk{strategyUnlocks.length === 1 ? "" : "s"} carry over (+${Math.min(150, strategyUnlocks.length * 25)} starting cash).</p>
               )}
             </div>
+            <div className="ending-seed-row" role="group" aria-label="Run seed">
+              <span>Seed <strong>{state.replay?.runSeed ?? "—"}</strong></span>
+              <button type="button" onClick={handleCopySeed}>Copy</button>
+              <input
+                aria-label="Play a seed"
+                inputMode="numeric"
+                placeholder="Play a seed…"
+                value={seedDraft}
+                onChange={(event) => setSeedDraft(event.target.value.replace(/[^0-9-]/g, ""))}
+              />
+              <button type="button" disabled={!seedDraft.trim()} onClick={handlePlaySeed}>Play</button>
+            </div>
             <div className="ending-actions">
+              <button
+                className="ending-share"
+                onClick={() => {
+                  const day = Math.max(1, Math.floor(state.worldTimeHours / 24) + 1);
+                  const rivalName = loudestRival
+                    ? state.factions[loudestRival.memory.factionId]?.name ?? loudestRival.memory.factionId
+                    : "nobody worth naming";
+                  const empire = state.player?.empireName?.trim();
+                  const who = empire ? `${empire}` : "My terrible logo";
+                  const seed = state.replay?.runSeed;
+                  const caption =
+                    `Vendetta Vending — ${executedEndingPath.title}\n` +
+                    `Day ${day}: $${Math.round(playerFaction.money).toLocaleString()}, ${installedPlayerMachines} machines, heat ${Math.round(playerFaction.heat)}. ` +
+                    `My loudest rival was ${rivalName}. ${who} owns the block.\n` +
+                    `${seed != null ? `Beat my city — seed ${seed}. ` : ""}${window.location.origin}`;
+                  const nav = typeof navigator !== "undefined" ? navigator : null;
+                  if (nav?.share) {
+                    void nav.share({ title: "Vendetta Vending", text: caption }).catch(() => {});
+                  } else if (nav?.clipboard) {
+                    void nav.clipboard.writeText(caption);
+                    addToast({ title: "Run card copied", message: "Your empire brag is on the clipboard — go post it.", tone: "good" });
+                  } else {
+                    addToast({ title: "Run card", message: caption, tone: "neutral" });
+                  }
+                }}
+                type="button"
+              >
+                Share empire card
+              </button>
               <button onClick={() => setDismissedEndingPathId(executedEnding.pathId)} type="button">
                 Keep running route
               </button>
@@ -1526,6 +1698,16 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
           ?
         </button>
       )}
+      {entered && (
+        <button
+          aria-label="Save a screenshot"
+          className="screenshot-toggle"
+          onClick={handleScreenshot}
+          type="button"
+        >
+          📷
+        </button>
+      )}
       <div className="game-menu" ref={gameMenuRef}>
         <button
           aria-expanded={gameMenuOpen}
@@ -1542,6 +1724,50 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
               <span>{isLocalSession ? "Local save" : "Signed in"}</span>
               <strong>{session.profile.name}</strong>
             </div>
+            <div className="game-menu-empire" role="group" aria-label="Empire identity">
+              <label htmlFor="empire-name-input">Empire name</label>
+              <div className="game-menu-empire-row">
+                <input
+                  id="empire-name-input"
+                  aria-label="Empire name"
+                  maxLength={28}
+                  placeholder="Name your empire"
+                  value={empireNameDraft}
+                  onChange={(event) => setEmpireNameDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      handleRenameEmpire();
+                    }
+                  }}
+                />
+                <button
+                  disabled={!empireNameDraft.trim() || empireNameDraft.replace(/\s+/g, " ").trim() === (state.player.empireName ?? "")}
+                  onClick={handleRenameEmpire}
+                  type="button"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+            <button
+              aria-pressed={captionsEnabled}
+              role="menuitem"
+              type="button"
+              onClick={() => {
+                setCaptionsEnabled((current) => {
+                  const next = !current;
+                  try {
+                    window.localStorage.setItem("vendetta.captions", next ? "on" : "off");
+                  } catch {
+                    // ignore persistence failure — the toggle still works this session
+                  }
+                  return next;
+                });
+              }}
+            >
+              Captions: {captionsEnabled ? "On" : "Off"}
+            </button>
             {!isLocalSession && <div className="multiplayer-menu-panel" role="group" aria-label="Multiplayer room">
               <div className="multiplayer-menu-heading">
                 <Network size={16} aria-hidden="true" />
@@ -2050,6 +2276,11 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
               Quick Start: Cause Problems
             </button>
             <span className="access-demo-note">Instant local save. No database required.</span>
+            <span className="access-privacy-note">
+              A named profile syncs your empire to the server so you can resume anywhere. That save
+              (profile name + progress) is stored on the backend and visible to the game operator.
+              Prefer Quick Start for a fully local, on-device save.
+            </span>
           </form>
         </section>
         <div className="access-longform">

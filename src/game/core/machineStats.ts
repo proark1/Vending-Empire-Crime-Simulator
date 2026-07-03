@@ -79,5 +79,10 @@ export function priceDemandMultiplier(price: number, basePrice: number): number 
     return Math.min(1.16, 1 + (1 - ratio) * 0.22);
   }
 
-  return Math.max(0.35, 1 - (ratio - 1) * 0.48);
+  // Above base price, demand falls off exponentially rather than flooring out, so
+  // revenue (price × demand) peaks at a modest markup (~60%) and then declines
+  // toward zero. This kills the old degenerate strategy of cranking every slot to
+  // the price cap: a hugely over-priced slot now sells almost nothing instead of
+  // out-earning a balanced one. Continuous at ratio = 1 (exp(0) = 1).
+  return Math.exp(-0.62 * (ratio - 1));
 }

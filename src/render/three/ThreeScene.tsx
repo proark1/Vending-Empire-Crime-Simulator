@@ -5540,7 +5540,9 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       ? `${stateRef.current.player.carriedCrate.productId}:${stateRef.current.player.carriedCrate.quantity}:${stateRef.current.player.carriedCrate.source}`
       : null;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: !renderProfile.lowPower, powerPreference: renderProfile.lowPower ? "default" : "high-performance" });
+    // preserveDrawingBuffer keeps the last frame readable so the in-game photo
+    // mode (canvas.toDataURL) can capture the scene from outside the render loop.
+    const renderer = new THREE.WebGLRenderer({ antialias: !renderProfile.lowPower, powerPreference: renderProfile.lowPower ? "default" : "high-performance", preserveDrawingBuffer: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, renderProfile.maxPixelRatio));
     renderer.setSize(mount.clientWidth, mount.clientHeight);
     renderer.shadowMap.enabled = renderProfile.enableShadows;

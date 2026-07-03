@@ -12,6 +12,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--", "--port", "5193", "--strictPort"],
       "port": 5193
+    },
+    {
+      "name": "prod-server",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server.js"],
+      "port": 3000
     }
   ]
 }

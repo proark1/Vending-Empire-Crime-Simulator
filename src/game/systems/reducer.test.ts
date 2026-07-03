@@ -259,7 +259,38 @@ describe("game reducer", () => {
 
     expect(result.state.machines.machine_player_1.revenueStored).toBe(0);
     expect(result.state.factions.player.money).toBeGreaterThan(moneyBeforeCollection);
-    expect(result.state.progression.revenueCollectedToday).toBe(30);
+    // Crew collection takes an 8% handling skim (round(30 * 0.08) = 2), so the
+    // player nets 28 of the 30 stored — automation is a paid convenience, not a
+    // strictly-better replacement for hand-collecting at full value.
+    expect(result.state.progression.revenueCollectedToday).toBe(28);
+  });
+
+  it("turns unpaid daily costs into debt instead of forgiving them (insolvency spiral)", () => {
+    const hired = reduceGameState(withInstalledStarter(), { type: "hire_employee", actorId: "player", role: "collector" }).state;
+    // Strip the player's cash so the day's wages/rent/insurance can't be covered.
+    hired.factions.player.money = 0;
+    hired.player.arrears = 0;
+
+    const afterDay = reduceGameState(hired, { type: "advance_time", actorId: "player", hours: 25 }).state;
+
+    // The shortfall is banked as debt rather than silently written off.
+    expect(afterDay.player.arrears ?? 0).toBeGreaterThan(0);
+  });
+
+  it("repossesses a machine once insolvency debt gets heavy", () => {
+    const base = withInstalledStarter();
+    base.factions.player.money = 0;
+    base.player.arrears = 400; // well above the repossession threshold, even after any pay-down
+
+    const isPlayerInstalled = (machine: { ownerFactionId: string; placementStatus?: string }) =>
+      machine.ownerFactionId === "player" && (machine.placementStatus ?? "installed") === "installed";
+    const before = Object.values(base.machines).filter(isPlayerInstalled).length;
+    expect(before).toBeGreaterThan(0);
+
+    const afterDay = reduceGameState(base, { type: "advance_time", actorId: "player", hours: 25 }).state;
+    const after = Object.values(afterDay.machines).filter(isPlayerInstalled).length;
+
+    expect(after).toBeLessThan(before);
   });
 
   it("lets an assigned technician repair damaged machines for parts cost", () => {

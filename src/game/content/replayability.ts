@@ -311,7 +311,12 @@ export function applyRunLegacy(nextState: GameState, previousState: GameState): 
   }
 
   const priorRunCount = previousState.replay?.legacy?.runCount ?? 0;
-  const startingBonus = Math.min(150, unlocks.length * 25);
+  // NG+ compounds instead of being flat: the unlock-based leg-up is joined by a
+  // veteran bonus that grows with each completed run, so repeat runs feel
+  // cumulative rather than a fixed $150 head start.
+  const unlockBonus = Math.min(150, unlocks.length * 25);
+  const veteranBonus = Math.min(200, priorRunCount * 40);
+  const startingBonus = unlockBonus + veteranBonus;
 
   nextState.replay.legacy = {
     unlocks: unlocks.slice(-8),
@@ -320,20 +325,23 @@ export function applyRunLegacy(nextState: GameState, previousState: GameState): 
     startingBonus
   };
 
-  if (startingBonus > 0) {
-    const player = nextState.factions[nextState.playerFactionId];
-    if (player) {
+  const player = nextState.factions[nextState.playerFactionId];
+  if (player) {
+    if (startingBonus > 0) {
       player.money += startingBonus;
     }
+    // Your reputation precedes you a little more each cycle.
+    player.streetReputation += Math.min(6, priorRunCount * 1.5);
   }
 
-  // Grudge (exposure 2 = pushback 2): enough to shorten the rival's cooldown this
-  // run, but below the threshold that flips corporate rivals to sabotage.
+  // Grudge escalates with run count: the loudest rival remembers more each cycle,
+  // coming after the player sooner (and, at higher exposure, harder) on later
+  // runs. Base 2 (pushback), climbing to 5 so veteran runs get real heat.
   if (rivalFactionId && nextState.factions[rivalFactionId]) {
     nextState.replay.rivalMemory[rivalFactionId] = {
       alarmConfronted: 0,
       disruption: 0,
-      exposure: 2,
+      exposure: Math.min(5, 2 + priorRunCount),
       expansion: 0,
       factionId: rivalFactionId,
       negotiation: 0,
