@@ -30,6 +30,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Fail the build on high/critical vulnerabilities in shipped (production)
+      # dependencies. Dev-only tooling advisories are excluded so the gate stays
+      # focused on the actual runtime attack surface.
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Typecheck
         run: npm run typecheck
 

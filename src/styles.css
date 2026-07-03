@@ -1113,6 +1113,14 @@ button {
   text-align: center;
 }
 
+.access-privacy-note {
+  margin-top: 2px !important;
+  color: #64748b !important;
+  font-size: 11px !important;
+  line-height: 1.45;
+  text-align: center;
+}
+
 .access-panel button:disabled,
 .access-panel input:disabled {
   cursor: not-allowed;

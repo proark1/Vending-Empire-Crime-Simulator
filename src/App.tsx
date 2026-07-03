@@ -25,6 +25,7 @@ import { loadGame } from "./game/save/storage";
 import { createInitialState } from "./game/content/initialState";
 import { activeRunModifier, chooseRunModifier } from "./game/content/replayability";
 import { configureGameAudio, playEventCue, playFeedbackCue, playTaggedCue, playVoiceCue, startGameAmbience, unlockGameAudio, updateGameAmbience } from "./ui/audio";
+import { VOICE_EVENT_PATTERNS } from "./ui/voiceEventPatterns";
 import { MultiplayerClient } from "./game/network/multiplayerClient";
 import type { MultiplayerStatus } from "./game/network/protocol";
 import { getPerfSnapshot } from "./game/core/performance";
@@ -675,19 +676,6 @@ const PLAYER_SPAWN: Vec2 = { x: -9, z: 5.9 };
 
 // Maps distinctive event-log phrases to voiced lines. First match wins; the voice
 // cue's own cooldown throttles repeats. Phrases are specific enough not to misfire.
-const VOICE_EVENT_PATTERNS: Array<{ test: RegExp; trigger: string }> = [
-  { test: /inspection notice/i, trigger: "voice.inspector_notice" },
-  { test: /permit lapsed into a challenge/i, trigger: "voice.lawyer_notice" },
-  { test: /bought time with local paperwork/i, trigger: "voice.fixer_tip" },
-  { test: /supplier market shifted/i, trigger: "voice.supplier_offer" },
-  { test: /rent was short/i, trigger: "voice.landlord_pressure" },
-  { test: /expansion cell/i, trigger: "voice.rival_boss_threat" },
-  { test: /route ambush/i, trigger: "voice.driver_warning" },
-  { test: /tipped off/i, trigger: "voice.informant_tip" },
-  { test: /joined the route crew/i, trigger: "voice.guard_contact" },
-  { test: /delivered to the garage/i, trigger: "voice.mechanic_unlock" }
-];
-
 const WORLD_TICK_HOURS = 0.04;
 const WORLD_TICK_MS = 1500;
 
@@ -2212,6 +2200,11 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
               Quick Start: Cause Problems
             </button>
             <span className="access-demo-note">Instant local save. No database required.</span>
+            <span className="access-privacy-note">
+              A named profile syncs your empire to the server so you can resume anywhere. That save
+              (profile name + progress) is stored on the backend and visible to the game operator.
+              Prefer Quick Start for a fully local, on-device save.
+            </span>
           </form>
         </section>
         <div className="access-longform">
