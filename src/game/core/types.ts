@@ -249,6 +249,12 @@ export interface PlayerState {
    * the game falls back to a default label).
    */
   empireName?: string;
+  /**
+   * Accumulated unpaid obligations (rent, wages, insurance, fines). Drives the
+   * insolvency spiral: interest accrues, then creditors repossess machines and,
+   * at rock bottom, the empire collapses. Optional for clean save migration.
+   */
+  arrears?: number;
   activeVehicleId: VehicleId;
   currentLocationId: LocationId | null;
   /**

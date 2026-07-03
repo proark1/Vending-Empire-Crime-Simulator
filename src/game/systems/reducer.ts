@@ -2129,6 +2129,8 @@ function applyDailyOperatingEconomy(state: GameState, events: GameEvent[]): void
   recordFinance(state, "rent", -rentPaid, "Base storage rent");
   if (rentPaid < rent) {
     player.publicReputation = Math.max(0, player.publicReputation - 0.2);
+    // The unpaid remainder is no longer forgiven — it becomes debt.
+    state.player.arrears = (state.player.arrears ?? 0) + (rent - rentPaid);
     log(state, events, `Storage rent was short by $${rent - rentPaid}.`, "warning");
   }
 
@@ -2139,8 +2141,96 @@ function applyDailyOperatingEconomy(state: GameState, events: GameEvent[]): void
     recordFinance(state, "insurance", -paid, `${insurance.label} premium`);
     if (paid < insurance.dailyCost) {
       state.economy.finance.insurancePlan = "none";
+      state.player.arrears = (state.player.arrears ?? 0) + (insurance.dailyCost - paid);
       log(state, events, "Insurance lapsed after a missed premium.", "warning");
     }
+  }
+
+  escalateInsolvency(state, events);
+}
+
+// Return the machine value to the debt-holder and remove it from the world,
+// detaching anything that referenced it so nothing dangles after removal.
+function repossessMachine(state: GameState, machine: VendingMachine): number {
+  const resale = machineResaleValue(state, machine);
+  for (const employee of Object.values(state.employees)) {
+    if (employee.assignedMachineIds?.includes(machine.id)) {
+      employee.assignedMachineIds = employee.assignedMachineIds.filter((id) => id !== machine.id);
+    }
+  }
+  if (state.machineAlarms) {
+    for (const [alarmId, alarm] of Object.entries(state.machineAlarms)) {
+      if (alarm.machineId === machine.id) {
+        delete state.machineAlarms[alarmId];
+      }
+    }
+  }
+  delete state.machines[machine.id];
+  return resale;
+}
+
+// The soft-failure spiral (gd-1). Runs once per in-game day. Debt is first paid
+// down with any spare cash (the recovery path), then accrues interest and raises
+// heat + political pressure while it stands. Heavy debt makes creditors repossess
+// your least valuable machine; hitting rock bottom (deep debt, nothing left to
+// take) collapses the empire — a recoverable game-over the player rebuilds from.
+const insolvencyRepossessThreshold = 120;
+const insolvencyCollapseThreshold = 260;
+
+function escalateInsolvency(state: GameState, events: GameEvent[]): void {
+  const player = state.factions[state.playerFactionId];
+  let arrears = state.player.arrears ?? 0;
+  if (arrears <= 0) {
+    state.player.arrears = 0;
+    return;
+  }
+
+  // Recovery path: throw any spare cash at the debt first.
+  if (player.money > 0) {
+    const payDown = Math.min(player.money, arrears);
+    chargePlayer(state, "rent", payDown, "Debt repayment");
+    arrears -= payDown;
+  }
+
+  if (arrears <= 0) {
+    state.player.arrears = 0;
+    log(state, events, "You cleared your debts. The books are clean again.", "good");
+    return;
+  }
+
+  // Interest accrues and the pressure climbs while debt stands.
+  arrears = Math.round(arrears * 1.06);
+  player.heat = Math.min(100, player.heat + 1.5);
+  if (state.empire) {
+    state.empire.politicalPressure = Math.min(100, (state.empire.politicalPressure ?? 0) + 2);
+  }
+  state.player.arrears = arrears;
+  log(state, events, `Debt is mounting — you owe $${arrears}. Creditors are circling.`, "warning");
+
+  if (arrears < insolvencyRepossessThreshold) {
+    return;
+  }
+
+  const installed = installedMachines(state, state.playerFactionId);
+  if (installed.length > 0) {
+    const target = installed.slice().sort((a, b) => machineResaleValue(state, a) - machineResaleValue(state, b))[0];
+    const recovered = repossessMachine(state, target);
+    state.player.arrears = Math.max(0, arrears - recovered);
+    log(state, events, `Creditors repossessed ${target.name}, clearing $${recovered} of debt.`, "danger");
+    return;
+  }
+
+  // Nothing left to take and still deep in debt: the empire collapses. Creditors
+  // write off the remainder after stripping everything; reputation and pressure
+  // crater. The run is effectively over — rebuild from scraps or restart.
+  if (arrears >= insolvencyCollapseThreshold) {
+    state.player.arrears = 0;
+    player.publicReputation = Math.max(0, player.publicReputation - 25);
+    if (state.empire) {
+      state.empire.politicalPressure = Math.min(100, (state.empire.politicalPressure ?? 0) + 25);
+      state.empire.legitimacy = Math.max(0, state.empire.legitimacy - 20);
+    }
+    log(state, events, "EMPIRE COLLAPSED: creditors stripped everything and wrote off the rest. Rebuild from scraps or restart the run.", "danger");
   }
 }
 
@@ -3494,6 +3584,7 @@ function payEmployeeWages(state: GameState, events: GameEvent[]): void {
   recordFinance(state, "wages", -paid, "Daily crew wages");
 
   if (paid < wageTotal) {
+    state.player.arrears = (state.player.arrears ?? 0) + (wageTotal - paid);
     for (const employee of employees) {
       employee.loyalty = Math.max(0, employee.loyalty - 0.08);
       employee.reliability = Math.max(0.25, employee.reliability - 0.04);
