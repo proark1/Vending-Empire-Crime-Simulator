@@ -24,6 +24,9 @@ const isProductionRuntime = process.env.NODE_ENV === "production" || process.env
 const seedAdminName = process.env.ADMIN_NAME || (isProductionRuntime ? "" : "assad");
 const seedAdminPin = process.env.ADMIN_PIN || (isProductionRuntime ? "" : "dev-pin-1234");
 const sessionDays = Number(process.env.SESSION_DAYS ?? 14);
+// Admin sessions are high-privilege (data wipe, PII read, config edits), so they
+// live hours, not the 14-day player window, and can be revoked via logout.
+const adminSessionHours = Math.max(1, Number(process.env.ADMIN_SESSION_HOURS ?? 12));
 const jsonLimitBytes = Number(process.env.JSON_LIMIT_BYTES ?? 8 * 1024 * 1024);
 // A real GameState serializes well under this; the generous 8MB HTTP limit only
 // needs to cover admin map/audio payloads. Reject bloated saves so one profile
@@ -47,7 +50,17 @@ process.on("unhandledRejection", (reason) => {
   console.error("Unhandled promise rejection:", reason);
 });
 process.on("uncaughtException", (error) => {
+  // Node leaves the process in an undefined state after an uncaught exception, so
+  // the correct move is to log and exit and let the supervisor (Railway) restart
+  // a clean process — rather than keep serving every connected player from a
+  // half-broken event loop. Set UNCAUGHT_KEEP_ALIVE=1 to fall back to
+  // log-and-continue if a deploy ever needs it.
   console.error("Uncaught exception:", error);
+  if (process.env.UNCAUGHT_KEEP_ALIVE === "1") {
+    return;
+  }
+  process.exitCode = 1;
+  setTimeout(() => process.exit(1), 100).unref?.();
 });
 
 let pool = null;
@@ -159,6 +172,10 @@ function validateGameCredentials(body) {
 
 function sessionExpiry() {
   return new Date(Date.now() + sessionDays * 24 * 60 * 60 * 1000);
+}
+
+function adminSessionExpiry() {
+  return new Date(Date.now() + adminSessionHours * 60 * 60 * 1000);
 }
 
 function createPinRecord(pin) {
@@ -505,9 +522,20 @@ async function createAdminSession(name) {
   const token = randomBytes(32).toString("base64url");
   await getPool().query(
     "INSERT INTO admin_sessions (token_hash, name, expires_at) VALUES ($1, $2, $3)",
-    [hashValue(token), name, sessionExpiry()]
+    [hashValue(token), name, adminSessionExpiry()]
   );
   return token;
+}
+
+// Revoke the presented admin token so a leaked/stale session can be killed
+// server-side before its (now short) expiry.
+async function handleAdminLogout(request, response) {
+  const token = bearerToken(request);
+  if (token) {
+    await ensureDatabase();
+    await getPool().query("DELETE FROM admin_sessions WHERE token_hash = $1", [hashValue(token)]);
+  }
+  emptyResponse(response, 204);
 }
 
 async function requireAdmin(request) {
@@ -807,6 +835,15 @@ async function handleAdminLogin(request, response, body) {
   const lockedMs = loginLockRemainingMs(throttleKeys);
   if (lockedMs > 0) {
     respondLoginThrottled(response, lockedMs);
+    return;
+  }
+
+  // Shape the input before touching the DB so the admin path isn't the least
+  // validated login. Charset stays permissive (admin PINs may be passphrases),
+  // but empty/absurd lengths are rejected as a failed attempt.
+  if (name.length === 0 || pin.length < 4 || pin.length > 128) {
+    recordLoginFailure(throttleKeys);
+    jsonResponse(response, 401, { error: "Admin name or PIN is incorrect." });
     return;
   }
 
@@ -1874,6 +1911,11 @@ async function routeApi(request, response, url) {
       return true;
     }
 
+    if (url.pathname === "/api/admin/logout" && request.method === "POST") {
+      await handleAdminLogout(request, response);
+      return true;
+    }
+
     if (url.pathname === "/api/map-layout" && request.method === "GET") {
       await handleMapLayoutRead(response);
       return true;
@@ -2120,9 +2162,14 @@ multiplayerHeartbeat.unref?.();
 multiplayerWss.on("close", () => clearInterval(multiplayerHeartbeat));
 
 function isAllowedWebSocketOrigin(request) {
-  const origin = request.headers.origin;
-  if (!origin || process.env.WS_ALLOW_CROSS_ORIGIN === "1") {
+  if (process.env.WS_ALLOW_CROSS_ORIGIN === "1") {
     return true;
+  }
+  const origin = request.headers.origin;
+  if (!origin) {
+    // No Origin header = a non-browser client. Allowed only outside production so
+    // local tooling still connects; in production a browser always sends Origin.
+    return !isProductionRuntime;
   }
   try {
     return new URL(origin).host === request.headers.host;
@@ -2138,9 +2185,10 @@ server.on("upgrade", (request, socket, head) => {
     return;
   }
 
-  // Reject cross-origin WebSocket handshakes in production (CSWSH defense). Skipped
-  // outside production so local tooling on a different port still connects.
-  if (isProductionRuntime && !isAllowedWebSocketOrigin(request)) {
+  // Reject cross-origin WebSocket handshakes in all environments (CSWSH defense).
+  // A missing Origin (non-browser client) is allowed only outside production, and
+  // WS_ALLOW_CROSS_ORIGIN=1 opts out entirely for local tooling on another port.
+  if (!isAllowedWebSocketOrigin(request)) {
     recordEvent("warning", "multiplayer_bad_origin", "Rejected multiplayer upgrade from disallowed origin.", { origin: request.headers.origin });
     socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
     socket.destroy();
