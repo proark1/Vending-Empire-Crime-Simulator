@@ -20,7 +20,7 @@ import { endgamePaths, storyMissionArcs } from "./game/content/story";
 import { products } from "./game/content/products";
 import { clearWorldMapLayout, loadWorldMapLayout, normalizeLayout, saveWorldMapLayout } from "./game/world/mapLayoutStorage";
 import { guidanceServicePoint } from "./game/world/locationGeometry";
-import { clearStoredGameSession, loadRemoteAudioConfig, loadRemoteGame, loadRemoteMapLayout, loadStoredGameSession, loginGame, registerGame, type GameSession } from "./game/save/api";
+import { clearStoredGameSession, fetchLeaderboard, loadRemoteAudioConfig, loadRemoteGame, loadRemoteMapLayout, loadStoredGameSession, loginGame, registerGame, type GameSession, type LeaderboardEntry } from "./game/save/api";
 import { loadGame } from "./game/save/storage";
 import { createInitialState } from "./game/content/initialState";
 import { activeRunModifier, chooseRunModifier } from "./game/content/replayability";
@@ -701,6 +701,8 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
   const [playerHeadingDegrees, setPlayerHeadingDegrees] = useState(-180);
   const [showControls, setShowControls] = useState(false);
   const [hasMoved, setHasMoved] = useState(false);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[] | null>(null);
+  const [leaderboardLoading, setLeaderboardLoading] = useState(false);
   const [voiceLine, setVoiceLine] = useState<{ speaker: string; subtitle: string } | null>(null);
   const [dismissedEndingPathId, setDismissedEndingPathId] = useState<string | null>(null);
   const heatVoiceTierRef = useRef(0);
@@ -918,6 +920,16 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
     sendCommand({ type: "set_empire_name", actorId: state.playerFactionId, name: trimmed });
     addToast({ title: "Empire renamed", message: `You're running "${trimmed}" now.`, tone: "good" });
   }, [empireNameDraft, sendCommand, state.playerFactionId, state.player.empireName, addToast]);
+
+  // growth-5: fetch the public weekly leaderboard (ranked by cash, shown by
+  // player-chosen empire name). Lazy-loaded when the panel is opened.
+  const handleLoadLeaderboard = useCallback(() => {
+    setLeaderboardLoading(true);
+    void fetchLeaderboard()
+      .then((entries) => setLeaderboard(entries))
+      .catch(() => setLeaderboard([]))
+      .finally(() => setLeaderboardLoading(false));
+  }, []);
 
   useEffect(() => {
     if (!gameMenuOpen) {
@@ -1795,6 +1807,28 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
             >
               Captions: {captionsEnabled ? "On" : "Off"}
             </button>
+            <div className="game-menu-leaderboard" role="group" aria-label="Leaderboard">
+              <div className="game-menu-leaderboard-head">
+                <span>Top empires · this week</span>
+                <button type="button" onClick={handleLoadLeaderboard} disabled={leaderboardLoading}>
+                  {leaderboardLoading ? "Loading…" : leaderboard ? "Refresh" : "Load"}
+                </button>
+              </div>
+              {leaderboard && leaderboard.length > 0 && (
+                <ol className="game-menu-leaderboard-list">
+                  {leaderboard.map((entry) => (
+                    <li key={`${entry.rank}-${entry.empireName}`}>
+                      <span className="lb-rank">{entry.rank}</span>
+                      <span className="lb-name">{entry.empireName}</span>
+                      <span className="lb-cash">${entry.cash.toLocaleString()}</span>
+                    </li>
+                  ))}
+                </ol>
+              )}
+              {leaderboard && leaderboard.length === 0 && (
+                <p className="game-menu-leaderboard-empty">No ranked empires yet — name your empire and bank some cash to appear.</p>
+              )}
+            </div>
             {!isLocalSession && <div className="multiplayer-menu-panel" role="group" aria-label="Multiplayer room">
               <div className="multiplayer-menu-heading">
                 <Network size={16} aria-hidden="true" />

@@ -136,6 +136,7 @@ export function analyzeLiveOpsSaveRows(rows, options = {}) {
 
     const playerFactionId = state.playerFactionId ?? "player";
     const faction = state.factions?.[playerFactionId] ?? {};
+    const empireName = typeof state.player?.empireName === "string" ? state.player.empireName.trim().slice(0, 28) : "";
     const cash = asNumber(faction.money);
     const heat = asNumber(faction.heat);
     const worldTimeHours = asNumber(state.worldTimeHours, 8);
@@ -196,6 +197,7 @@ export function analyzeLiveOpsSaveRows(rows, options = {}) {
       activeInspections,
       cash: Math.round(cash),
       day: Math.max(1, Math.floor(worldTimeHours / 24) + 1),
+      empireName,
       flags,
       heat: Math.round(heat),
       installedMachines,

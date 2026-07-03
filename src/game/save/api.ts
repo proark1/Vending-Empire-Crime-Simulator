@@ -321,6 +321,22 @@ export async function loadRemoteAudioConfig(): Promise<RemoteAudioConfigResponse
   });
 }
 
+export interface LeaderboardEntry {
+  rank: number;
+  empireName: string;
+  cash: number;
+  machines: number;
+  districts: number;
+  day: number;
+}
+
+export async function fetchLeaderboard(): Promise<LeaderboardEntry[]> {
+  const response = await requestJson<{ leaderboard: LeaderboardEntry[] }>("/api/leaderboard", {
+    method: "GET"
+  });
+  return Array.isArray(response.leaderboard) ? response.leaderboard : [];
+}
+
 export async function loadAdminAudioProviderSettings(session: AdminSession): Promise<RemoteAudioProviderSettingsResponse> {
   return requestJson<RemoteAudioProviderSettingsResponse>("/api/admin/audio-provider", {
     method: "GET",

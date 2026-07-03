@@ -1344,6 +1344,82 @@ button {
   min-width: 60px;
 }
 
+.game-menu-leaderboard {
+  display: grid;
+  gap: 6px;
+  padding: 10px 8px;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.12);
+}
+
+.game-menu-leaderboard-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.game-menu-leaderboard-head span {
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.game-menu-leaderboard-head button {
+  min-height: 28px;
+  min-width: auto;
+  padding: 0 10px;
+}
+
+.game-menu-leaderboard-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.game-menu-leaderboard-list li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 4px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.game-menu-leaderboard-list li:nth-child(odd) {
+  background: rgba(148, 163, 184, 0.06);
+}
+
+.lb-rank {
+  min-width: 18px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-weight: 700;
+  color: #64748b;
+}
+
+.lb-name {
+  overflow: hidden;
+  color: #f1f5f9;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lb-cash {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color: #34d399;
+  font-variant-numeric: tabular-nums;
+}
+
+.game-menu-leaderboard-empty {
+  margin: 0;
+  font-size: 11px;
+  color: #64748b;
+}
+
 .game-menu-popover button {
   display: inline-flex;
   align-items: center;

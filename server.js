@@ -42,6 +42,10 @@ const multiplayerJoinsPerMinute = Number(process.env.MULTIPLAYER_JOINS_PER_MINUT
 const gameSaveRevisionHistory = Math.max(0, Number(process.env.GAME_SAVE_REVISION_HISTORY ?? 10));
 // Cap on how many player saves the admin monitoring query pulls into memory.
 const monitoringSaveLimit = Math.max(1, Number(process.env.MONITORING_SAVE_LIMIT ?? 100));
+// How many recent saves the public leaderboard scans, and how many ranked rows
+// it returns. Only player-chosen empire names are exposed (never profile names).
+const leaderboardScanLimit = Math.max(1, Number(process.env.LEADERBOARD_SCAN_LIMIT ?? 300));
+const leaderboardSize = Math.max(1, Number(process.env.LEADERBOARD_SIZE ?? 20));
 const startedAt = new Date();
 
 // Last-resort guards so a stray async error can't silently take the whole server
@@ -1622,6 +1626,43 @@ async function handleAudioProviderGenerate(request, response, body) {
   });
 }
 
+// Public, read-only weekly leaderboard. Exposes only the player-chosen empire
+// name (never the profile name) plus non-sensitive progress stats, ranked by
+// cash. Requires no auth by design; returns an empty board without a database.
+async function handleLeaderboard(response) {
+  if (!databaseUrl) {
+    jsonResponse(response, 200, { leaderboard: [] });
+    return;
+  }
+  await ensureDatabase();
+
+  const result = await getPool().query(
+    `SELECT player_profiles.name, player_profiles.id AS profile_id, game_saves.state, game_saves.revision, game_saves.updated_at
+       FROM game_saves
+       JOIN player_profiles ON player_profiles.id = game_saves.profile_id
+      WHERE game_saves.updated_at >= now() - interval '7 days'
+      ORDER BY game_saves.updated_at DESC
+      LIMIT $1`,
+    [leaderboardScanLimit]
+  );
+
+  const analysis = analyzeLiveOpsSaveRows(result.rows);
+  const leaderboard = analysis.players
+    .filter((player) => typeof player.empireName === "string" && player.empireName.length > 0)
+    .sort((a, b) => b.cash - a.cash)
+    .slice(0, leaderboardSize)
+    .map((player, index) => ({
+      rank: index + 1,
+      empireName: player.empireName,
+      cash: player.cash,
+      machines: player.installedMachines,
+      districts: player.unlockedDistricts,
+      day: player.day
+    }));
+
+  jsonResponse(response, 200, { leaderboard });
+}
+
 async function handleAdminMonitoring(request, response) {
   const admin = await requireAdmin(request);
   // Monitoring returns every player's profile name + progress — treat reads as
@@ -1885,6 +1926,11 @@ async function routeApi(request, response, url) {
 
   try {
     const body = request.method === "GET" || request.method === "DELETE" ? {} : await readJson(request);
+
+    if (url.pathname === "/api/leaderboard" && request.method === "GET") {
+      await handleLeaderboard(response);
+      return true;
+    }
 
     if (url.pathname === "/api/game/login" && request.method === "POST") {
       await handleGameLogin(request, response, body);
