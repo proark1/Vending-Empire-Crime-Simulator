@@ -259,7 +259,10 @@ describe("game reducer", () => {
 
     expect(result.state.machines.machine_player_1.revenueStored).toBe(0);
     expect(result.state.factions.player.money).toBeGreaterThan(moneyBeforeCollection);
-    expect(result.state.progression.revenueCollectedToday).toBe(30);
+    // Crew collection takes an 8% handling skim (round(30 * 0.08) = 2), so the
+    // player nets 28 of the 30 stored — automation is a paid convenience, not a
+    // strictly-better replacement for hand-collecting at full value.
+    expect(result.state.progression.revenueCollectedToday).toBe(28);
   });
 
   it("lets an assigned technician repair damaged machines for parts cost", () => {

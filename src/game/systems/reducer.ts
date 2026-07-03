@@ -3203,7 +3203,13 @@ function runCollector(state: GameState, events: GameEvent[], employee: Employee)
     return false;
   }
 
-  const amount = Math.round(machine.revenueStored);
+  const gross = Math.round(machine.revenueStored);
+  // Crew collection isn't free: a small handling skim means automation is a
+  // convenience with a cost, not a strictly-better replacement for the core loop.
+  // Hand-collecting still nets full value, so a fully-automated empire keeps
+  // leaving money on the table — preserving a reason to run the route yourself.
+  const skim = Math.min(gross, Math.round(gross * 0.08));
+  const amount = gross - skim;
   creditPlayer(state, "sales", amount, `${machine.name} cash collection`);
   machine.revenueStored = 0;
   machine.lastServicedHour = state.worldTimeHours;
@@ -3211,7 +3217,7 @@ function runCollector(state: GameState, events: GameEvent[], employee: Employee)
   employee.status = "working";
   employee.statusDetail = `Collected from ${machine.name}.`;
   markEmployeeRoute(state, employee, machine.locationId, "collect", `${employee.name} is pulling cash from ${machine.name}.`, machine.id);
-  log(state, events, `${employee.name} collected $${amount} from ${machine.name}.`, "good");
+  log(state, events, `${employee.name} collected $${amount} from ${machine.name}${skim > 0 ? ` (crew cut $${skim})` : ""}.`, "good");
   return true;
 }
 
