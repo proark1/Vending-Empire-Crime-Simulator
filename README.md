@@ -41,8 +41,10 @@ npm start          # node server.js — serves dist/ + multiplayer WS
 
 Environment (see `.env.example`): `DATABASE_URL` enables Postgres persistence;
 without it the game falls back to local saves. Admin access seeds from
-`ADMIN_NAME` and `ADMIN_PIN`, or falls back to `assad` / `4924` when those
-variables are omitted.
+`ADMIN_NAME` and `ADMIN_PIN`. **These must be set in production** — when they are
+omitted there the server refuses to seed an admin account (there is no public
+default), so set strong, random values in your deploy environment. Locally, a
+dev-only fallback account is seeded so `npm start` works without configuration.
 
 ## Deploy
 
