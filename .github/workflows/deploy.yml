@@ -19,43 +19,34 @@ jobs:
     if: github.repository == 'proark1/Vending-Empire-Crime-Simulator'
     runs-on: ubuntu-latest
     steps:
-      - name: Check for Railway token
-        id: guard
+      - name: Require Railway token
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
           if [ -z "$RAILWAY_TOKEN" ]; then
-            echo "::warning::RAILWAY_TOKEN secret is not set — skipping deploy. Add it under Settings → Secrets and variables → Actions (token from Railway → project → Settings → Tokens)."
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "::error::RAILWAY_TOKEN secret is not set. Add it under Settings > Secrets and variables > Actions (token from Railway > project > Settings > Tokens)."
+            exit 1
           fi
 
       - name: Checkout
-        if: steps.guard.outputs.ready == 'true'
         uses: actions/checkout@v4
 
       - name: Setup Node
-        if: steps.guard.outputs.ready == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
 
       - name: Install dependencies
-        if: steps.guard.outputs.ready == 'true'
         run: npm ci
 
       - name: Build (pre-deploy sanity check)
-        if: steps.guard.outputs.ready == 'true'
         run: npm run build
 
       - name: Install Railway CLI
-        if: steps.guard.outputs.ready == 'true'
         run: npm i -g @railway/cli
 
       - name: Deploy
-        if: steps.guard.outputs.ready == 'true'
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           # Optional: set repo variable RAILWAY_SERVICE if the token is not
