@@ -20,7 +20,7 @@ import { endgamePaths, storyMissionArcs } from "./game/content/story";
 import { products } from "./game/content/products";
 import { clearWorldMapLayout, loadWorldMapLayout, normalizeLayout, saveWorldMapLayout } from "./game/world/mapLayoutStorage";
 import { guidanceServicePoint } from "./game/world/locationGeometry";
-import { clearStoredGameSession, loadRemoteAudioConfig, loadRemoteGame, loadRemoteMapLayout, loadStoredGameSession, loginGame, registerGame, type GameSession } from "./game/save/api";
+import { clearStoredGameSession, fetchLeaderboard, loadRemoteAudioConfig, loadRemoteGame, loadRemoteMapLayout, loadStoredGameSession, loginGame, registerGame, type GameSession, type LeaderboardEntry } from "./game/save/api";
 import { loadGame } from "./game/save/storage";
 import { createInitialState } from "./game/content/initialState";
 import { activeRunModifier, chooseRunModifier } from "./game/content/replayability";
@@ -701,6 +701,8 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
   const [playerHeadingDegrees, setPlayerHeadingDegrees] = useState(-180);
   const [showControls, setShowControls] = useState(false);
   const [hasMoved, setHasMoved] = useState(false);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[] | null>(null);
+  const [leaderboardLoading, setLeaderboardLoading] = useState(false);
   const [voiceLine, setVoiceLine] = useState<{ speaker: string; subtitle: string } | null>(null);
   const [dismissedEndingPathId, setDismissedEndingPathId] = useState<string | null>(null);
   const heatVoiceTierRef = useRef(0);
@@ -714,6 +716,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
   const [playerHealth, setPlayerHealth] = useState<{ hp: number; dead: boolean }>({ hp: 100, dead: false });
   const [lookSettings, setLookSettings] = useState<LookSettings>(() => loadLookSettings());
   const gameMenuRef = useRef<HTMLDivElement | null>(null);
+  const dailyBonusCheckedRef = useRef(false);
   const lastEventIdRef = useRef(state.eventLog[0]?.id ?? null);
   const lastMissionStepIdRef = useRef<string | null>(null);
   const lastServiceLocationIdRef = useRef<LocationId | null>(state.player.currentLocationId);
@@ -918,6 +921,16 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
     addToast({ title: "Empire renamed", message: `You're running "${trimmed}" now.`, tone: "good" });
   }, [empireNameDraft, sendCommand, state.playerFactionId, state.player.empireName, addToast]);
 
+  // growth-5: fetch the public weekly leaderboard (ranked by cash, shown by
+  // player-chosen empire name). Lazy-loaded when the panel is opened.
+  const handleLoadLeaderboard = useCallback(() => {
+    setLeaderboardLoading(true);
+    void fetchLeaderboard()
+      .then((entries) => setLeaderboard(entries))
+      .catch(() => setLeaderboard([]))
+      .finally(() => setLeaderboardLoading(false));
+  }, []);
+
   useEffect(() => {
     if (!gameMenuOpen) {
       return;
@@ -961,6 +974,32 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
   const handlePlayerHealthChange = useCallback((hp: number, dead: boolean) => {
     setPlayerHealth((current) => (current.hp === hp && current.dead === dead ? current : { hp, dead }));
   }, []);
+
+  // growth-4: daily comeback bonus + streak. On the first entry of a real-world
+  // day, grant a streak-scaled cash bonus so a lapsed player has a reason to come
+  // back tomorrow. Keyed off localStorage per profile; guests skip it (the host
+  // claims the shared empire's bonus). The reducer clamps and owns the payout.
+  useEffect(() => {
+    if (!entered || dailyBonusCheckedRef.current || multiplayerStatus.role === "guest") {
+      return;
+    }
+    dailyBonusCheckedRef.current = true;
+    try {
+      const key = `vendetta.daily.${session.profile.id}`;
+      const todayIndex = Math.floor(Date.now() / 86_400_000);
+      const raw = window.localStorage.getItem(key);
+      const stored = raw ? (JSON.parse(raw) as { lastDayIndex?: number; streak?: number }) : null;
+      if (stored && stored.lastDayIndex === todayIndex) {
+        return; // already claimed today
+      }
+      const streak = stored && stored.lastDayIndex === todayIndex - 1 ? (stored.streak ?? 0) + 1 : 1;
+      window.localStorage.setItem(key, JSON.stringify({ lastDayIndex: todayIndex, streak }));
+      sendCommand({ type: "claim_daily_bonus", actorId: state.playerFactionId, streak });
+      addToast({ title: `Day ${streak} streak`, message: "Comeback bonus dropped into your float — welcome back.", tone: "good" });
+    } catch {
+      // localStorage unavailable — skip the daily bonus silently.
+    }
+  }, [entered, multiplayerStatus.role, session.profile.id, sendCommand, state.playerFactionId, addToast]);
 
   useEffect(() => {
     const newestEvent = state.eventLog[0];
@@ -1768,6 +1807,28 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
             >
               Captions: {captionsEnabled ? "On" : "Off"}
             </button>
+            <div className="game-menu-leaderboard" role="group" aria-label="Leaderboard">
+              <div className="game-menu-leaderboard-head">
+                <span>Top empires · this week</span>
+                <button type="button" onClick={handleLoadLeaderboard} disabled={leaderboardLoading}>
+                  {leaderboardLoading ? "Loading…" : leaderboard ? "Refresh" : "Load"}
+                </button>
+              </div>
+              {leaderboard && leaderboard.length > 0 && (
+                <ol className="game-menu-leaderboard-list">
+                  {leaderboard.map((entry) => (
+                    <li key={`${entry.rank}-${entry.empireName}`}>
+                      <span className="lb-rank">{entry.rank}</span>
+                      <span className="lb-name">{entry.empireName}</span>
+                      <span className="lb-cash">${entry.cash.toLocaleString()}</span>
+                    </li>
+                  ))}
+                </ol>
+              )}
+              {leaderboard && leaderboard.length === 0 && (
+                <p className="game-menu-leaderboard-empty">No ranked empires yet — name your empire and bank some cash to appear.</p>
+              )}
+            </div>
             {!isLocalSession && <div className="multiplayer-menu-panel" role="group" aria-label="Multiplayer room">
               <div className="multiplayer-menu-heading">
                 <Network size={16} aria-hidden="true" />

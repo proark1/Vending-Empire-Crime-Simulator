@@ -20,7 +20,10 @@ const GUEST_FORBIDDEN_COMMANDS = new Set<GameCommand["type"]>([
   "debug_set_rival_pressure",
   "debug_spawn_activity",
   "rival_action",
-  "execute_ending"
+  "execute_ending",
+  // The host claims the shared empire's daily bonus; a guest must not be able to
+  // re-trigger a cash grant on the shared wallet.
+  "claim_daily_bonus"
 ]);
 
 function isGuestCommandAllowed(command: GameCommand): boolean {
