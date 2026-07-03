@@ -7124,6 +7124,25 @@ kbd {
   color: #f8fafc;
 }
 
+.screenshot-toggle {
+  position: absolute;
+  top: 16px;
+  right: 106px;
+  z-index: 12;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(226, 232, 240, 0.22);
+  border-radius: 50%;
+  background: rgba(8, 13, 26, 0.85);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.screenshot-toggle:hover {
+  border-color: rgba(125, 211, 252, 0.55);
+}
+
 @keyframes controls-legend-in {
   from {
     opacity: 0;

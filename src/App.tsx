@@ -1074,6 +1074,47 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
     }
   }, [seedDraft, restart, addToast]);
 
+  // growth-8: capture the first-person scene as a branded, shareable PNG. Reads
+  // the WebGL canvas directly (renderer uses preserveDrawingBuffer) and stamps the
+  // empire identity so a shared shot is unmistakably the player's.
+  const handleScreenshot = useCallback(() => {
+    const canvas =
+      document.querySelector<HTMLCanvasElement>(".scene-mount canvas") ??
+      document.querySelector<HTMLCanvasElement>("canvas");
+    if (!canvas || canvas.width === 0 || canvas.height === 0) {
+      addToast({ title: "Photo", message: "Couldn't capture the view — try again once the scene is loaded.", tone: "neutral" });
+      return;
+    }
+    try {
+      const shot = document.createElement("canvas");
+      shot.width = canvas.width;
+      shot.height = canvas.height;
+      const ctx = shot.getContext("2d");
+      if (!ctx) {
+        throw new Error("no 2d context");
+      }
+      ctx.drawImage(canvas, 0, 0);
+      const empire = state.player?.empireName?.trim() || "Vendetta Vending";
+      const label = `${empire} · Vendetta Vending`;
+      const pad = Math.round(shot.width * 0.018);
+      const fontSize = Math.max(14, Math.round(shot.width * 0.022));
+      ctx.font = `700 ${fontSize}px system-ui, -apple-system, sans-serif`;
+      ctx.textBaseline = "alphabetic";
+      const metrics = ctx.measureText(label);
+      ctx.fillStyle = "rgba(6, 10, 14, 0.55)";
+      ctx.fillRect(pad - 6, shot.height - pad - fontSize - 8, metrics.width + 16, fontSize + 14);
+      ctx.fillStyle = "#3ee0c4";
+      ctx.fillText(label, pad + 2, shot.height - pad - 2);
+      const link = document.createElement("a");
+      link.href = shot.toDataURL("image/png");
+      link.download = `vendetta-${Date.now()}.png`;
+      link.click();
+      addToast({ title: "Photo saved", message: "Screenshot downloaded — show off your empire.", tone: "good" });
+    } catch {
+      addToast({ title: "Photo", message: "Couldn't capture the view on this device.", tone: "neutral" });
+    }
+  }, [addToast, state.player?.empireName]);
+
   const handleManualSave = useCallback(() => {
     if (multiplayerStatus.role === "guest") {
       addToast({
@@ -1648,6 +1689,16 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
           type="button"
         >
           ?
+        </button>
+      )}
+      {entered && (
+        <button
+          aria-label="Save a screenshot"
+          className="screenshot-toggle"
+          onClick={handleScreenshot}
+          type="button"
+        >
+          📷
         </button>
       )}
       <div className="game-menu" ref={gameMenuRef}>
