@@ -1298,6 +1298,44 @@ button {
   overflow-wrap: anywhere;
 }
 
+.game-menu-empire {
+  display: grid;
+  gap: 6px;
+  padding: 10px 8px;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.12);
+}
+
+.game-menu-empire label {
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.game-menu-empire-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.game-menu-empire-row input {
+  min-height: 34px;
+  width: 100%;
+  border: 1px solid rgba(226, 232, 240, 0.16);
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.82);
+  color: #f8fafc;
+  padding: 7px 9px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.game-menu-empire-row button {
+  justify-content: center;
+  min-width: 60px;
+}
+
 .game-menu-popover button {
   display: inline-flex;
   align-items: center;
@@ -2778,6 +2816,12 @@ kbd {
 .ending-actions button.danger {
   border-color: rgba(251, 113, 133, 0.36);
   background: rgba(190, 18, 60, 0.22);
+}
+
+.ending-actions button.ending-share {
+  border-color: rgba(62, 224, 196, 0.7);
+  background: #3ee0c4;
+  color: #04211d;
 }
 
 .dashboard {

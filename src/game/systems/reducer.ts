@@ -4787,6 +4787,19 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       break;
     }
 
+    case "set_empire_name": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+      const trimmed = command.name.replace(/\s+/g, " ").trim().slice(0, 28);
+      if (!trimmed || trimmed === state.player.empireName) {
+        break;
+      }
+      state.player.empireName = trimmed;
+      log(state, events, `Empire rebranded as ${trimmed}. The block will learn the name.`, "good");
+      break;
+    }
+
     case "upgrade_empire_asset": {
       if (actor.id !== state.playerFactionId) {
         break;

@@ -243,6 +243,12 @@ export interface DistrictProgress {
 
 export interface PlayerState {
   factionId: FactionId;
+  /**
+   * Player-chosen empire identity, shown on the shareable run card and surfaced
+   * in-fiction. Optional so pre-existing saves migrate cleanly (undefined =>
+   * the game falls back to a default label).
+   */
+  empireName?: string;
   activeVehicleId: VehicleId;
   currentLocationId: LocationId | null;
   /**
@@ -935,6 +941,7 @@ export type GameCommand =
   | { type: "buy_machine_model"; actorId: FactionId; modelId: MachineModelId; quantity: number }
   | { type: "sell_stored_machine"; actorId: FactionId; machineId: MachineId }
   | { type: "customize_product"; actorId: FactionId; productId: ProductId; mode: ProductCustomizationMode }
+  | { type: "set_empire_name"; actorId: FactionId; name: string }
   | { type: "hire_employee"; actorId: FactionId; role: EmployeeRole }
   | { type: "assign_employee"; actorId: FactionId; employeeId: EmployeeId; machineId: MachineId; assigned: boolean }
   | { type: "stock_machine"; actorId: FactionId; machineId: MachineId; productId: ProductId; quantity: number }

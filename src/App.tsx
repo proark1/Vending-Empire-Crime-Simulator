@@ -700,6 +700,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
   const [dashboardOpen, setDashboardOpen] = useState(false);
   const [gameMenuOpen, setGameMenuOpen] = useState(false);
   const [roomCodeInput, setRoomCodeInput] = useState("");
+  const [empireNameDraft, setEmpireNameDraft] = useState("");
   const [playerPosition, setPlayerPosition] = useState<Vec2>(() => ({ ...PLAYER_SPAWN }));
   const [playerHeadingDegrees, setPlayerHeadingDegrees] = useState(-180);
   const [showControls, setShowControls] = useState(false);
@@ -867,15 +868,59 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
       return;
     }
 
+    // Share a full join link, not a bare code: an invited friend clicks it and
+    // lands with the room pre-filled (see the ?room= effect below) instead of
+    // having to find the game, find the join field, and type the code.
+    const shareUrl = `${window.location.origin}${window.location.pathname}?room=${encodeURIComponent(multiplayerRoom.code)}`;
     if (navigator.clipboard) {
-      void navigator.clipboard.writeText(multiplayerRoom.code);
+      void navigator.clipboard.writeText(shareUrl);
     }
     addToast({
-      title: "Room code",
-      message: `${multiplayerRoom.code} ready to share.`,
+      title: "Invite link copied",
+      message: "Send it to a friend — one tap drops them into your room.",
       tone: "good"
     });
   }, [addToast, multiplayerRoom]);
+
+  // Co-op invite links carry ?room=CODE. On load, pre-fill the join field from
+  // it and strip the param so a refresh doesn't re-trigger, so an invited player
+  // is one click from joining.
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const invited = params.get("room");
+      if (!invited) {
+        return;
+      }
+      const normalized = invited.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
+      if (normalized) {
+        setRoomCodeInput(normalized);
+        addToast({ title: "Co-op invite", message: `Room ${normalized} is ready — join when your route loads.`, tone: "neutral" });
+      }
+      params.delete("room");
+      const query = params.toString();
+      window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`);
+    } catch {
+      // Non-fatal — the invite pre-fill is a convenience only.
+    }
+  }, [addToast]);
+
+  // Keep the empire-name editor in sync with the authoritative state (e.g. after
+  // a load or a remote rename), without clobbering what the player is typing.
+  useEffect(() => {
+    if (!gameMenuOpen) {
+      setEmpireNameDraft(state.player.empireName ?? "");
+    }
+  }, [gameMenuOpen, state.player.empireName]);
+
+  const handleRenameEmpire = useCallback(() => {
+    const trimmed = empireNameDraft.replace(/\s+/g, " ").trim().slice(0, 28);
+    if (!trimmed || trimmed === state.player.empireName) {
+      return;
+    }
+    sendCommand({ type: "set_empire_name", actorId: state.playerFactionId, name: trimmed });
+    addToast({ title: "Empire renamed", message: `You're running "${trimmed}" now.`, tone: "good" });
+  }, [empireNameDraft, sendCommand, state.playerFactionId, state.player.empireName, addToast]);
 
   useEffect(() => {
     if (!gameMenuOpen) {
@@ -1505,6 +1550,34 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
               )}
             </div>
             <div className="ending-actions">
+              <button
+                className="ending-share"
+                onClick={() => {
+                  const day = Math.max(1, Math.floor(state.worldTimeHours / 24) + 1);
+                  const rivalName = loudestRival
+                    ? state.factions[loudestRival.memory.factionId]?.name ?? loudestRival.memory.factionId
+                    : "nobody worth naming";
+                  const empire = state.player?.empireName?.trim();
+                  const who = empire ? `${empire}` : "My terrible logo";
+                  const caption =
+                    `Vendetta Vending — ${executedEndingPath.title}\n` +
+                    `Day ${day}: $${Math.round(playerFaction.money).toLocaleString()}, ${installedPlayerMachines} machines, heat ${Math.round(playerFaction.heat)}. ` +
+                    `My loudest rival was ${rivalName}. ${who} owns the block.\n` +
+                    `${window.location.origin}`;
+                  const nav = typeof navigator !== "undefined" ? navigator : null;
+                  if (nav?.share) {
+                    void nav.share({ title: "Vendetta Vending", text: caption }).catch(() => {});
+                  } else if (nav?.clipboard) {
+                    void nav.clipboard.writeText(caption);
+                    addToast({ title: "Run card copied", message: "Your empire brag is on the clipboard — go post it.", tone: "good" });
+                  } else {
+                    addToast({ title: "Run card", message: caption, tone: "neutral" });
+                  }
+                }}
+                type="button"
+              >
+                Share empire card
+              </button>
               <button onClick={() => setDismissedEndingPathId(executedEnding.pathId)} type="button">
                 Keep running route
               </button>
@@ -1541,6 +1614,32 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
             <div className="game-menu-profile">
               <span>{isLocalSession ? "Local save" : "Signed in"}</span>
               <strong>{session.profile.name}</strong>
+            </div>
+            <div className="game-menu-empire" role="group" aria-label="Empire identity">
+              <label htmlFor="empire-name-input">Empire name</label>
+              <div className="game-menu-empire-row">
+                <input
+                  id="empire-name-input"
+                  aria-label="Empire name"
+                  maxLength={28}
+                  placeholder="Name your empire"
+                  value={empireNameDraft}
+                  onChange={(event) => setEmpireNameDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      handleRenameEmpire();
+                    }
+                  }}
+                />
+                <button
+                  disabled={!empireNameDraft.trim() || empireNameDraft.replace(/\s+/g, " ").trim() === (state.player.empireName ?? "")}
+                  onClick={handleRenameEmpire}
+                  type="button"
+                >
+                  Save
+                </button>
+              </div>
             </div>
             {!isLocalSession && <div className="multiplayer-menu-panel" role="group" aria-label="Multiplayer room">
               <div className="multiplayer-menu-heading">
