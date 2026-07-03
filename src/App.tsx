@@ -714,6 +714,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
   const [playerHealth, setPlayerHealth] = useState<{ hp: number; dead: boolean }>({ hp: 100, dead: false });
   const [lookSettings, setLookSettings] = useState<LookSettings>(() => loadLookSettings());
   const gameMenuRef = useRef<HTMLDivElement | null>(null);
+  const dailyBonusCheckedRef = useRef(false);
   const lastEventIdRef = useRef(state.eventLog[0]?.id ?? null);
   const lastMissionStepIdRef = useRef<string | null>(null);
   const lastServiceLocationIdRef = useRef<LocationId | null>(state.player.currentLocationId);
@@ -961,6 +962,32 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
   const handlePlayerHealthChange = useCallback((hp: number, dead: boolean) => {
     setPlayerHealth((current) => (current.hp === hp && current.dead === dead ? current : { hp, dead }));
   }, []);
+
+  // growth-4: daily comeback bonus + streak. On the first entry of a real-world
+  // day, grant a streak-scaled cash bonus so a lapsed player has a reason to come
+  // back tomorrow. Keyed off localStorage per profile; guests skip it (the host
+  // claims the shared empire's bonus). The reducer clamps and owns the payout.
+  useEffect(() => {
+    if (!entered || dailyBonusCheckedRef.current || multiplayerStatus.role === "guest") {
+      return;
+    }
+    dailyBonusCheckedRef.current = true;
+    try {
+      const key = `vendetta.daily.${session.profile.id}`;
+      const todayIndex = Math.floor(Date.now() / 86_400_000);
+      const raw = window.localStorage.getItem(key);
+      const stored = raw ? (JSON.parse(raw) as { lastDayIndex?: number; streak?: number }) : null;
+      if (stored && stored.lastDayIndex === todayIndex) {
+        return; // already claimed today
+      }
+      const streak = stored && stored.lastDayIndex === todayIndex - 1 ? (stored.streak ?? 0) + 1 : 1;
+      window.localStorage.setItem(key, JSON.stringify({ lastDayIndex: todayIndex, streak }));
+      sendCommand({ type: "claim_daily_bonus", actorId: state.playerFactionId, streak });
+      addToast({ title: `Day ${streak} streak`, message: "Comeback bonus dropped into your float — welcome back.", tone: "good" });
+    } catch {
+      // localStorage unavailable — skip the daily bonus silently.
+    }
+  }, [entered, multiplayerStatus.role, session.profile.id, sendCommand, state.playerFactionId, addToast]);
 
   useEffect(() => {
     const newestEvent = state.eventLog[0];

@@ -293,6 +293,20 @@ describe("game reducer", () => {
     expect(after).toBeLessThan(before);
   });
 
+  it("credits a clamped daily comeback bonus scaled by streak", () => {
+    const base = withInstalledStarter();
+    const before = base.factions.player.money;
+
+    // 25 + 5 * 15 = 100.
+    const day5 = reduceGameState(base, { type: "claim_daily_bonus", actorId: "player", streak: 5 }).state;
+    expect(day5.factions.player.money).toBe(before + 100);
+
+    // Streak is clamped (max 30 -> 25 + 450 = 475, capped at 200), so a tampered
+    // client can't inflate the payout.
+    const capped = reduceGameState(base, { type: "claim_daily_bonus", actorId: "player", streak: 999 }).state;
+    expect(capped.factions.player.money).toBe(before + 200);
+  });
+
   it("lets an assigned technician repair damaged machines for parts cost", () => {
     const hired = reduceGameState(withInstalledStarter(), { type: "hire_employee", actorId: "player", role: "technician" }).state;
     const employee = Object.values(hired.employees)[0]!;

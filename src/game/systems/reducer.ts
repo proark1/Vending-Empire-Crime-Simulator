@@ -4925,6 +4925,19 @@ export function reduceGameState(currentState: GameState, command: GameCommand): 
       break;
     }
 
+    case "claim_daily_bonus": {
+      if (actor.id !== state.playerFactionId) {
+        break;
+      }
+      // The reducer owns the payout — the client only reports the real-world day
+      // streak (clamped here), so a tampered client can't dictate the amount.
+      const streak = Math.max(1, Math.min(30, Math.round(command.streak)));
+      const bonus = Math.min(200, 25 + streak * 15);
+      creditPlayer(state, "front_business", bonus, `Daily comeback bonus (day ${streak} streak)`);
+      log(state, events, `Welcome back — day ${streak} streak. Dispatch left $${bonus} in the float.`, "good");
+      break;
+    }
+
     case "upgrade_empire_asset": {
       if (actor.id !== state.playerFactionId) {
         break;

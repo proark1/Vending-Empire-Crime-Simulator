@@ -954,6 +954,7 @@ export type GameCommand =
   | { type: "sell_stored_machine"; actorId: FactionId; machineId: MachineId }
   | { type: "customize_product"; actorId: FactionId; productId: ProductId; mode: ProductCustomizationMode }
   | { type: "set_empire_name"; actorId: FactionId; name: string }
+  | { type: "claim_daily_bonus"; actorId: FactionId; streak: number }
   | { type: "hire_employee"; actorId: FactionId; role: EmployeeRole }
   | { type: "assign_employee"; actorId: FactionId; employeeId: EmployeeId; machineId: MachineId; assigned: boolean }
   | { type: "stock_machine"; actorId: FactionId; machineId: MachineId; productId: ProductId; quantity: number }
