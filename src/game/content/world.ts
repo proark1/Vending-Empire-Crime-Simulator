@@ -493,7 +493,7 @@ export const districts: Record<string, District> = {
     requiredStreetReputation: 1,
     scoutCost: 20,
     dominantTags: ["commuter", "gym", "utility"],
-    unlockCost: 70,
+    unlockCost: 90,
     visualTheme: "freight depots, loading bays, and sodium lamps"
   },
   downtown_loop: {
@@ -510,7 +510,7 @@ export const districts: Record<string, District> = {
     requiredStreetReputation: 2,
     scoutCost: 45,
     dominantTags: ["commuter", "gym", "office"],
-    unlockCost: 160,
+    unlockCost: 260,
     visualTheme: "glass fronts, bus shelters, and compact plazas"
   },
   neon_quarter: {
@@ -527,7 +527,7 @@ export const districts: Record<string, District> = {
     requiredStreetReputation: 3,
     scoutCost: 55,
     dominantTags: ["arcade", "night", "student"],
-    unlockCost: 180,
+    unlockCost: 320,
     visualTheme: "arcade fronts, food stalls, and glowing side streets"
   },
   campus_strip: {
@@ -544,7 +544,7 @@ export const districts: Record<string, District> = {
     requiredStreetReputation: 2,
     scoutCost: 50,
     dominantTags: ["student", "commuter", "gym"],
-    unlockCost: 175,
+    unlockCost: 300,
     visualTheme: "campus glass, dorm laundry, and security blue lights"
   },
   old_town: {
@@ -561,7 +561,7 @@ export const districts: Record<string, District> = {
     requiredStreetReputation: 4,
     scoutCost: 65,
     dominantTags: ["night", "arcade", "commuter"],
-    unlockCost: 220,
+    unlockCost: 460,
     visualTheme: "old brick, motel neon, courthouse lights, and tight alleys"
   }
 };

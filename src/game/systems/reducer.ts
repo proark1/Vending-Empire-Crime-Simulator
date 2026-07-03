@@ -252,9 +252,22 @@ function activeDangerBeatCount(state: GameState): number {
   );
 }
 
+// A bigger empire attracts more heat at once, so the number of simultaneous
+// danger beats scales with the installed machine count instead of being capped at
+// one. Small routes still face one-at-a-time pressure; a sprawling empire can be
+// hit on several fronts (up to a ceiling so it never becomes unmanageable).
+function maxConcurrentDangerBeats(state: GameState): number {
+  const installed = installedMachines(state, state.playerFactionId).length;
+  return Math.min(4, 1 + Math.floor(installed / 6));
+}
+
 function canStartAmbientDangerBeat(state: GameState): boolean {
   ensurePacingState(state);
-  if (!playerRouteHasBeenStocked(state) || activeDangerBeatCount(state) > 0 || state.worldTimeHours < state.pacing.nextDangerHour) {
+  if (
+    !playerRouteHasBeenStocked(state) ||
+    activeDangerBeatCount(state) >= maxConcurrentDangerBeats(state) ||
+    state.worldTimeHours < state.pacing.nextDangerHour
+  ) {
     state.pacing.suppressedDangerToday += 1;
     return false;
   }

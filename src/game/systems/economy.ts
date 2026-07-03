@@ -135,7 +135,11 @@ export function runMachineSales(state: GameState, machine: VendingMachine, hours
       slot.quantity -= soldUnits;
       slot.salesAccumulator -= soldUnits;
       earned += soldUnits * slot.price;
-      machine.heat += customizedProductHeat(state, product) * soldUnits * 0.05 * slotRate.heatMultiplier;
+      // Heat scales super-linearly with product heat, so a shelf of grey/contraband
+      // stock builds heat faster than passive decay can shed it (a real 'go loud'
+      // gamble), while legal staples stay effectively clean (gd-8).
+      const heatWeight = customizedProductHeat(state, product);
+      machine.heat += heatWeight * soldUnits * 0.05 * (1 + heatWeight * 0.4) * slotRate.heatMultiplier;
     }
   }
 
