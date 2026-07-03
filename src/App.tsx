@@ -1394,6 +1394,25 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
     };
   }, [entered, handlePrimaryInteraction]);
 
+  // Click-to-interact (ux-2): while the pointer is locked (i.e. aiming), a
+  // left-click mirrors the E key, so players who instinctively click the thing
+  // they're aiming at get the same result. Only bound while locked, so the click
+  // that acquires pointer lock doesn't also fire an interaction.
+  useEffect(() => {
+    if (!entered || !pointerLocked) {
+      return;
+    }
+    const onMouseDown = (event: MouseEvent) => {
+      if (event.button !== 0) {
+        return;
+      }
+      unlockGameAudio();
+      handlePrimaryInteraction();
+    };
+    window.addEventListener("mousedown", onMouseDown);
+    return () => window.removeEventListener("mousedown", onMouseDown);
+  }, [entered, pointerLocked, handlePrimaryInteraction]);
+
   // First-run controls legend: auto-show once after entering the district, then
   // remember it so returning players aren't nagged (still recallable via the ? button).
   useEffect(() => {

@@ -1604,6 +1604,12 @@ button {
   background: #5eead4;
 }
 
+/* Blocked state also changes shape (+ becomes ×), not just colour, so it stays
+   legible for colour-blind players who can't rely on the teal/amber hue alone. */
+.crosshair-disabled {
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
 .crosshair-disabled::before,
 .crosshair-disabled::after {
   background: #fbbf24;
@@ -4136,6 +4142,12 @@ kbd {
   border-radius: 8px;
   background: rgba(45, 212, 191, 0.1);
   width: fit-content;
+}
+
+.primary-hint-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .primary-hint-copy {
