@@ -1121,8 +1121,8 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
   }, [seedDraft, restart, addToast]);
 
   // growth-8: capture the first-person scene as a branded, shareable PNG. Reads
-  // the WebGL canvas directly (renderer uses preserveDrawingBuffer) and stamps the
-  // empire identity so a shared shot is unmistakably the player's.
+  // the WebGL canvas directly when the active graphics profile keeps it readable
+  // and stamps the empire identity so a shared shot is unmistakably the player's.
   const handleScreenshot = useCallback(() => {
     const canvas =
       document.querySelector<HTMLCanvasElement>(".scene-mount canvas") ??

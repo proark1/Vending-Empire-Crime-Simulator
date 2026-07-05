@@ -265,6 +265,13 @@ async function ensureDatabase() {
           profile_id TEXT PRIMARY KEY REFERENCES player_profiles(id) ON DELETE CASCADE,
           state JSONB NOT NULL,
           revision INTEGER NOT NULL DEFAULT 1,
+          empire_name TEXT NOT NULL DEFAULT '',
+          cash BIGINT NOT NULL DEFAULT 0,
+          heat INTEGER NOT NULL DEFAULT 0,
+          machine_count INTEGER NOT NULL DEFAULT 0,
+          district_count INTEGER NOT NULL DEFAULT 0,
+          day INTEGER NOT NULL DEFAULT 1,
+          run_seed INTEGER,
           created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         );
@@ -362,6 +369,14 @@ async function ensureDatabase() {
         );
       `);
       await db.query("ALTER TABLE game_saves ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1");
+      await db.query("ALTER TABLE game_saves ADD COLUMN IF NOT EXISTS empire_name TEXT NOT NULL DEFAULT ''");
+      await db.query("ALTER TABLE game_saves ADD COLUMN IF NOT EXISTS cash BIGINT NOT NULL DEFAULT 0");
+      await db.query("ALTER TABLE game_saves ADD COLUMN IF NOT EXISTS heat INTEGER NOT NULL DEFAULT 0");
+      await db.query("ALTER TABLE game_saves ADD COLUMN IF NOT EXISTS machine_count INTEGER NOT NULL DEFAULT 0");
+      await db.query("ALTER TABLE game_saves ADD COLUMN IF NOT EXISTS district_count INTEGER NOT NULL DEFAULT 0");
+      await db.query("ALTER TABLE game_saves ADD COLUMN IF NOT EXISTS day INTEGER NOT NULL DEFAULT 1");
+      await db.query("ALTER TABLE game_saves ADD COLUMN IF NOT EXISTS run_seed INTEGER");
+      await db.query("CREATE INDEX IF NOT EXISTS game_saves_leaderboard_idx ON game_saves (updated_at DESC, cash DESC)");
       await db.query("ALTER TABLE map_layouts ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1");
       await db.query("ALTER TABLE audio_configs ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1");
       await db.query("ALTER TABLE audio_provider_settings ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1");
@@ -745,6 +760,36 @@ function validateGameSaveState(state) {
   return null;
 }
 
+function asFiniteNumber(value, fallback = 0) {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function objectValues(value) {
+  return value && typeof value === "object" ? Object.values(value) : [];
+}
+
+function saveSummaryFromState(state) {
+  const playerFactionId = typeof state?.playerFactionId === "string" ? state.playerFactionId : "player";
+  const faction = state?.factions?.[playerFactionId] ?? {};
+  const empireName = typeof state?.player?.empireName === "string" ? state.player.empireName.trim().slice(0, 28) : "";
+  const playerMachines = objectValues(state?.machines).filter(
+    (machine) => machine?.ownerFactionId === playerFactionId && (machine?.placementStatus ?? "installed") === "installed"
+  );
+  const unlockedDistricts = objectValues(state?.districtProgress).filter((progress) => progress?.access === "unlocked");
+  const worldTimeHours = asFiniteNumber(state?.worldTimeHours, 8);
+  const runSeed = asFiniteNumber(state?.replay?.runSeed, Number.NaN);
+
+  return {
+    cash: Math.round(asFiniteNumber(faction.money)),
+    day: Math.max(1, Math.floor(worldTimeHours / 24) + 1),
+    districtCount: unlockedDistricts.length,
+    empireName,
+    heat: Math.round(asFiniteNumber(faction.heat)),
+    machineCount: playerMachines.length,
+    runSeed: Number.isFinite(runSeed) ? Math.floor(runSeed) : null
+  };
+}
+
 async function handleGameSave(request, response, body) {
   const profile = await requirePlayer(request, body?.token);
   const shapeError = validateGameSaveState(body?.state);
@@ -761,20 +806,39 @@ async function handleGameSave(request, response, body) {
   }
 
   const baseRevision = typeof body.baseRevision === "number" && Number.isFinite(body.baseRevision) ? Math.max(0, Math.floor(body.baseRevision)) : null;
+  const summary = saveSummaryFromState(body.state);
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
     const result = await client.query(
-      `INSERT INTO game_saves (profile_id, state, revision, updated_at)
-       VALUES ($1, $2, 1, now())
+      `INSERT INTO game_saves (profile_id, state, revision, updated_at, empire_name, cash, heat, machine_count, district_count, day, run_seed)
+       VALUES ($1, $2, 1, now(), $4, $5, $6, $7, $8, $9, $10)
        ON CONFLICT (profile_id)
        DO UPDATE SET
          state = EXCLUDED.state,
          revision = game_saves.revision + 1,
-         updated_at = now()
+         updated_at = now(),
+         empire_name = EXCLUDED.empire_name,
+         cash = EXCLUDED.cash,
+         heat = EXCLUDED.heat,
+         machine_count = EXCLUDED.machine_count,
+         district_count = EXCLUDED.district_count,
+         day = EXCLUDED.day,
+         run_seed = EXCLUDED.run_seed
        WHERE $3::integer IS NULL OR game_saves.revision = $3::integer
        RETURNING updated_at, revision`,
-      [profile.id, body.state, baseRevision]
+      [
+        profile.id,
+        body.state,
+        baseRevision,
+        summary.empireName,
+        summary.cash,
+        summary.heat,
+        summary.machineCount,
+        summary.districtCount,
+        summary.day,
+        summary.runSeed
+      ]
     );
 
     if (!result.rows[0]) {
@@ -1636,6 +1700,31 @@ async function handleLeaderboard(response) {
   }
   await ensureDatabase();
 
+  const indexedResult = await getPool().query(
+    `SELECT empire_name, cash, heat, machine_count, district_count, day, updated_at
+       FROM game_saves
+      WHERE updated_at >= now() - interval '7 days'
+        AND empire_name <> ''
+      ORDER BY cash DESC, updated_at DESC
+      LIMIT $1`,
+    [leaderboardSize]
+  );
+
+  if (indexedResult.rows.length > 0) {
+    jsonResponse(response, 200, {
+      leaderboard: indexedResult.rows.map((row, index) => ({
+        rank: index + 1,
+        empireName: row.empire_name,
+        cash: Number(row.cash ?? 0),
+        heat: Number(row.heat ?? 0),
+        machines: Number(row.machine_count ?? 0),
+        districts: Number(row.district_count ?? 0),
+        day: Number(row.day ?? 1)
+      }))
+    });
+    return;
+  }
+
   const result = await getPool().query(
     `SELECT player_profiles.name, player_profiles.id AS profile_id, game_saves.state, game_saves.revision, game_saves.updated_at
        FROM game_saves
@@ -1790,13 +1879,34 @@ async function handleGameSaveRestore(request, response, body) {
       return;
     }
 
+    const summary = saveSummaryFromState(snapshot.rows[0].state);
     const restored = await client.query(
-      `INSERT INTO game_saves (profile_id, state, revision, updated_at)
-       VALUES ($1, $2, 1, now())
+      `INSERT INTO game_saves (profile_id, state, revision, updated_at, empire_name, cash, heat, machine_count, district_count, day, run_seed)
+       VALUES ($1, $2, 1, now(), $3, $4, $5, $6, $7, $8, $9)
        ON CONFLICT (profile_id)
-       DO UPDATE SET state = EXCLUDED.state, revision = game_saves.revision + 1, updated_at = now()
+       DO UPDATE SET
+         state = EXCLUDED.state,
+         revision = game_saves.revision + 1,
+         updated_at = now(),
+         empire_name = EXCLUDED.empire_name,
+         cash = EXCLUDED.cash,
+         heat = EXCLUDED.heat,
+         machine_count = EXCLUDED.machine_count,
+         district_count = EXCLUDED.district_count,
+         day = EXCLUDED.day,
+         run_seed = EXCLUDED.run_seed
        RETURNING revision, updated_at`,
-      [profileId, snapshot.rows[0].state]
+      [
+        profileId,
+        snapshot.rows[0].state,
+        summary.empireName,
+        summary.cash,
+        summary.heat,
+        summary.machineCount,
+        summary.districtCount,
+        summary.day,
+        summary.runSeed
+      ]
     );
     const row = restored.rows[0];
     if (gameSaveRevisionHistory > 0) {

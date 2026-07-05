@@ -1,9 +1,8 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
-import type { ProductId } from "../game/core/types";
-import type { ModelConfig } from "../game/content/modelConfig";
+import type { MachineModelId, MachineUpgradeId, ProductId } from "../game/core/types";
+import { modelTransformFor, type ModelConfig } from "../game/content/modelConfig";
 import type { GraphicsQuality } from "../render/three/graphicsQuality";
-import { applyModelTransformById, createMachineMesh, createStockCrateMesh, createVehicleMesh } from "../render/three/ThreeScene";
 import { createNpcCharacter } from "../render/three/proceduralArt";
 
 interface LandingCinematicSceneProps {
@@ -34,6 +33,255 @@ function createNeonSignTexture(text: string, color: string): THREE.CanvasTexture
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
+}
+
+const previewProductColors: Record<ProductId, string> = {
+  soda: "#38bdf8",
+  chips: "#f59e0b",
+  energy: "#22c55e",
+  water: "#93c5fd",
+  protein_bar: "#a16207",
+  coffee_can: "#7c2d12",
+  instant_noodles: "#fbbf24",
+  phone_charger: "#94a3b8",
+  umbrella: "#0f766e",
+  hygiene_kit: "#f8fafc",
+  luxury_snack: "#f472b6",
+  mystery_capsules: "#e879f9",
+  mood_fizz: "#fb7185",
+  glitch_gum: "#c084fc",
+  night_syrup: "#4c1d95",
+  focus_cubes: "#67e8f9"
+};
+
+function applyPreviewModelTransformById(object: THREE.Object3D, modelConfig: ModelConfig, modelId: string): void {
+  const transform = modelTransformFor(modelConfig, modelId);
+  object.position.x += transform.offsetX;
+  object.position.y += transform.offsetY;
+  object.position.z += transform.offsetZ;
+  object.rotation.x += transform.rotationX;
+  object.rotation.y += transform.rotationY;
+  object.rotation.z += transform.rotationZ;
+  object.scale.set(
+    object.scale.x * transform.scaleX,
+    object.scale.y * transform.scaleY,
+    object.scale.z * transform.scaleZ
+  );
+}
+
+function addPreviewDetail(group: THREE.Group, object: THREE.Object3D): void {
+  object.userData.landingPreviewDetail = true;
+  group.add(object);
+}
+
+function createPreviewMachineMesh(
+  color: string,
+  damage: number,
+  installedUpgrades: MachineUpgradeId[] = [],
+  quality: GraphicsQuality = "medium",
+  stockRatio = 1,
+  productIds: ProductId[] = [],
+  machineModelId: MachineModelId = "basic_snack"
+): THREE.Group {
+  const group = new THREE.Group();
+  const upgrades = new Set(installedUpgrades);
+  group.userData.machineModelId = machineModelId;
+
+  const bodyMaterial = new THREE.MeshStandardMaterial({ color, roughness: 0.42, metalness: 0.12 });
+  const darkMaterial = new THREE.MeshStandardMaterial({ color: "#0f172a", roughness: 0.48, metalness: 0.18 });
+  const glowMaterial = new THREE.MeshBasicMaterial({ color });
+  const damaged = damage > 55;
+
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.76, 1.58, 0.5), bodyMaterial);
+  body.position.y = 0.92;
+  body.castShadow = true;
+  group.add(body);
+
+  const base = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.14, 0.62), darkMaterial);
+  base.position.y = 0.07;
+  group.add(base);
+
+  const sign = new THREE.Mesh(
+    new THREE.BoxGeometry(0.66, 0.18, 0.035),
+    new THREE.MeshBasicMaterial({ map: createNeonSignTexture(machineModelId === "armored_unit" ? "ARMOR" : "VEND-X", damaged ? "#fb7185" : color) })
+  );
+  sign.position.set(0, 1.62, -0.27);
+  group.add(sign);
+
+  const glass = new THREE.Mesh(
+    new THREE.BoxGeometry(0.43, 0.78, 0.032),
+    new THREE.MeshPhysicalMaterial({
+      color: damaged ? "#7f1d1d" : "#bae6fd",
+      emissive: damaged ? "#3f1010" : "#0891b2",
+      emissiveIntensity: damaged ? 0.18 : 0.34,
+      roughness: 0.08,
+      transparent: true,
+      opacity: 0.68
+    })
+  );
+  glass.position.set(-0.09, 1.08, -0.286);
+  group.add(glass);
+
+  const visibleProducts = Math.ceil(THREE.MathUtils.clamp(stockRatio, 0, 1) * 9);
+  for (let row = 0; row < 3; row += 1) {
+    const shelf = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.025, 0.03), darkMaterial);
+    shelf.position.set(-0.09, 0.83 + row * 0.23, -0.315);
+    group.add(shelf);
+    for (let col = 0; col < 3; col += 1) {
+      const index = row * 3 + col;
+      const filled = index < visibleProducts;
+      const productId = productIds[index % Math.max(1, productIds.length)] ?? "energy";
+      const product = new THREE.Mesh(
+        new THREE.BoxGeometry(0.07, 0.12, 0.04),
+        new THREE.MeshStandardMaterial({
+          color: filled ? previewProductColors[productId] : "#172033",
+          roughness: 0.44,
+          transparent: !filled,
+          opacity: filled ? 1 : 0.24
+        })
+      );
+      product.position.set(-0.25 + col * 0.16, 0.91 + row * 0.23, -0.34);
+      group.add(product);
+    }
+  }
+
+  const panel = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.58, 0.035), darkMaterial);
+  panel.position.set(0.26, 1.06, -0.305);
+  group.add(panel);
+
+  const display = new THREE.Mesh(
+    new THREE.BoxGeometry(0.12, 0.1, 0.02),
+    new THREE.MeshBasicMaterial({ color: damaged ? "#fb7185" : "#5eead4" })
+  );
+  display.position.set(0.26, 1.28, -0.328);
+  group.add(display);
+
+  if (upgrades.has("neon_sign")) {
+    const halo = new THREE.Mesh(new THREE.TorusGeometry(0.44, 0.014, 8, 48), glowMaterial);
+    halo.position.set(0, 1.71, -0.31);
+    halo.scale.y = 0.22;
+    addPreviewDetail(group, halo);
+  }
+
+  if (upgrades.has("security_camera")) {
+    const camera = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.08, 0.12), darkMaterial);
+    camera.position.set(0.3, 1.9, -0.1);
+    addPreviewDetail(group, camera);
+  }
+
+  if (machineModelId === "armored_unit") {
+    for (const x of [-0.42, 0.42]) {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.055, 1.28, 0.08), new THREE.MeshStandardMaterial({ color: "#64748b", roughness: 0.46, metalness: 0.42 }));
+      rail.position.set(x, 0.96, -0.32);
+      addPreviewDetail(group, rail);
+    }
+  }
+
+  if (quality === "high") {
+    const sideStripe = new THREE.Mesh(new THREE.BoxGeometry(0.04, 1.26, 0.024), glowMaterial);
+    sideStripe.position.set(-0.35, 0.98, -0.315);
+    addPreviewDetail(group, sideStripe);
+  }
+
+  if (damage > 15) {
+    const dent = new THREE.Mesh(new THREE.BoxGeometry(0.18 + damage / 340, 0.05, 0.04), new THREE.MeshBasicMaterial({ color: "#fbbf24" }));
+    dent.position.set(0.14, 1.43, -0.33);
+    dent.rotation.z = -0.4;
+    group.add(dent);
+  }
+
+  return group;
+}
+
+function createPreviewStockCrateMesh(productId: ProductId, quantity: number, compact = false, modelConfig?: ModelConfig): THREE.Group {
+  const color = previewProductColors[productId] ?? "#94a3b8";
+  const group = new THREE.Group();
+  const width = compact ? 0.34 : 0.58;
+  const height = compact ? 0.24 : 0.36;
+  const depth = compact ? 0.28 : 0.42;
+  const crate = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), new THREE.MeshStandardMaterial({ color, roughness: 0.6 }));
+  crate.castShadow = true;
+  group.add(crate);
+
+  const strapMaterial = new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.5 });
+  group.add(new THREE.Mesh(new THREE.BoxGeometry(width + 0.04, 0.04, depth + 0.02), strapMaterial));
+  group.add(new THREE.Mesh(new THREE.BoxGeometry(0.045, height + 0.02, depth + 0.03), strapMaterial));
+
+  const label = new THREE.Mesh(
+    new THREE.PlaneGeometry(width * 0.56, height * 0.38),
+    new THREE.MeshBasicMaterial({ color: "#f8fafc", side: THREE.DoubleSide })
+  );
+  label.position.set(width * 0.12, height * 0.06, -depth / 2 - 0.012);
+  group.add(label);
+
+  const ticks = Math.max(1, Math.min(4, Math.ceil(quantity / 4)));
+  for (let index = 0; index < ticks; index += 1) {
+    const tick = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.018, 0.008), new THREE.MeshBasicMaterial({ color }));
+    tick.position.set(-0.1 + index * 0.06, height * 0.08, -depth / 2 - 0.018);
+    group.add(tick);
+  }
+
+  if (modelConfig) {
+    applyPreviewModelTransformById(group, modelConfig, "stock.crate");
+  }
+
+  return group;
+}
+
+function createPreviewVehicleMesh(quality: GraphicsQuality = "medium"): THREE.Group {
+  const group = new THREE.Group();
+  const paint = new THREE.MeshPhysicalMaterial({ color: "#d9f99d", roughness: 0.3, metalness: 0.16, clearcoat: 0.6 });
+  const trim = new THREE.MeshStandardMaterial({ color: "#111827", roughness: 0.42, metalness: 0.35 });
+  const glass = new THREE.MeshPhysicalMaterial({ color: "#93c5fd", roughness: 0.04, transparent: true, opacity: 0.58 });
+  const length = 2.9;
+  const width = 1.16;
+  const baseY = 0.38;
+
+  const body = new THREE.Mesh(new THREE.BoxGeometry(1.42, 0.92, width), paint);
+  body.position.set(0.28, baseY + 0.52, 0);
+  body.castShadow = true;
+  group.add(body);
+
+  const cab = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.74, width * 0.86), paint);
+  cab.position.set(-0.78, baseY + 0.45, 0);
+  cab.castShadow = true;
+  group.add(cab);
+
+  const hood = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.36, width * 0.78), paint);
+  hood.position.set(-1.28, baseY + 0.28, 0);
+  group.add(hood);
+
+  const windshield = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.42, width * 0.54), glass);
+  windshield.position.set(-1.08, baseY + 0.64, 0);
+  windshield.rotation.z = -0.18;
+  group.add(windshield);
+
+  for (const z of [-1, 1]) {
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(1.95, 0.09, 0.035), new THREE.MeshBasicMaterial({ color: "#2dd4bf" }));
+    stripe.position.set(-0.05, baseY + 0.42, z * (width / 2 + 0.03));
+    group.add(stripe);
+
+    if (quality !== "low") {
+      const sideGlass = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.26, 0.03), glass);
+      sideGlass.position.set(-0.78, baseY + 0.72, z * (width / 2 + 0.025));
+      group.add(sideGlass);
+    }
+  }
+
+  for (const x of [-1.0, 0.84]) {
+    for (const z of [-width / 2 - 0.04, width / 2 + 0.04]) {
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.15, quality === "low" ? 12 : 20), trim);
+      wheel.position.set(x, 0.22, z);
+      wheel.rotation.x = Math.PI / 2;
+      group.add(wheel);
+    }
+  }
+
+  const frontLight = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.1, 0.42), new THREE.MeshBasicMaterial({ color: "#fef3c7" }));
+  frontLight.position.set(-length / 2, baseY + 0.28, 0);
+  group.add(frontLight);
+
+  return group;
 }
 
 function addBackdrop(scene: THREE.Scene, quality: GraphicsQuality): void {
@@ -154,33 +402,33 @@ export function LandingCinematicScene({ modelConfig }: LandingCinematicSceneProp
       });
     };
 
-    const heroMachine = createMachineMesh("#10b981", 2, ["smart_lock", "security_camera", "neon_sign"], quality, 0.95, ["energy", "luxury_snack", "glitch_gum"], "smart_vendor");
+    const heroMachine = createPreviewMachineMesh("#10b981", 2, ["smart_lock", "security_camera", "neon_sign"], quality, 0.95, ["energy", "luxury_snack", "glitch_gum"], "smart_vendor");
     heroMachine.position.set(-1.15, 0, 0.35);
     heroMachine.rotation.y = -0.28;
     heroMachine.scale.setScalar(1.34);
-    applyModelTransformById(heroMachine, modelConfig, "machine.vending");
+    applyPreviewModelTransformById(heroMachine, modelConfig, "machine.vending");
     setShadow(heroMachine);
     scene.add(heroMachine);
 
-    const rivalMachine = createMachineMesh("#fb7185", 63, ["reinforced_glass"], "medium", 0.36, ["mystery_capsules", "mood_fizz"], "armored_unit");
+    const rivalMachine = createPreviewMachineMesh("#fb7185", 63, ["reinforced_glass"], "medium", 0.36, ["mystery_capsules", "mood_fizz"], "armored_unit");
     rivalMachine.position.set(1.2, 0, -1.1);
     rivalMachine.rotation.y = 0.18;
     rivalMachine.scale.setScalar(0.86);
-    applyModelTransformById(rivalMachine, modelConfig, "machine.vending");
+    applyPreviewModelTransformById(rivalMachine, modelConfig, "machine.vending");
     setShadow(rivalMachine);
     scene.add(rivalMachine);
 
-    const van = createVehicleMesh(quality);
+    const van = createPreviewVehicleMesh(quality);
     van.position.set(2.25, 0, 0.88);
     van.rotation.y = -0.82;
     van.scale.setScalar(0.58);
-    applyModelTransformById(van, modelConfig, "vehicle.route_van");
+    applyPreviewModelTransformById(van, modelConfig, "vehicle.route_van");
     setShadow(van);
     scene.add(van);
 
     const productIds: ProductId[] = ["energy", "glitch_gum", "luxury_snack", "mystery_capsules"];
     productIds.forEach((productId, index) => {
-      const crate = createStockCrateMesh(productId, 8, false, modelConfig);
+      const crate = createPreviewStockCrateMesh(productId, 8, false, modelConfig);
       crate.position.set(-2.55 + index * 0.42, 0.22 + (index % 2) * 0.14, 1.12 + (index % 2) * 0.16);
       crate.rotation.y = -0.3 + index * 0.18;
       crate.scale.setScalar(0.78);
@@ -192,7 +440,7 @@ export function LandingCinematicScene({ modelConfig }: LandingCinematicSceneProp
     worker.position.set(-2.25, 0, 0.08);
     worker.rotation.y = 0.58;
     worker.scale.setScalar(0.9);
-    applyModelTransformById(worker, modelConfig, "unit.worker");
+    applyPreviewModelTransformById(worker, modelConfig, "unit.worker");
     setShadow(worker);
     scene.add(worker);
 
@@ -200,7 +448,7 @@ export function LandingCinematicScene({ modelConfig }: LandingCinematicSceneProp
     rival.position.set(0.65, 0, -0.55);
     rival.rotation.y = -0.4;
     rival.scale.setScalar(0.86);
-    applyModelTransformById(rival, modelConfig, "unit.rival");
+    applyPreviewModelTransformById(rival, modelConfig, "unit.rival");
     setShadow(rival);
     scene.add(rival);
 

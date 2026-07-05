@@ -107,11 +107,13 @@ export function useGame(options: UseGameOptions = {}): UseGameResult {
     }
 
     const perfStart = perfNow();
-    client.sendGameMessage({
+    const snapshotMessage = {
       sequence: ++multiplayerSnapshotSequenceRef.current,
       state: stateRef.current,
       type: "snapshot"
-    });
+    } as const;
+    recordPerfGauge("multiplayer.snapshot.bytes", new TextEncoder().encode(JSON.stringify(snapshotMessage)).byteLength);
+    client.sendGameMessage(snapshotMessage);
     lastHostSnapshotAtRef.current = perfNow();
     recordPerfDuration("multiplayer.snapshot.send", lastHostSnapshotAtRef.current - perfStart);
     recordPerfCount("multiplayer.snapshot.sent");

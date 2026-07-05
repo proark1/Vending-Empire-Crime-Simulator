@@ -3,13 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=20 <25",
+    "npm": ">=10"
+  },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
+    "check:perf": "node scripts/check-performance-budgets.mjs",
     "preview": "vite preview --host 127.0.0.1",
+    "smoke:server": "node scripts/smoke-production-server.mjs",
     "start": "node server.js",
     "test": "vitest run --config vitest.config.ts",
     "typecheck": "tsc -b",
+    "verify": "npm run typecheck && npm test && npm run build && npm run check:perf && npm run smoke:server && npm run lint",
     "lint": "eslint ."
   },
   "dependencies": {
@@ -23,7 +30,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
-    "@types/node": "^26.0.1",
+    "@types/node": "^20.0.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@types/three": "^0.171.0",

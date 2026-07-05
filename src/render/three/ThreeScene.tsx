@@ -5540,9 +5540,9 @@ export function ThreeScene({ feedbackEvent, graphicsQuality, guidanceLocationId,
       ? `${stateRef.current.player.carriedCrate.productId}:${stateRef.current.player.carriedCrate.quantity}:${stateRef.current.player.carriedCrate.source}`
       : null;
 
-    // preserveDrawingBuffer keeps the last frame readable so the in-game photo
-    // mode (canvas.toDataURL) can capture the scene from outside the render loop.
-    const renderer = new THREE.WebGLRenderer({ antialias: !renderProfile.lowPower, powerPreference: renderProfile.lowPower ? "default" : "high-performance", preserveDrawingBuffer: true });
+    // Medium/high keep the last frame readable for photo mode. Low-power mode
+    // drops that extra buffer to reduce GPU memory and frame overhead.
+    const renderer = new THREE.WebGLRenderer({ antialias: !renderProfile.lowPower, powerPreference: renderProfile.lowPower ? "default" : "high-performance", preserveDrawingBuffer: !renderProfile.lowPower });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, renderProfile.maxPixelRatio));
     renderer.setSize(mount.clientWidth, mount.clientHeight);
     renderer.shadowMap.enabled = renderProfile.enableShadows;
