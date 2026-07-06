@@ -261,6 +261,25 @@ function InteractionPanelInner({ state, target, onCommand, onSave, onReload, onR
     const vehicle = activeVehicle(state);
     const contractNeeds = contractNeedByProduct(state);
     const storedMachines = storedPlayerMachines(state);
+    const garageProductRows = Object.values(state.products)
+      .map((product) => {
+        const quantity = state.player.garageStorage[product.id] ?? 0;
+        const crateQuantity = Math.min(quantity, Math.floor(state.player.cargoCapacity / product.size));
+        const contractNeed = contractNeeds[product.id] ?? 0;
+        return { contractNeed, crateQuantity, product, quantity };
+      })
+      .filter(({ contractNeed, quantity }) => quantity > 0 || contractNeed > 0);
+    const vehicleProductRows = vehicle
+      ? Object.values(state.products)
+        .map((product) => {
+          const stored = state.player.garageStorage[product.id] ?? 0;
+          const inVehicle = vehicle.inventory[product.id] ?? 0;
+          const loadQuantity = Math.min(stored, Math.floor(vehicleSpaceRemaining(state, vehicle) / product.size), 12);
+          const contractNeed = contractNeeds[product.id] ?? 0;
+          return { contractNeed, inVehicle, loadQuantity, product, stored };
+        })
+        .filter(({ contractNeed, inVehicle, stored }) => stored > 0 || inVehicle > 0 || contractNeed > 0)
+      : [];
 
     return (
       <section className={panelClassName}>
@@ -323,10 +342,7 @@ function InteractionPanelInner({ state, target, onCommand, onSave, onReload, onR
             <p className="empty-note">Hands free. Load one garage crate before running a route.</p>
           )}
           <div className="storage-list">
-            {Object.values(state.products).map((product) => {
-              const quantity = state.player.garageStorage[product.id] ?? 0;
-              const crateQuantity = Math.min(quantity, Math.floor(state.player.cargoCapacity / product.size));
-              const contractNeed = contractNeeds[product.id] ?? 0;
+            {garageProductRows.length > 0 ? garageProductRows.map(({ contractNeed, crateQuantity, product, quantity }) => {
               return (
                 <article className={`inventory-row ${contractNeed > 0 ? "contract-needed" : ""}`} key={product.id}>
                   <div>
@@ -340,70 +356,68 @@ function InteractionPanelInner({ state, target, onCommand, onSave, onReload, onR
                     icon={<PackagePlus size={17} aria-hidden="true" />}
                     onClick={() => onCommand({ type: "load_crate", actorId: state.playerFactionId, productId: product.id, quantity: crateQuantity })}
                   >
-                    Carry {crateQuantity || 0}
+                    Carry {crateQuantity}
                   </ActionButton>
                 </article>
               );
-            })}
+            }) : <p className="empty-note actionable-empty">No route stock stored yet. Repair Rusty Starter first, then buy crates at Backdoor Supplier.</p>}
           </div>
         </div>
-        <div className="machine-section">
-          <div className="section-title">
-            <Wrench size={16} aria-hidden="true" />
-            <span>Base upgrades</span>
-          </div>
-          <div className="storage-list">
-            {baseFacilityList.map((facility) => {
-              const current = state.base.facilities[facility.id];
-              const cost = baseFacilityUpgradeCost(state, facility.id);
-              const atMax = current.level >= facility.maxLevel;
-              return (
-                <article className="inventory-row" key={facility.id}>
-                  <div>
-                    <h3>{facility.name}</h3>
-                    <p>
-                      Level {current.level}/{facility.maxLevel} · {facility.description}
-                    </p>
-                  </div>
-                  <ActionButton
-                    disabled={atMax || player.money < cost}
-                    icon={<Wrench size={17} aria-hidden="true" />}
-                    onClick={() => onCommand({ type: "upgrade_base_facility", actorId: state.playerFactionId, facilityId: facility.id })}
-                  >
-                    {atMax ? "Max" : `$${cost}`}
-                  </ActionButton>
-                </article>
-              );
-            })}
-          </div>
-        </div>
-        {vehicle && (
+        <details className="deep-details">
+          <summary>Advanced garage systems</summary>
           <div className="machine-section">
             <div className="section-title">
-              <Truck size={16} aria-hidden="true" />
-              <span>{vehicle.name}</span>
-              <em>
-                {vehicleInventoryUnits(state, vehicle)}/{vehicle.capacity}
-              </em>
-            </div>
-            <p className="empty-note">
-              Parked at {state.locations[vehicle.locationId]?.name ?? "unknown stop"} · {vehicleSpaceRemaining(state, vehicle)} trunk space open · {Math.round((vehicle.condition ?? 1) * 100)}% condition
-            </p>
-            <div className="action-grid">
-              <ActionButton
-                disabled={vehicle.locationId !== "garage"}
-                icon={<Wrench size={17} aria-hidden="true" />}
-                onClick={() => onCommand({ type: "service_vehicle", actorId: state.playerFactionId, vehicleId: vehicle.id })}
-              >
-                Service
-              </ActionButton>
+              <Wrench size={16} aria-hidden="true" />
+              <span>Base upgrades</span>
             </div>
             <div className="storage-list">
-              {Object.values(state.products).map((product) => {
-                const stored = state.player.garageStorage[product.id] ?? 0;
-                const inVehicle = vehicle.inventory[product.id] ?? 0;
-                const loadQuantity = Math.min(stored, Math.floor(vehicleSpaceRemaining(state, vehicle) / product.size), 12);
-                const contractNeed = contractNeeds[product.id] ?? 0;
+              {baseFacilityList.map((facility) => {
+                const current = state.base.facilities[facility.id];
+                const cost = baseFacilityUpgradeCost(state, facility.id);
+                const atMax = current.level >= facility.maxLevel;
+                return (
+                  <article className="inventory-row" key={facility.id}>
+                    <div>
+                      <h3>{facility.name}</h3>
+                      <p>
+                      Level {current.level}/{facility.maxLevel} · {facility.description}
+                      </p>
+                    </div>
+                    <ActionButton
+                      disabled={atMax || player.money < cost}
+                      icon={<Wrench size={17} aria-hidden="true" />}
+                      onClick={() => onCommand({ type: "upgrade_base_facility", actorId: state.playerFactionId, facilityId: facility.id })}
+                    >
+                      {atMax ? "Max" : `$${cost}`}
+                    </ActionButton>
+                  </article>
+                );
+              })}
+            </div>
+          </div>
+          {vehicle && (
+            <div className="machine-section">
+              <div className="section-title">
+                <Truck size={16} aria-hidden="true" />
+                <span>{vehicle.name}</span>
+                <em>
+                  {vehicleInventoryUnits(state, vehicle)}/{vehicle.capacity}
+                </em>
+              </div>
+              <p className="empty-note">
+              Parked at {state.locations[vehicle.locationId]?.name ?? "unknown stop"} · {vehicleSpaceRemaining(state, vehicle)} trunk space open · {Math.round((vehicle.condition ?? 1) * 100)}% condition
+              </p>
+              <div className="action-grid">
+                <ActionButton
+                  disabled={vehicle.locationId !== "garage"}
+                  icon={<Wrench size={17} aria-hidden="true" />}
+                  onClick={() => onCommand({ type: "service_vehicle", actorId: state.playerFactionId, vehicleId: vehicle.id })}
+                >
+                  Service
+                </ActionButton>
+              </div>
+              <div className="storage-list">
+              {vehicleProductRows.length > 0 ? vehicleProductRows.map(({ contractNeed, inVehicle, loadQuantity, product, stored }) => {
                 return (
                   <article className={`inventory-row ${contractNeed > 0 ? "contract-needed" : ""}`} key={product.id}>
                     <div>
@@ -446,21 +460,22 @@ function InteractionPanelInner({ state, target, onCommand, onSave, onReload, onR
                     </div>
                   </article>
                 );
-              })}
+              }) : <p className="empty-note actionable-empty">No van stock yet. Store crates in the garage, then load the van when longer routes need it.</p>}
+              </div>
             </div>
+          )}
+          <div className="action-grid">
+            <ActionButton icon={<Save size={17} aria-hidden="true" />} onClick={onSave}>
+              Save
+            </ActionButton>
+            <ActionButton icon={<RotateCcw size={17} aria-hidden="true" />} onClick={onReload}>
+              Load
+            </ActionButton>
+            <ActionButton icon={<RotateCcw size={17} aria-hidden="true" />} onClick={onRestart}>
+              Restart
+            </ActionButton>
           </div>
-        )}
-        <div className="action-grid">
-          <ActionButton icon={<Save size={17} aria-hidden="true" />} onClick={onSave}>
-            Save
-          </ActionButton>
-          <ActionButton icon={<RotateCcw size={17} aria-hidden="true" />} onClick={onReload}>
-            Load
-          </ActionButton>
-          <ActionButton icon={<RotateCcw size={17} aria-hidden="true" />} onClick={onRestart}>
-            Restart
-          </ActionButton>
-        </div>
+        </details>
       </section>
     );
   }

@@ -76,6 +76,7 @@ function MissionTrackerInner({ compact = false, state, playerPosition }: Mission
             aria-label={expanded ? "Collapse objective details" : "Expand objective details"}
             className="mission-expand"
             onClick={toggleExpanded}
+            title={expanded ? "Collapse objective details" : "Expand objective details"}
             type="button"
           >
             {expanded ? <ChevronUp size={16} aria-hidden="true" /> : <ChevronDown size={16} aria-hidden="true" />}

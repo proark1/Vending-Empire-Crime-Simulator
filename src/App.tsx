@@ -647,6 +647,10 @@ function LandingWorldPreview({ mapLayout, state }: { mapLayout: WorldMapLayout; 
 
   return (
     <div className="landing-world-preview" aria-label="In-game city asset preview">
+      <div className="landing-map-caption">
+        <span>City route map</span>
+        <strong>Find corners, rivals, and the next cabinet claim.</strong>
+      </div>
       <svg viewBox="0 0 100 100" role="img" aria-label="Vendetta Vending city map">
         <rect className="landing-map-ground" x="1.5" y="1.5" width="97" height="97" rx="4" />
         {mapLayout.roads.slice(0, 24).map((road) => {
@@ -1503,15 +1507,17 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
     if (alreadySeen) {
       return;
     }
-    setShowControls(true);
+    addToast({
+      title: "Controls ready",
+      message: "Use WASD to move. Press ? anytime for the full control sheet.",
+      tone: "neutral"
+    });
     try {
       window.localStorage.setItem("vv:seen-controls", "1");
     } catch {
       // ignore storage failures (private mode etc.)
     }
-    const timer = window.setTimeout(() => setShowControls(false), 30000);
-    return () => window.clearTimeout(timer);
-  }, [entered]);
+  }, [addToast, entered]);
 
   // Learn-to-move beat: clears the movement coach once the player actually walks
   // a short distance from the fixed spawn point.
@@ -1732,6 +1738,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
           aria-pressed={showControls}
           className="controls-help-toggle"
           onClick={() => setShowControls((current) => !current)}
+          title={showControls ? "Hide controls" : "Show controls"}
           type="button"
         >
           ?
@@ -1742,6 +1749,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
           aria-label="Save a screenshot"
           className="screenshot-toggle"
           onClick={handleScreenshot}
+          title="Save a screenshot"
           type="button"
         >
           📷
@@ -1753,6 +1761,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
           aria-label={gameMenuOpen ? "Close game menu" : "Open game menu"}
           className={gameMenuOpen ? "game-menu-button active" : "game-menu-button"}
           onClick={() => setGameMenuOpen((current) => !current)}
+          title={gameMenuOpen ? "Close game menu" : "Open game menu"}
           type="button"
         >
           {gameMenuOpen ? <X size={20} aria-hidden="true" /> : <Menu size={20} aria-hidden="true" />}
@@ -1783,11 +1792,17 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
                 <button
                   disabled={!empireNameDraft.trim() || empireNameDraft.replace(/\s+/g, " ").trim() === (state.player.empireName ?? "")}
                   onClick={handleRenameEmpire}
+                  title={!empireNameDraft.trim() ? "Enter a name first." : empireNameDraft.replace(/\s+/g, " ").trim() === (state.player.empireName ?? "") ? "This name is already saved." : "Save empire name"}
                   type="button"
                 >
                   Save
                 </button>
               </div>
+              {(!empireNameDraft.trim() || empireNameDraft.replace(/\s+/g, " ").trim() === (state.player.empireName ?? "")) && (
+                <span className="game-menu-field-help">
+                  {!empireNameDraft.trim() ? "Enter a name before saving." : "Name already saved."}
+                </span>
+              )}
             </div>
             <button
               aria-pressed={captionsEnabled}
@@ -1814,6 +1829,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
                   {leaderboardLoading ? "Loading…" : leaderboard ? "Refresh" : "Load"}
                 </button>
               </div>
+              {!leaderboard && <p className="game-menu-leaderboard-empty">Optional online ranking. Your local route works without it.</p>}
               {leaderboard && leaderboard.length > 0 && (
                 <ol className="game-menu-leaderboard-list">
                   {leaderboard.map((entry) => (
@@ -1992,6 +2008,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
           <span className="target-name">{activeTarget.label}</span>
           <span className="target-action">
             <kbd>E</kbd>
+            <kbd>Click</kbd>
             {primaryInteraction.label}
           </span>
           {(primaryInteraction.payoff || primaryInteraction.risk) && (
@@ -2116,6 +2133,7 @@ function GameApp({ initialState, mapLayout, modelConfig, onLogout, session, star
           aria-pressed={dashboardOpen}
           className={dashboardOpen ? "dashboard-toggle active" : "dashboard-toggle"}
           onClick={() => setDashboardOpen((current) => !current)}
+          title={dashboardOpen ? "Close operations" : "Open operations"}
           type="button"
         >
           {dashboardOpen ? <X size={17} aria-hidden="true" /> : <ClipboardList size={17} aria-hidden="true" />}
@@ -2334,9 +2352,9 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
               {submitting ? `${actionLabel}...` : actionLabel}
             </button>
             <button className="access-demo-button" disabled={busy} onClick={handleQuickStart} type="button">
-              Quick Start: Cause Problems
+              Play Now
             </button>
-            <span className="access-demo-note">Instant local save. No database required.</span>
+            <span className="access-demo-note">Instant local save. No account or database required.</span>
             <span className="access-privacy-note">
               A named profile syncs your empire to the server so you can resume anywhere. That save
               (profile name + progress) is stored on the backend and visible to the game operator.
@@ -2354,8 +2372,25 @@ function GameAccessGate({ mapLayout, modelConfig }: { mapLayout: WorldMapLayout;
           <LandingEndgamePaths />
           <LandingRivalBoard />
           <LandingFunBoard />
+          <section className="access-bottom-cta" aria-label="Start playing">
+            <div>
+              <span>Ready to run the first route?</span>
+              <strong>Start local, repair Rusty Starter, and learn by doing.</strong>
+            </div>
+            <button disabled={busy} onClick={handleQuickStart} type="button">
+              <Play size={18} aria-hidden="true" />
+              Play now
+            </button>
+          </section>
         </div>
       </section>
+      <button className="access-sticky-start" disabled={busy} onClick={handleQuickStart} type="button">
+        <Play size={16} aria-hidden="true" />
+        <span>
+          Play now
+          <small>Local save</small>
+        </span>
+      </button>
     </main>
   );
 }
@@ -2432,6 +2467,7 @@ function AudioControl({
         aria-pressed={muted}
         className={muted ? "audio-control-button muted" : "audio-control-button"}
         onClick={onToggleMute}
+        title={muted ? "Unmute audio" : "Mute audio"}
         type="button"
       >
         {muted ? <VolumeX size={18} aria-hidden="true" /> : <Volume2 size={18} aria-hidden="true" />}
