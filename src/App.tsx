@@ -30,6 +30,16 @@ import { MultiplayerClient } from "./game/network/multiplayerClient";
 import type { MultiplayerStatus } from "./game/network/protocol";
 import { getPerfSnapshot } from "./game/core/performance";
 
+type VendettaPerfHook = {
+  getSnapshot: typeof getPerfSnapshot;
+};
+
+declare global {
+  interface Window {
+    __vendettaPerf?: VendettaPerfHook;
+  }
+}
+
 const AdminMapEditor = lazy(() => import("./ui/AdminMapEditor").then((module) => ({ default: module.AdminMapEditor })));
 const Dashboard = lazy(() => import("./ui/Dashboard").then((module) => ({ default: module.Dashboard })));
 const LandingCinematicScene = lazy(() => import("./ui/LandingCinematicScene").then((module) => ({ default: module.LandingCinematicScene })));
@@ -2488,6 +2498,20 @@ function AudioControl({
 
 function PerformanceOverlay({ enabled }: { enabled: boolean }) {
   const [snapshot, setSnapshot] = useState(() => getPerfSnapshot());
+
+  useEffect(() => {
+    if (!enabled) {
+      delete window.__vendettaPerf;
+      return;
+    }
+
+    window.__vendettaPerf = { getSnapshot: getPerfSnapshot };
+    return () => {
+      if (window.__vendettaPerf?.getSnapshot === getPerfSnapshot) {
+        delete window.__vendettaPerf;
+      }
+    };
+  }, [enabled]);
 
   useEffect(() => {
     if (!enabled) {

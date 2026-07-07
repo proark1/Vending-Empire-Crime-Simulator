@@ -93,7 +93,8 @@ Verify:
 - A `.scene-mount canvas` appears.
 - The canvas has nonblank pixels after a short render wait.
 - The perf overlay appears.
-- `window.__vendettaPerf.getSnapshot()` eventually includes `scene.frame.avg` and `scene.frame.max`.
+- `window.__vendettaPerf.getSnapshot()` eventually includes a renderer startup metric such as `scene.dynamic.rebuild`.
+- `scene.frame.avg` and `scene.frame.max` are checked when the browser emits them; they are not mandatory in the first pass because headless Chromium can throttle renderer frame samples differently from an interactive browser.
 - The dashboard opens and renders without page errors.
 - The screenshot button produces either a download event or the visible success toast.
 
@@ -110,9 +111,9 @@ Verify:
 
 First-pass budgets should be intentionally coarse to avoid false failures on CI hardware:
 
-- `scene.frame.avg.max` under 80 ms after warmup.
-- `scene.frame.max.last` under 180 ms after warmup.
-- `scene.dynamic.rebuild.max` under 250 ms if present.
+- `scene.dynamic.rebuild.max` under 250 ms.
+- `scene.frame.avg.max` under 80 ms after warmup if present.
+- `scene.frame.max.last` under 180 ms after warmup if present.
 - `save.local.bytes.last` under the existing server save cap if present.
 
 These are guardrails, not tuning targets. Tighten them only after several CI samples establish a stable baseline.
@@ -169,4 +170,3 @@ After this lands, proceed in this order:
 4. Admin monitoring scalar summaries.
 5. Large-file extraction by runtime boundary.
 6. Staged dependency upgrades, starting with patch/minor updates.
-

@@ -50,3 +50,9 @@ jobs:
 
       - name: Smoke production server
         run: npm run smoke:server
+
+      - name: Install browser runtime
+        run: npx playwright install --with-deps chromium
+
+      - name: Smoke browser runtime
+        run: npm run smoke:browser
